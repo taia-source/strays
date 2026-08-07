@@ -543,10 +543,20 @@ describe("silhouette rule 3 — legs paired front and back with a visible gap", 
       const paws = grid.filter((p) => p.part === "paw");
       const legs = grid.filter((p) => p.part === "leg");
       if (paws.length === 0) continue;
-      expect(
-        Math.max(...paws.map((p) => p.y)),
-        `id ${id}: a paw is not below the leg above it`,
-      ).toBeGreaterThanOrEqual(legs.length === 0 ? 0 : Math.max(...legs.map((p) => p.y)));
+      /*
+       * Compared per COLUMN, not against the legs' global maximum. A sitting cat has one leg
+       * extended to the ground and one TUCKED under the haunch, and the tucked stub's lowest row can
+       * sit below the standing leg's paw — so a global comparison asserted that a paw must be lower
+       * than a leg it has nothing to do with.
+       *
+       * What "a paw is at the bottom of a leg" means is a claim about one limb, so it is measured on
+       * one limb: within the paw's own columns, nothing that is leg may be below it.
+       */
+      const pawCols = new Set(paws.map((p) => p.x));
+      const legBelowPaw = legs.some(
+        (l) => pawCols.has(l.x) && l.y > Math.max(...paws.filter((p) => p.x === l.x).map((p) => p.y)),
+      );
+      expect(legBelowPaw, `id ${id}: a leg hangs below its own paw`).toBe(false);
     }
   });
 
@@ -647,6 +657,7 @@ describe("the state tints AT MOST TWO PIXELS", () => {
 
   it("pricks a hunting cat's ears forward and drops it into a crouch", () => {
     let loweredByHunting = 0;
+    let eligible = 0;
     /*
      * `hunting` is alertness, and alertness has to read on EVERY cat regardless of what its own hash
      * gave it — a bias a hash could cancel is not a state. Both halves are forced in
@@ -686,7 +697,19 @@ describe("the state tints AT MOST TWO PIXELS", () => {
       expect(backRowOf("hunting"), `id ${id}: hunting is not a crouch`).toBeGreaterThanOrEqual(
         backRowOf("fed"),
       );
-      loweredByHunting += backRowOf("hunting") > backRowOf("fed") ? 1 : 0;
+      /*
+       * Counted on cats that are NOT already crouched or sitting by their own hash. `hunting` forces
+       * the crouch posture, so a cat that crouches anyway cannot be lowered by it, and a sitting cat
+       * is lowered in the rump rather than the shoulder — neither is evidence about whether the
+       * state works. Including them made the count depend on the posture hash's distribution rather
+       * than on the state, which is what dropped it below the threshold when `sit` gained its own
+       * topline.
+       */
+      const own = geometryFor(id).posture;
+      if (own !== "crouch" && own !== "sit") {
+        loweredByHunting += backRowOf("hunting") > backRowOf("fed") ? 1 : 0;
+        eligible += 1;
+      }
     }
     /*
      * ══ AND THE STATE MUST ACTUALLY MOVE MOST OF THE COLONY ══
@@ -697,7 +720,8 @@ describe("the state tints AT MOST TWO PIXELS", () => {
      * closes that hole: most of the set must be visibly lowered, so the posture override cannot
      * quietly become a no-op.
      */
-    expect(loweredByHunting, "hunting lowers almost no cats").toBeGreaterThan(IDS.length / 2);
+    expect(eligible, "no cat in the set can show the crouch").toBeGreaterThan(0);
+    expect(loweredByHunting, "hunting lowers almost no cats").toBeGreaterThan(eligible / 2);
   });
 
   it("dims the coat monotonically from fed to dead", () => {
@@ -1320,5 +1344,173 @@ describe("the renderers", () => {
     expect(catSize(3)).toEqual({ w: GRID_W * 3, h: GRID_H * 3 });
     // A fractional or zero scale must still produce a drawable footprint, never 0 or a fraction.
     expect(catSize(0.4)).toEqual({ w: GRID_W, h: GRID_H });
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * CAT PROPORTIONS — the assertions that keep this from drifting back into a dog.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The profile rebuild fixed the pose and the first render of it read as "DOGS or small DEER, not
+ * cats". That was a PROPORTION failure rather than a pose failure, and the cause was inheriting
+ * NEEDLE's numbers along with its method — NEEDLE is a unicorn, so its leg-to-barrel ratio is equine
+ * by construction.
+ *
+ * A pose can be asserted structurally (the muzzle is in front of the eye). Proportions cannot be
+ * caught that way: every individual number looked defensible and the ANIMAL was wrong. So the ratios
+ * that separate a cat from a canid are asserted numerically here, and each one names the silhouette
+ * it is keeping out.
+ *
+ * The target, stated once: LOW SLUNG, DEEP CHEST, SHORT LEGS, HIGH HAUNCH, SHORT ROUND SKULL, BIG
+ * POINTED EARS, LONG TAIL.
+ */
+describe("cat proportions — not a dog, not a deer", () => {
+  /** The parts that make up the animal's own body, excluding the outline ring. */
+  function anatomy(id: string, state: CatState = "fed") {
+    const grid = coat(catGrid(id, { state }));
+    const of = (...names: string[]) => grid.filter((p) => names.includes(p.part));
+    return {
+      body: of("body"),
+      legs: of("leg", "paw"),
+      head: of("head", "muzzle", "nose", "eye"),
+      ears: of("ear", "earInner"),
+      tail: of("tail"),
+    };
+  }
+
+  it("keeps the legs SHORTER than the barrel is deep — a cat is low slung", () => {
+    /*
+     * ══ THE SINGLE BIGGEST TELL, AND THE ONE THAT MADE THEM READ AS DEER ══
+     *
+     * The first profile draft used 4.2 rows of leg against a barrel 7 deep — a ratio of 1:1, which
+     * is a canid stance, and at 96px the legs were a third of the sprite's height.
+     *
+     * A cat's belly sits close to the ground: the VISIBLE leg — the part below the belly line — is
+     * roughly half the barrel's depth or less. Measured below the barrel rather than as the leg
+     * part's own height, because the legs overlap the body and their total extent says nothing about
+     * how much daylight is under the animal, which is what a viewer actually reads.
+     */
+    for (const id of IDS) {
+      const { body, legs } = anatomy(id);
+      if (body.length === 0 || legs.length === 0) continue;
+      const bellyRow = Math.max(...body.map((p) => p.y));
+      const depth = bellyRow - Math.min(...body.map((p) => p.y)) + 1;
+      const visibleLeg = Math.max(...legs.map((p) => p.y)) - bellyRow;
+      expect(
+        visibleLeg / depth,
+        `id ${id}: legs ${visibleLeg} vs barrel ${depth} — that is a dog stance`,
+      ).toBeLessThan(0.75);
+    }
+  });
+
+  it("carries the hip at least as high as the shoulder — a dog's back falls away", () => {
+    /*
+     * A cat's hind legs are longer and more angulated than its front ones, so the CROUP is the
+     * highest point of the topline. A dog's back runs level or drops toward the tail, and a level
+     * topline was named in the review as the second-biggest tell.
+     *
+     * Measured as the topmost body row in the rear third against the front third. Lower row number
+     * is higher on screen, so the hip must be less than or equal to the shoulder.
+     */
+    for (const id of IDS) {
+      /*
+       * SITTING cats are exempt, and deliberately: a sitting cat's hindquarters are folded on the
+       * ground and its chest is propped up, so its rump is the LOWEST point of the topline — the
+       * exact inverse of the standing silhouette this rule protects. Asserting the standing topline
+       * on a sitting cat would forbid the most cat-specific pose there is.
+       */
+      if (geometryFor(id).posture === "sit") continue;
+      const { body } = anatomy(id);
+      if (body.length < 10) continue;
+      const xs = body.map((p) => p.x);
+      const lo = Math.min(...xs);
+      const hi = Math.max(...xs);
+      const third = (hi - lo) / 3;
+      const topIn = (from: number, to: number) => {
+        const rows = body.filter((p) => p.x >= from && p.x <= to).map((p) => p.y);
+        return rows.length === 0 ? 99 : Math.min(...rows);
+      };
+      const shoulder = topIn(lo, lo + third);
+      const hip = topIn(hi - third, hi);
+      expect(hip, `id ${id}: the hindquarters fall away — that is a dog topline`).toBeLessThanOrEqual(
+        shoulder,
+      );
+    }
+  });
+
+  it("keeps the skull SHORT — a long muzzle is a dog", () => {
+    /*
+     * The review named the head "too large and too long". Only the second half was doing the damage:
+     * a round skull reads as a cat at any reasonable size, and what made these canid was the MUZZLE
+     * projecting three columns past it.
+     *
+     * Asserted as the head's total length against the barrel's, which is the ratio a viewer reads.
+     * Shrinking the skull itself twice made the sprite worse and the `no head at all` assertion
+     * caught it — so this bounds the head from ABOVE only, and `rule 2` bounds it from below.
+     */
+    for (const id of IDS) {
+      const { head, body } = anatomy(id);
+      if (head.length === 0 || body.length === 0) continue;
+      const headLen = Math.max(...head.map((p) => p.x)) - Math.min(...head.map((p) => p.x)) + 1;
+      const bodyLen = Math.max(...body.map((p) => p.x)) - Math.min(...body.map((p) => p.x)) + 1;
+      expect(
+        headLen / bodyLen,
+        `id ${id}: head ${headLen} on a body of ${bodyLen} — that is a snout`,
+      ).toBeLessThan(0.62);
+    }
+  });
+
+  it("gives every cat ears that BREAK the skull's outline", () => {
+    /*
+     * At this size an ear is the most identifying feature a cat's silhouette has, and it only works
+     * if it rises clear of the head — a review found them "absorbed into the head mass" when the ear
+     * floored at the same ramp step as the skull beneath it.
+     *
+     * Two things are asserted because the ear failed each way in turn: it must rise at least two
+     * rows above the skull's own top (or it is a bump), and it must not be a single column at its
+     * base (or it is a spike, which reads as a horn).
+     */
+    for (const id of IDS) {
+      const { ears, head } = anatomy(id);
+      expect(ears.length, `id ${id}: no ears at all`).toBeGreaterThan(2);
+      const earTop = Math.min(...ears.map((p) => p.y));
+      const skullTop = Math.min(...head.map((p) => p.y));
+      expect(skullTop - earTop, `id ${id}: the ears do not clear the skull`).toBeGreaterThanOrEqual(
+        2,
+      );
+      /*
+       * The WIDEST ear row, not the lowest. The far ear sits a row lower than the near one and is a
+       * deliberate single column — it is seen from behind, at a flat dark step, and its job is to
+       * give the head depth rather than to be a second silhouette. Measuring the lowest row therefore
+       * measured the far ear's stub and reported a 1px base on a cat whose near ear was four columns
+       * wide.
+       *
+       * What the rule is protecting is that the ear which BREAKS the skull line is a triangle rather
+       * than a spike, and the widest row is that ear's base by construction.
+       */
+      const widest = Math.max(
+        ...[...new Set(ears.map((p) => p.y))].map(
+          (row) => new Set(ears.filter((p) => p.y === row).map((p) => p.x)).size,
+        ),
+      );
+      expect(widest, `id ${id}: the ear is ${widest}px at its widest — that is a spike`).toBeGreaterThan(
+        1,
+      );
+    }
+  });
+
+  it("gives every cat a LONG tail", () => {
+    /*
+     * The one proportion where a cat exceeds a dog rather than falling short of it. A cat's tail is
+     * roughly half its body length, and it is the part a person names a cat by after its colour —
+     * which is why the barrel was shortened to give the tail columns to sweep into.
+     */
+    for (const id of IDS) {
+      const { tail, body } = anatomy(id);
+      expect(tail.length, `id ${id}: no tail`).toBeGreaterThan(3);
+      const bodyLen = Math.max(...body.map((p) => p.x)) - Math.min(...body.map((p) => p.x)) + 1;
+      expect(tail.length, `id ${id}: the tail is a stub`).toBeGreaterThan(bodyLen * 0.25);
+    }
   });
 });

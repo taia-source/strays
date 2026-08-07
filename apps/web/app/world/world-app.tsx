@@ -302,7 +302,21 @@ export function WorldApp({
         <div className="world-roster-body">
           {colony.ok && colony.strays.length > 0 ? (
             <ul className="world-list">
-              {colony.strays.map((s) => (
+              {/*
+                LIVING CATS FIRST, richest first; the dead sink to the bottom.
+                Measured on the deployed page: six withdrawn strays filled the panel above the one
+                live cat, so the colony read as a graveyard with a survivor rather than as a colony.
+                A dead stray is REAL and is not hidden — DESIGN §2 requires losses stay visible —
+                but "visible" is not the same as "first".
+              */}
+              {[...colony.strays]
+                .sort((a, b) => {
+                  const aDead = a.state === "dead" ? 1 : 0;
+                  const bDead = b.state === "dead" ? 1 : 0;
+                  if (aDead !== bDead) return aDead - bDead;
+                  return b.stakeEth - a.stakeEth;
+                })
+                .map((s) => (
                 <li key={s.id} data-state={s.state} data-hovered={hovered === s.id ? "" : undefined}>
                   <Link href={`/stray/${s.id}`} className="world-list-id">
                     {s.id.slice(0, 8)}…
@@ -312,7 +326,7 @@ export function WorldApp({
                     {s.state}
                   </span>
                 </li>
-              ))}
+                ))}
             </ul>
           ) : null}
 

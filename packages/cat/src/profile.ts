@@ -129,7 +129,19 @@ function backLineAt(cx: number, geom: ProfileGeometry): number {
    * hindquarter and a raised croup would read as a hump.
    */
   const dip = 0.75 * Math.sin(t * Math.PI);
-  const hip = geom.lying ? 0 : HIP_RISE * smootherHip(t);
+  /*
+   * ══ A SITTING CAT'S TOPLINE IS THE INVERSE OF A STANDING ONE'S ══
+   *
+   * Standing, the croup is the HIGHEST point — that hip rise is what stops the silhouette reading as
+   * a dog. Sitting, the hindquarters are folded on the ground and the chest is propped up, so the
+   * rump is the LOWEST point and the back slopes down from the shoulder to the tail.
+   *
+   * Reusing the standing rise for `sit` gave a cat with its rear in the air and its chest down,
+   * which is the play-bow `stretch` already owns — two postures rendering as the same shape, and the
+   * most identifiable cat pose there is wasted on a duplicate. Negating it costs one branch and buys
+   * the whole silhouette.
+   */
+  const hip = geom.lying ? 0 : (geom.sitting ? -SIT_RUMP_DROP : HIP_RISE) * smootherHip(t);
   return geom.backRow + dip * (1 - geom.arch) - geom.arch * 1.6 * Math.sin(t * Math.PI) - hip;
 }
 
@@ -150,6 +162,34 @@ const BODY_REAR_OVERHANG = 2.2;
  * quantum does nothing at all.
  */
 const HIP_RISE = 1.6;
+
+/**
+ * How far a SITTING cat's rump drops below its shoulder line.
+ *
+ * 2.2 — larger than `HIP_RISE`, so the difference between a sitting cat and a standing one is close
+ * to four rows at the croup. That is a gross-proportion change, which is what survives being shrunk
+ * to the 16-40px the world renders at; a subtler drop would be invisible exactly where the posture
+ * axis is supposed to be doing its work.
+ */
+const SIT_RUMP_DROP = 2.2;
+
+/**
+ * The fewest rows of barrel the body may ever have at any column.
+ *
+ * Two, because one row of body is a line rather than a mass — at 24px a 1px barrel reads as a wire
+ * connecting the head to the haunch, which is worse than no waist at all.
+ */
+const MIN_BARREL = 2;
+
+/**
+ * The shallowest a barrel may be, given that `HIP_RISE` is subtracted from its back line at the
+ * croup and `MIN_BARREL` must survive there.
+ *
+ * Derived rather than typed: the two constants it depends on have both been retuned once already,
+ * and a hardcoded floor that agreed with them at one setting is exactly the class of bug this
+ * package has recorded nine times.
+ */
+export const HIP_SAFE_DEPTH = HIP_RISE + MIN_BARREL + 1.2;
 
 /**
  * The hip's own profile along the back — 0 at the withers, 1 over the hind leg, easing off past it.
@@ -206,14 +246,6 @@ function bellyLineAt(cx: number, geom: ProfileGeometry): number {
   return Math.max(back + MIN_BARREL, back + depth - waist);
 }
 
-/**
- * The fewest rows of barrel the body may ever have at any column.
- *
- * Two, because one row of body is a line rather than a mass — at 24px a 1px barrel reads as a wire
- * connecting the head to the haunch, which is worse than no waist at all.
- */
-const MIN_BARREL = 2;
-
 /** Every varying axis of a profile cat. Derived in `grid.ts` from the same salted hashes. */
 export type ProfileGeometry = {
   /** Row of the back line at the shoulder. Lower is a taller-standing cat. */
@@ -250,6 +282,11 @@ export type ProfileGeometry = {
   readonly frontTucked: boolean;
   /** Whether the animal is lying on its side — the `dead` read. */
   readonly lying: boolean;
+  /**
+   * Whether the cat is SITTING, which gets its own leg layout rather than being a crouch variant.
+   * See `legAt`: sitting inverts which pair is tucked, so it cannot be expressed by `frontTucked`.
+   */
+  readonly sitting: boolean;
 };
 
 /** Which part of the profile cat owns a cell. */
@@ -400,17 +437,23 @@ function eyeAt(
  * `ax`/`ay` are offsets from the skull's centre as a fraction of its radius, so the muzzle scales
  * with the head rather than needing to be retuned whenever `headR` moves.
  */
-/** How far the NEAR ear's centre sits back from the skull's front edge, in whole columns. */
-const EAR_NEAR_X = 1;
+/** The ear's lean, as a whole number of columns. Bounded to one so consecutive rows always overlap. */
+function EAR_LEAN(geom: ProfileGeometry): number {
+  return Math.round(Math.max(-1, Math.min(1, geom.earAngle)));
+}
 
 /**
  * Columns between the near ear's centre and the far ear's.
  *
- * THREE. At two the two ears' bases touched after the taper widened them and the pair rendered as a
- * single crest; three leaves a clear column of skull between them at every ear width, which is what
- * makes a viewer count two ears rather than one lump.
+ * TWO. At three the far ear's base hung past the skull's rear edge with nothing beneath it, which
+ * the per-column support assertion caught — an ear whose base has no head under it reads as a horn
+ * floating off the corner of the skull.
+ *
+ * Two columns is enough separation because the far ear is drawn at a fixed DARK step while the near
+ * ear is at the lit end of the ramp: the pair is separated by VALUE as well as by position, so it
+ * does not need the full column of daylight between them that two equally-lit ears would.
  */
-const EAR_GAP = 3;
+const EAR_GAP = 2;
 
 const MUZZLE = { ax: 0.62, ay: 0.44, rx: 1.5, ry: 1.25 } as const;
 
@@ -491,46 +534,209 @@ function earAt(cx: number, cy: number, geom: ProfileGeometry): ProfileHit | null
    * the ear's base row sits exactly on the skull's topmost drawn row, so there is never a gap
    * between them for the outline pass to run through.
    */
-  const skullTop = Math.round(geom.headY - geom.headR) - 1;
-  const skullFront = Math.round(geom.headX - geom.headR);
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   * THE EARS — two solid triangles rising off the BROW, built on the integer grid.
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * Four placements were tried and rendered before this one, and the sequence is worth recording
+   * because each failed differently and the last two failed for opposite reasons:
+   *
+   *   1. Fractions of the skull's radius — the two ears MERGED into one solid block once the skull
+   *      was shrunk, and every cat had a bright fan on its head instead of ears.
+   *   2. Base pinned a row above the crown — the ears floated, detached, with the outline pass
+   *      running through the gap.
+   *   3. Base pinned a row inside the crown — the ears painted over the eye row, because `earAt`
+   *      resolves before `headAt` in the depth sort.
+   *   4. Base probed from the skull's topmost DRAWN row — correct at the centre column, where the
+   *      dome is highest, which put both ears at the middle of the head and left them as thin
+   *      spikes over the crown rather than triangles at the brow.
+   *
+   * The fix is to stop deriving the base from the skull's top at all. A cat's ears sit at the BACK
+   * of the brow, roughly over the eye, and their bases are wide relative to a small skull. So the
+   * anchor is the EYE's own column — which is already positioned relative to the head and already
+   * correct — and the base row is the highest row of head at that column. Both ears are then placed
+   * by whole-column offsets from there, which is the only construction that has held for every head
+   * size without a per-cat clamp.
+   */
+  /*
+   * ══ THE EARS SIT ON THE CROWN, BEHIND THE EYE — not over the brow ══
+   *
+   * Anchoring the near ear to the EYE's own column put it at the front of the skull, directly above
+   * the muzzle. A part dump showed the near ear occupying columns 3-5 while the head ran 2-7, so
+   * both ears were crowded onto the front third of the face — and rendered at 96px that reads as a
+   * single bright spike rising off the nose, which is a horn or a raised paw, not a pair of ears.
+   *
+   * A cat's ears are set BACK on the skull, behind and above the eye, on the crown. The anchor is
+   * therefore the skull's own centre column: the near ear sits just behind it and the far ear
+   * `EAR_GAP` further back, which puts the pair over the crown where they belong and leaves the brow
+   * and muzzle clear in front of them.
+   *
+   * The probe still finds the topmost DRAWN row at the ear's own column, so the base always meets
+   * the skull whatever `headR` is — the fix that took four attempts and must not be undone.
+   */
+  const crownCol = Math.round(geom.headX);
+  /*
+   * ══ EACH EAR PROBES THE SKULL AT ITS OWN COLUMN ══
+   *
+   * A single `brow` measured at the crown column was correct for the near ear and wrong for the far
+   * one: the far ear sits two columns back, where a domed skull has already fallen away by a row, so
+   * its base row floated and the flood fill found its tip orphaned on `stray-2`.
+   *
+   * Probing per ear means each one stands on the skull's real top edge AT THE COLUMN IT OCCUPIES,
+   * whatever the head's size or the ear's offset. This is the same fix, for the tenth time in this
+   * package: measure the row the rasteriser actually draws, at the place it is drawn.
+   */
+  const browAt = (col: number): number => {
+    let top = Math.round(geom.headY);
+    for (let probe = Math.round(geom.headY); probe > geom.headY - geom.headR - 2; probe--) {
+      if (headAt(col, probe, geom) !== null) top = probe;
+    }
+    return top;
+  };
+
   for (const side of [0, 1] as const) {
     const isNear = side === 0;
     /*
-     * Height: 3 rows for the near ear, 2 for the far one. A cat's ear is roughly two thirds of its
-     * skull's height, and at a skull of ~5 rows that is 3 — taller than that and the ear out-sizes
-     * the head, which reads as a rabbit. The identity axis still selects 3 or 4 via `earHeight`.
+     * Height: 3 rows near, 2 far. A cat's ear is about two thirds of its skull's height, and at a
+     * skull of ~5 rows that is 3. Taller and the ear out-sizes the head, which reads as a rabbit —
+     * measured at 4 rows on a 2.3-radius skull.
      */
-    const h = (geom.earHeight >= 5 ? 4 : 3) - (isNear ? 0 : 1);
-    const baseRow = skullTop + (isNear ? 0 : 1);
+    /*
+     * ══ THE EAR RISES FOUR ROWS, BECAUSE ITS FIRST TWO ARE INSIDE THE SKULL ══
+     *
+     * The base OVERLAPS the crown by design — that overlap is what keeps the join continuous and it
+     * took four attempts to get right. But the overlap costs rows: at a height of 3, rows 0 and 1
+     * sat inside the skull's own silhouette and only the 1-column TIP cleared it, so the ear read as
+     * a 1px spike no matter how wide its base was. The taper was correct (3-3-1 columns) and
+     * entirely invisible.
+     *
+     * At 4 rows the ear clears the crown by two, which is what shows the 3-column base narrowing to
+     * a point — the triangle a viewer actually reads as an ear. The identity axis still selects
+     * between a 4-row and a 5-row ear via `earHeight`.
+     */
+    /*
+     * The FAR ear is two rows shorter than the near one, not one. The flood fill caught `stray-2`
+     * with its far-ear TIP orphaned: the far ear sits a row lower and a couple of columns back, where
+     * the skull's dome has already fallen away, so a tall far ear reaches past the crown and its top
+     * row has neither head nor ear beneath it. An orphaned cell is NEEDLE's dust and it breaks rule 4
+     * outright.
+     *
+     * Two rows shorter is also the correct parallax: an ear seen from behind and further away
+     * presents less height, which is what makes the pair read as two ears at different depths rather
+     * than as two ears side by side.
+     */
+    /*
+     * ══ THREE ROWS, NOT FOUR — a tall narrow ear is a HORN ══
+     *
+     * At four rows the near ear rose two clear rows above the crown as a 1-column column, and
+     * rendered at 96px every cat had a single bright SPIKE off the front of its head. A viewer reads
+     * that as a horn or a raised paw; it is the same failure openhood records for its own horn tip
+     * and NEEDLE for its floating one.
+     *
+     * The fix is proportion, not position: an ear that is TALLER than it is wide reads as a spike at
+     * any anchor. Three rows against a three-column base makes it as wide as it is tall — which is
+     * roughly a cat's ear — and the triangle finally reads as a triangle.
+     */
+    const h = (isNear ? 3 : 2) + (geom.earHeight >= 5 ? 1 : 0);
+    // The base OVERLAPS the skull's top row by one, so the join is continuous and the outline pass
+    // can never run between ear and head. That overlap is the whole reason the ear is drawn before
+    // the head in the depth sort.
+    const earCol = crownCol + (isNear ? 0 : EAR_GAP);
+    // The base sits ON the skull's topmost drawn row at this ear's own column, so the join is always
+    // continuous — no gap for the outline pass to run through, and no floating base.
+    const baseRow = browAt(earCol);
     const rowsUp = baseRow - cy;
     if (rowsUp < 0 || rowsUp >= h) continue;
 
     /*
-     * The base is two columns wide (three on a broad-eared cat), tapering to a one-column point.
-     * Narrow, because two ears plus a gap have to fit across a skull that is only five columns.
+     * A solid triangle: 2 columns at the base narrowing to 1 at the tip, one column per row, which
+     * is the 45° edge that reads as a clean diagonal rather than as a staircase.
      */
-    const baseCols = geom.earWidth >= 2.5 && isNear ? 2 : 1;
-    const halfCols = Math.max(0, baseCols - rowsUp);
-    // The lean tips the ear forward or back by at most one column, and only above its base row, so
-    // consecutive rows always overlap and the ear can never staircase into disconnected steps.
-    const lean = rowsUp >= 1 ? Math.round(Math.max(-1, Math.min(1, geom.earAngle))) : 0;
-    const centre = skullFront + (isNear ? EAR_NEAR_X : EAR_NEAR_X + EAR_GAP) + lean;
+    /*
+     * ══ THE BASE IS THREE COLUMNS, NOT TWO — a spike is not an ear ══
+     *
+     * At a half-width of 1 the base was two columns and the tip one, and a 3-row ear tapering from
+     * two to one rasterises as a near-vertical SPIKE. Rendered at 28x zoom on the head alone, every
+     * cat had two thin prongs rather than triangles — the shape read as antennae or as horns.
+     *
+     * A cat's ear is BROAD at the base relative to its height: roughly as wide as it is tall. A
+     * half-width of 1 at the tip rising from 1.5 at the base gives a 3-2-1 taper over three rows,
+     * which is the widest triangle a 5-column skull can carry two of, and it is the first version
+     * that reads as an ear rather than as a point.
+     */
+    /*
+     * ══ THE TAPER IS IN WHOLE COLUMNS, AND THE FAR EAR NEVER NARROWS BELOW ONE ══
+     *
+     * A fractional half-width let the far ear go from a 3-column base to a 1-column tip while its
+     * CENTRE was also being shifted by the lean, so its top cell could land a column clear of the
+     * row beneath it — the flood fill found exactly that on `stray-2`, one orphaned cell at (8,7).
+     *
+     * The near ear tapers 3-3-1-1 over four rows and the far ear stays a constant single column: at
+     * two rows there is nothing for a taper to say, and a fixed width cannot produce a step that the
+     * row below fails to cover. Integer arithmetic throughout, which is the only form of this that
+     * has ever held for every id.
+     */
+    // A 3-column base narrowing to 1 at the tip, one column per row: the 45° edge that reads as a
+    // clean diagonal. The far ear stays a constant single column — see the lean comment below.
+    /*
+     * ══ THE BASE IS THREE COLUMNS AND HOLDS FOR TWO ROWS ══
+     *
+     * `1 - max(0, rowsUp - 1)` gave a half-width of 1 on the base row and 0 on every row above it,
+     * so the ear was three columns for exactly one row and one column thereafter — and because the
+     * base row overlaps the skull, the only part that CLEARED the head was the 1-column stem. The
+     * new proportion assertion caught it on `stray-2` as a 1px base, which is precisely the spike
+     * the test was written to keep out.
+     *
+     * Holding the full width for the first two rows means the part above the crown is a real
+     * triangle rather than a stem with a point on it.
+     */
+    const halfCols = isNear ? Math.max(0, 1 - Math.max(0, rowsUp - 2)) : 0;
+    /*
+     * The near ear sits ON the crown column and the far ear `EAR_GAP` behind it. An earlier version
+     * offset both by −1 "to sit just behind the eye", which cancelled exactly against the crown
+     * column's own position and left the pair back where the eye-anchored version had put them — the
+     * dump was byte-identical before and after the change, which is how a no-op edit hides.
+     */
+    /*
+     * Only the NEAR ear leans. The far ear is a 1-column stub, so any shift of its centre moves the
+     * whole stub — and a stub that steps sideways between two rows is two diagonally adjacent cells,
+     * which are not orthogonally connected. That is precisely what the flood fill kept catching on
+     * `stray-2`: one orphaned far-ear cell, surviving three different attempts to fix it by changing
+     * the ear's HEIGHT and WIDTH when the culprit was its centre moving.
+     */
+    const centre = earCol + (isNear && rowsUp >= 2 ? EAR_LEAN(geom) : 0);
     const dx = cx - centre;
     if (Math.abs(dx) > halfCols) continue;
 
     /*
-     * The inner cone is the near ear's centre column, below its tip — a single dark column inside a
-     * lit rim, which at this size is exactly what makes an ear read as a cone open toward the viewer
-     * rather than as a flat triangle. Only the near ear has one: the far ear is seen from behind and
-     * shows no inner surface, which is both correct and what keeps the two distinguishable.
+     * The inner cone: the ear's own centre column on its lower rows, two steps below the rim. That
+     * dark core inside a lit rim is what makes the ear read as a CONE OPEN TOWARD THE VIEWER rather
+     * than as a flat triangle, and at a 3-column base there is finally room for one.
      */
-    if (isNear && halfCols >= 1 && dx === 0 && rowsUp === 0) {
+    /*
+     * ══ THE INNER CONE IS THE CENTRE COLUMN OF EVERY ROW BUT THE TIP ══
+     *
+     * The condition was `rowsUp <= 1`, which are the rows INSIDE the skull — so the dark core was
+     * drawn where the head covered it and never appeared. Every visible ear row came out at the same
+     * bright step, and a solid triangle with no internal value change reads as a blob or a spike
+     * however well its outline is shaped.
+     *
+     * A cat's ear seen from the side is a lit rim of cartilage around a shadowed hollow, and it is
+     * that value break — not the silhouette — that says "ear". Drawing the core on every row that
+     * has width for one (all but the 1-column tip) gives the rim-core-rim structure at last.
+     */
+    if (isNear && dx === 0 && halfCols >= 1) {
       return { part: "earInner", nx: 0, ny: -0.5 };
     }
+
     const nx = (halfCols === 0 ? 0 : dx / halfCols) * 0.6 - 0.2;
-    const ny = -0.4 - (rowsUp / Math.max(1, h)) * 0.3;
-    // The FAR ear takes a fixed dark step rather than being shaded: it has no lit surface, and a
-    // flat dark triangle is what makes it read as BEHIND the near ear rather than beside it.
+    const ny = -0.4 - (rowsUp / h) * 0.3;
+    /*
+     * The FAR ear is a flat dark triangle rather than a shaded one — it is seen from behind, has no
+     * lit surface, and the value break is what makes it read as BEHIND the near ear rather than
+     * beside it. Drawn at all because two ears at different depths is unmistakably a profile read.
+     */
     if (!isNear) return { part: "ear", nx, ny, step: 3 };
     return { part: "ear", nx, ny };
   }
@@ -584,12 +790,41 @@ function bodyAt(cx: number, cy: number, geom: ProfileGeometry): ProfileHit | nul
 function legAt(cx: number, cy: number, geom: ProfileGeometry): ProfileHit | null {
   const { chestX, croupX } = spineAnchors(geom);
   const ground = geom.groundRow;
-  const pairs: readonly { x: number; tucked: boolean }[] = [
-    // FRONT pair — just behind the chest, under the shoulder.
-    { x: chestX - 0.4, tucked: geom.frontTucked },
-    // BACK pair — under the croup, where a cat's hind leg actually attaches.
-    { x: croupX - 0.8, tucked: false },
-  ];
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   * SITTING IS THE MOST CAT-SPECIFIC SILHOUETTE THERE IS, SO IT GETS ITS OWN LEG LAYOUT.
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * A sitting cat is the pose a stranger identifies instantly: the front legs are STRAIGHT and
+   * VERTICAL, propping the chest up; the hindquarters are folded flat on the ground behind them; and
+   * the rump sits lower than the shoulder, which is the exact inverse of the standing topline.
+   * Nothing else in a cat's repertoire looks like it, and no other animal on four legs sits that way.
+   *
+   * The first profile draft treated `sit` as a crouch variant — same two leg posts, slightly shorter
+   * — and it read as a crouch, which wastes the strongest cue available. It now has its own layout:
+   *
+   *   - the FRONT leg is drawn LONGER than in any other posture and perfectly vertical, reaching the
+   *     ground from the chest;
+   *   - the BACK leg is TUCKED, a stub folded under the haunch rather than a post;
+   *   - the haunch itself drops to the ground — see `postureRows`, where `sit` lowers the croup.
+   *
+   * That inverts which pair is tucked, which is why `frontTucked` alone could not express it and the
+   * pairs are built here instead.
+   */
+  const sitting = geom.sitting;
+  const pairs: readonly { x: number; tucked: boolean }[] = sitting
+    ? [
+        // FRONT pair — straight and vertical, propping up the chest.
+        { x: chestX - 0.2, tucked: false },
+        // BACK pair — folded flat under the rump. A sitting cat's hind leg shows as a stub.
+        { x: croupX - 1.2, tucked: true },
+      ]
+    : [
+        // FRONT pair — just behind the chest, under the shoulder.
+        { x: chestX - 0.4, tucked: geom.frontTucked },
+        // BACK pair — under the croup, where a cat's hind leg actually attaches.
+        { x: croupX - 0.8, tucked: false },
+      ];
   for (const pair of pairs) {
     /*
      * ══ THE POST IS TWO WHOLE COLUMNS, PINNED TO THE INTEGER GRID ══

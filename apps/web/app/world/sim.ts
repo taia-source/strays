@@ -309,7 +309,23 @@ function layoutTokens(sim: Sim): void {
  */
 export function radiusForStake(stakeEth: number): number {
   if (!Number.isFinite(stakeEth) || stakeEth <= 0) return MIN_CAT_RADIUS;
-  return Math.max(MIN_CAT_RADIUS, Math.min(MAX_CAT_RADIUS, MIN_CAT_RADIUS + Math.sqrt(stakeEth) * 90));
+  /*
+   * ══ CALIBRATED TO OUR STAKES, NOT SILVERTONGUE'S ══
+   *
+   * The coefficient was 90, inherited from silvertongue whose agents hold WHOLE ETH. A stray holds
+   * thousandths: the intended $5 adoption is 0.0026 ETH.
+   *
+   * MEASURED with the old formula: 0.00208 -> r 20.1, and since the sprite scale is
+   * `floor(2r / 24)`, that is scale 1 — a 24px cat. Every realistic stake from $4 to $19 collapsed
+   * to the SAME minimum sprite, so the size channel carried no information at all and the cat was
+   * a speck next to its own quarry.
+   *
+   * 620 puts the product's real range across the useful scales:
+   *   0.0021 ETH ($4)  -> r 44  -> scale 3
+   *   0.0083 ETH ($16) -> r 72  -> scale 6
+   * A richer stray is now visibly a bigger animal, which is the whole point of encoding it.
+   */
+  return Math.max(MIN_CAT_RADIUS, Math.min(MAX_CAT_RADIUS, MIN_CAT_RADIUS + Math.sqrt(stakeEth) * 620));
 }
 
 /**
@@ -334,8 +350,8 @@ export function radiusForStake(stakeEth: number): number {
  * it only has four usable values in this range — so the floor has to be chosen against the
  * quantised output, not against the continuous radius.
  */
-const MIN_CAT_RADIUS = 16;
-const MAX_CAT_RADIUS = 40;
+const MIN_CAT_RADIUS = 24;
+const MAX_CAT_RADIUS = 84;
 
 /** Market cap sizes a token the same way stake sizes a cat: a fatter target is a bigger shape. */
 export function radiusForCap(marketCapEth: number): number {

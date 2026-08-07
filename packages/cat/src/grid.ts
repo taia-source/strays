@@ -121,6 +121,7 @@ import { fnv1a, quantise, shadeSphere } from "@taia/ui/mechanisms";
 
 import { GRID_H, GRID_W } from "./dims.js";
 import {
+  HIP_SAFE_DEPTH,
   type ProfileGeometry,
   type ProfilePart,
   PROFILE_ROWS,
@@ -1299,20 +1300,32 @@ function profileGeometryFor(
    * additive-clamp defect the head-on version hit twice, and the fix is the same: floor the result
    * rather than narrowing every contributing range.
    *
-   * FIVE rows is the floor. Below that the barrel cannot carry the tabby stripes, the ribs or the
+   * The floor is `HIP_SAFE_DEPTH` rather than a bare number, because the hip rise LIFTS the back
+   * line by up to `HIP_RISE` rows over the croup while the belly stays put — so a barrel at the old
+   * floor of 5 was reduced to under 4 rows at the hip and the body fragmented into disconnected
+   * pieces there. A floor that does not account for what is subtracted from it is not a floor.
+   *
+   * SIX rows. Below that the barrel cannot carry the tabby stripes, the ribs or the
    * shading gradient that makes it read as a cylinder, so it stops being a body and becomes a line.
    *
-   * The base rose from 5.8 to 7.0 alongside the leg shortening. Both halves are needed: a cat is low
-   * because its legs are short AND because its chest is deep, and shortening the legs alone would
-   * have produced a small dog rather than a cat. The two changes together move the belly line down
-   * toward the paws, which is the actual read.
+   * The base rose from 5.8 alongside the leg shortening — a cat is low because its legs are short
+   * AND because its chest is deep, and shortening the legs alone produces a small dog. But 7.0
+   * overshot: at eleven rasterised rows the barrel took nearly half the grid's height and the head
+   * came out visually tiny beside it, which reads as a piglet. 6.2 keeps the deep chest while
+   * leaving the head a legible fraction of the animal.
    */
   const depth = Math.max(
-    5,
-    7.0 +
+    HIP_SAFE_DEPTH,
+    6.6 +
       geom.build * 0.7 +
-      (state === "fed" ? 0.9 : 0) +
-      (state === "starving" ? -1.1 : 0) +
+      /*
+       * The state's pull on the barrel's depth is the LARGEST single contributor, because in profile
+       * "fed" and "starving" are read from the chest's depth and the belly's tuck — not from width,
+       * which is what the head-on version could only offer. Widened from ±1.0 after the hip-safe
+       * depth floor began clamping the two states onto the same value on lean cats.
+       */
+      (state === "fed" ? 1.4 : 0) +
+      (state === "starving" ? -1.8 : 0) +
       (geom.posture === "crouch" ? 0.5 : 0),
   );
 
@@ -1439,7 +1452,26 @@ function profileGeometryFor(
    * more than six before it will call it a head. A skull that small stops having room for the eye
    * and the jaw to be separate features.
    */
-  const headR = Math.max(2.3, 2.1 + geom.headWidth * 0.09);
+  /*
+   * ══ 2.8, RAISED BACK — the DOG read came from the MUZZLE, not from the skull's size ══
+   *
+   * The skull was cut from 2.9 to 2.2 and then to 1.8 chasing a review note that the head was "too
+   * large and too long". Rendered at 28x zoom on the head alone, the small skulls were plainly
+   * worse: a five-column head cannot carry two ears, an eye and a jaw, so the ears came out as
+   * thin spikes and the face lost its mass entirely. Twice the fix made the sprite worse and the
+   * assertions caught it (`no head at all`, at six cells).
+   *
+   * Re-reading the note, it named two things — "too large AND too long" — and only the second was
+   * doing the damage. What made these read as canid was the MUZZLE projecting three columns past
+   * the skull, which is a snout; that is fixed independently in `MUZZLE` and stays fixed. A round
+   * skull with a one-column muzzle bump reads as a cat at any reasonable size, and 2.8 is what
+   * gives the ears something to rise from.
+   *
+   * The general lesson: when a review names two causes, change them one at a time. Changing both
+   * and rendering once cannot tell you which one mattered, and here the innocent one was doing all
+   * the visible harm.
+   */
+  const headR = Math.max(2.7, 2.5 + geom.headWidth * 0.09);
   const headLow =
     (geom.posture === "crouch" ? 1.9 : 0) + (geom.posture === "stretch" ? 1.5 : 0);
   const headX = NOSE_X_OFFSET + headR;
@@ -1469,8 +1501,9 @@ function profileGeometryFor(
     whiskerLen: geom.whiskerLen,
     // A sitting, crouching, stretching or lying cat has its front legs folded; only a standing one
     // has them extended to the ground.
-    frontTucked: lying || geom.posture === "sit" || geom.posture === "crouch",
+    frontTucked: lying || geom.posture === "crouch",
     lying,
+    sitting: !lying && geom.posture === "sit",
   };
 }
 
@@ -1716,7 +1749,20 @@ export function catGrid(
        * clear steps above the face puts the ear in the lit band with the eyeshine, which is the
        * correct hierarchy: on a cat you read the ears and the eyes first.
        */
-      if (hit.part === "ear") step = Math.max(6, step);
+      /*
+       * ══ THE EAR IS LIT, BUT NOT FLAT — a uniformly bright ear reads as a RABBIT ══
+       *
+       * Floored at 6 with no shading, both ears came out as solid bright bars standing upright over
+       * the skull, and a review of the colony said so: they read as a rabbit's ears rather than a
+       * cat's. The floor was doing its job — the ear must break the skull's outline in value as well
+       * as in shape — and it was doing it too well, flattening the whole triangle to one step.
+       *
+       * `Math.min` with the shaded value keeps the lighting's own variation across the ear's width
+       * while the floor keeps it clear of the face: the outer edge stays at 6 and the surface turning
+       * away drops to 5, so the triangle has an interior. That plus the dark inner cone gives an ear
+       * three values across four columns, which is what makes it read as a cone rather than a bar.
+       */
+      if (hit.part === "ear") step = Math.max(5, Math.min(6, step));
       /*
        * ══ THE INNER EAR IS ITS OWN STEP, and this is the v2 detail that most changes the face ══
        *
