@@ -372,6 +372,38 @@ renderer. Not once"* alongside "136 KB gzipped, 59.9 FPS on mobile, gate 25/25".
 mobile-width screenshots and drew **nine** mobile complaints. Render at 390px and 1440px and
 describe both in prose.
 
+**7i-bis. A TRAILING `|| true` MADE EVERY FAILED BUILD REPORT SUCCESS.** Found on Railway, and it
+is the worst defect in this build because it disguises every other defect. `apps/web`'s build script
+ended:
+
+```
+next build && cp -r .next/static ... && cp -r public ... 2>/dev/null || true
+```
+
+The `|| true` was written to tolerate a missing `public/` directory. Shell precedence applies it to
+the **entire `&&` chain**, so a failing `next build` exited **0**. Railway reported `SUCCESS`, the
+container had no `.next/standalone` at all, and every route served **502**.
+
+Two things make this worth recording rather than just fixing:
+
+1. **The first fix did not work and only a sabotage revealed that.** Adding `set -e` to the parent
+   script felt sufficient and changed nothing — the child script still exited 0. Appending an
+   unresolvable import to `page.tsx` and re-running is what proved it: exit 0 before, exit 1 after
+   the real fix (scoping the `|| true` with braces). Without that check a second non-fix would have
+   been pushed and another green SUCCESS read off a broken deploy.
+2. **It is the same shape as a finding already in this corpus.** meridian recorded that *"piping a
+   git command into `tail` hides its exit code — `git pull --rebase | tail && git push` will push
+   even when the rebase failed."* Same class, different operator. **Any construct that can swallow a
+   non-zero exit belongs nowhere near a build or a deploy.**
+
+**7i-ter. RAILWAY USES RAILPACK, NOT NIXPACKS, AND `SUCCESS` MEANS BUILT.** Two deploys failed with
+`No start command detected` while `NIXPACKS_BUILD_CMD`/`NIXPACKS_START_CMD` were set and silently
+ignored — Railpack resolves the start command from the root `package.json` first. A third built
+cleanly and **CRASHED** on `MODULE_NOT_FOUND`, because without `outputFileTracingRoot` pinned, Next
+infers the workspace root from whichever lockfile it finds and nests `standalone/` differently on
+Railway than locally. `@taia/railway`'s rule stated plainly: **deploy-then-VERIFY — SUCCESS means
+the build shipped, not that anything serves.** Only `curl` settles it.
+
 **7j. 576 DOM divs per creature is a mobile perf hazard.** openhood renders its pixel creatures as
 one `<div>` per lit pixel. With a colony of cats on screen this will not hold. Render to `<canvas>`
 or a single inline SVG.
