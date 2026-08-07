@@ -344,3 +344,20 @@ img[data-pixel] {
   color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2); }
 .doc p, .doc li { max-width: 64ch; }
 code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
+
+/* The adoption slot — the only interactive thing in the product. */
+.adopt-slot { margin-bottom: var(--s4); padding: var(--s3);
+  background: var(--band); border-left: calc(2 * var(--px)) solid var(--rail); }
+.adopt { display: grid; grid-template-rows: auto auto auto; gap: var(--s2); }
+.adopt .cta { border: 0; font-family: var(--font-mono); font-size: var(--t-body); cursor: pointer; }
+.adopt .cta:disabled { opacity: 0.6; cursor: wait; }
+.wallets { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s1); }
+.wallets button { width: 100%; min-height: 44px; padding: var(--s2); text-align: left;
+  background: var(--wash); color: var(--phos); border: var(--px) solid var(--rail);
+  font-family: var(--font-mono); font-size: var(--t-body); cursor: pointer; }
+/* A wallet that cannot reach 4663 is VISIBLE, DISABLED, and says why — never hidden,
+   never offered. unitick's finding: hiding invites "why is my wallet missing", offering
+   ships a dead button. */
+.wallets button:disabled { opacity: 0.45; cursor: not-allowed; border-style: dashed; }
+.adopt .err { color: var(--starve); font-size: var(--t-micro); margin: 0; }
+.adopt.done { border-left: calc(2 * var(--px)) solid var(--fed); padding-left: var(--s2); }

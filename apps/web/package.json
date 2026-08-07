@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
-    "build": "next build && cp -r .next/static .next/standalone/apps/web/.next/static && { cp -r public .next/standalone/apps/web/public 2>/dev/null || true; }",
+    "build": "next build && npm run postbuild:standalone",
     "start": "next start -p ${PORT:-3000}",
     "check-types": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postbuild:standalone": "rm -rf .next/standalone/apps/web/.next/static && cp -rT .next/static .next/standalone/apps/web/.next/static && { cp -rT public .next/standalone/apps/web/public 2>/dev/null || true; } && test -n \"$(find .next/standalone -name '*.css' -print -quit)\""
   },
   "dependencies": {
     "next": "16.2.12",

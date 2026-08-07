@@ -1,0 +1,11 @@
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const p = await b.newPage({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+await p.goto("http://127.0.0.1:3600/colony", { waitUntil: "domcontentloaded" });
+await p.waitForTimeout(1500);
+const txt = await p.locator(".adopt-slot").innerText().catch(() => "(no .adopt-slot found)");
+console.log("ADOPT SLOT TEXT:", JSON.stringify(txt));
+const buttons = await p.locator(".adopt-slot button").count();
+console.log("buttons inside adopt slot:", buttons);
+await p.screenshot({ path: "/tmp/claude-0/-root/07a63ec4-fa5a-44b0-b469-d4f6aa157360/scratchpad/shots/adopt-390.png", fullPage: true });
+await b.close();

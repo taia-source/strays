@@ -12,6 +12,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { listStrays } from "../lib/chain";
+import { Adopt } from "../adopt";
 import { CatPortrait } from "../cat-portrait";
 
 export const metadata: Metadata = { title: "STRAYS — the colony" };
@@ -29,6 +30,17 @@ export default async function Colony() {
           {new Date(at).toISOString().replace("T", " ").slice(0, 19)}Z
         </p>
       </header>
+
+      {/*
+        ADOPTION LIVES HERE, above the colony, on the app route.
+        The recorded failure this guards against: a service built to act on a user's token shipped
+        with NO TEXT INPUT ANYWHERE, passing 747 tests and 24 browser checks, because the user's
+        path was never written down so nothing could notice a step was missing. Step 4 of the path
+        in DESIGN §7 is "funds and spawns", and this is it.
+      */}
+      <section className="adopt-slot">
+        <Adopt />
+      </section>
 
       {strays.length === 0 ? (
         <section className="empty">
