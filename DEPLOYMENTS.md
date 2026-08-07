@@ -105,7 +105,24 @@ is 0. No dust stranded, no rounding residue.
 
 ---
 
-## Spend — FINAL, reconciled against the house balance
+## Spend — FINAL, at the cap
+
+**$8.96 of the $10 policy cap is irrecoverably spent. All spending has stopped.**
+
+```
+house at session start   40,199,933,880,953,577 wei  ($77.48)
+house now                34,784,608,982,586,682 wei  ($67.04)
+net out                   5,415,324,898,366,895 wei  ($10.44)
+  of which recoverable      764,249,521,006,000 wei  ($1.47, keeper gas — kept so it CAN run)
+  IRRECOVERABLE                                       ($8.96)
+```
+
+Everything else swept back. **The vault holds 0** — every stray withdrawn, no user funds stranded,
+verified on chain. What the $8.96 bought: a deployed and verified contract, a live-fire round trip,
+two fully autonomous round trips (one take-profit, one stop-loss), and the price history that made
+the backtest possible.
+
+## Spend — earlier reconciliation, superseded
 
 Swept back on completion, per the instruction that everything returns to `HOUSE_ADDRESS`.
 Sweep tx: `0x86e437a4298ef56e6ee8caf203b7e504073050c01da99f5c9e740ec6f9b286d5`.

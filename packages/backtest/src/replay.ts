@@ -68,14 +68,44 @@ export type Trade = {
   readonly costBps: bigint;
   /** `grossBps - costBps`. The only number that matters. */
   readonly netBps: bigint;
-  readonly exitReason: "stop" | "take-profit" | "end-of-data";
+  readonly exitReason: "stop" | "take-profit" | "end-of-data" | "time-exit";
   readonly barsHeld: number;
+  /**
+   * The `score.totalBps` the entry decision produced, recorded at DECISION TIME. This is the
+   * number a selectivity filter thresholds on, and it is stored so a filter can be evaluated
+   * post-hoc on trades that were actually taken without re-running the replay.
+   */
+  readonly scoreBps: bigint;
+  /** Cumulative ETH volume observed strictly before the decision bar, in wei. Decision-time. */
+  readonly volumeBeforeWei: bigint;
+  /** Distinct swap count strictly before the decision bar. A holder-count proxy. Decision-time. */
+  readonly barsBefore: number;
+  /** Hold duration in seconds, entry fill to exit fill. */
+  readonly heldSeconds: number;
 };
+
+/**
+ * ══ HOW A STOP CAN BE MODELLED WHEN THE VENUE GAPS THROUGH IT ══
+ *
+ * RESULTS.md §3: stopped trades lose a mean of −1030bps against a −235bps stop, because between
+ * one swap and the next these pools move 10%. A stop that cannot fill at its level is not a stop,
+ * and modelling it as one is the single largest mechanical error the first backtest surfaced.
+ *
+ * The replay has always filled the stop at the NEXT OBSERVED PRICE, which is the honest thing —
+ * that is why the −1030bps figure exists at all. What was never tested is whether the stop should
+ * be there. Three modes, all measurable:
+ *
+ *  - `"level"`  — the shipped behaviour: exit when the mark is `stopLossBps` below entry, filling
+ *                 at the next observed price whatever that is.
+ *  - `"none"`   — no stop at all. The position rides to its take-profit, its time exit, or the end
+ *                 of the data. Tests directly whether the stop is subtracting value.
+ */
+export type StopMode = "level" | "none";
 
 export type ReplayParams = {
   /** Lookback window fed to `evaluateEntry`, in minutes. Default 60 — the constant under test. */
   readonly lookbackMinutes: number;
-  /** `EDGE_MULTIPLE`. Default 2 — the constant under test. */
+  /** `EDGE_MULTIPLE`, now threaded through `DecideConfig` and therefore actually sweepable. */
   readonly edgeMultiple: bigint;
   /** Stop loss in bps. Default 235 — the constant under test. */
   readonly stopLossBps: bigint;
@@ -83,6 +113,46 @@ export type ReplayParams = {
   readonly maxDrawdownBps: bigint;
   /** Starting compartment, in wei. */
   readonly startWei: bigint;
+  /**
+   * SELECTIVITY. Minimum `score.totalBps` at decision time for an entry to be taken.
+   *
+   * The score is already computed by the real `decide()` for every entry; this gate refuses the
+   * entry when it is below the threshold, so a high threshold means far fewer, far
+   * better-scored trades. 0 admits everything the shipped strategy admits.
+   */
+  readonly minScoreBps: bigint;
+  /**
+   * QUALITY GATE — minimum cumulative ETH volume observed strictly before the decision bar.
+   *
+   * Reconstructed from the bars themselves, never from the API's today-value, so it carries no
+   * lookahead. Ibrahim measured live that real tokens on this pad run 100-400 ETH of 24h volume
+   * while 7 of 69 that pass the market-cap prefilter have under 0.5 ETH — a floor here is the
+   * closest the backtest can get to that observation.
+   */
+  readonly minVolumeWei: bigint;
+  /**
+   * QUALITY GATE — minimum number of swaps observed strictly before the decision bar.
+   *
+   * Holder counts are not available historically (RESULTS.md §5 caveat 4). Distinct swap count is
+   * the available decision-time proxy for "this token has real participation", and it is labelled
+   * a proxy everywhere it appears rather than being called a holder count.
+   */
+  readonly minBarsBefore: number;
+  /**
+   * HOLD HORIZON. Maximum hold in seconds before a time exit fires. `Infinity`-equivalent is
+   * expressed as a very large number rather than a sentinel.
+   *
+   * A 218bps fixed toll is crushing at short horizons and trivial at long ones. This is the axis
+   * that decides whether the toll can be amortised.
+   */
+  readonly maxHoldSeconds: number;
+  /** Which stop model to use. See `StopMode`. */
+  readonly stopMode: StopMode;
+  /**
+   * Take-profit override in bps. `undefined` keeps the derived `levelsFor` target (3 sigma,
+   * floored against the cost bar). A longer hold wants a larger target or it exits on noise.
+   */
+  readonly takeProfitBps: bigint | undefined;
 };
 
 export const DEFAULT_PARAMS: ReplayParams = {
@@ -91,6 +161,14 @@ export const DEFAULT_PARAMS: ReplayParams = {
   stopLossBps: 235n,
   maxDrawdownBps: 2000n,
   startWei: 10_000_000_000_000_000n, // 0.01 ETH ~= $19.27
+  minScoreBps: 0n,
+  minVolumeWei: 0n,
+  minBarsBefore: 0,
+  // ~114 years. Not a sentinel: the comparison is a real one, it simply never fires by default,
+  // so the baseline reproduces the shipped behaviour byte-for-byte.
+  maxHoldSeconds: 3_600_000_000,
+  stopMode: "level",
+  takeProfitBps: undefined,
 };
 
 export type ReplayResult = {
@@ -188,6 +266,16 @@ export async function replayToken(
   // is the O(1) form of `volumeBefore`/`sellableBefore`; `replay.test.ts` pins them equal.
   let cumulativeVolumeWei = 0n;
   let largestSellSeenWei = 0n;
+  // Distinct swaps observed strictly before the current bar. The decision-time proxy for holder
+  // count / participation, which is NOT available historically. Named for what it is.
+  let barsSeen = 0;
+  // Decision-time context for the entry currently pending or open, carried onto the Trade so a
+  // selectivity filter can be evaluated against what was knowable when the trade was taken.
+  let entryContext: { scoreBps: bigint; volumeWei: bigint; barsBefore: number } = {
+    scoreBps: 0n,
+    volumeWei: 0n,
+    barsBefore: 0,
+  };
 
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
@@ -195,6 +283,7 @@ export async function replayToken(
     // Everything below reads `cumulativeVolumeWei` / `largestSellSeenWei` as of bar i-1.
     const advance = (): void => {
       cumulativeVolumeWei += bar.ethVolumeWei;
+      barsSeen += 1;
       if (!bar.isBuy && bar.ethVolumeWei > largestSellSeenWei) {
         largestSellSeenWei = bar.ethVolumeWei;
       }
@@ -223,8 +312,17 @@ export async function replayToken(
     const rawSize = (state.compartmentWei * risk.positionFractionBps) / BPS;
     const sizeWei = rawSize > risk.maxPositionWei ? risk.maxPositionWei : rawSize;
 
+    // ── THE QUALITY GATES. Both read state accumulated STRICTLY BEFORE bar `i`, so neither can
+    // see the future. `cumulativeVolumeWei` and `barsSeen` are advanced at the END of each
+    // iteration, which is the same discipline `sellableBefore` follows.
+    const passesQuality =
+      cumulativeVolumeWei >= params.minVolumeWei && barsSeen >= params.minBarsBefore;
+
     const candidates: Candidate[] =
-      state.position !== undefined || history.length < 2 || largestSellSeenWei < sizeWei
+      state.position !== undefined ||
+      history.length < 2 ||
+      largestSellSeenWei < sizeWei ||
+      !passesQuality
         ? []
         : [
             {
@@ -285,6 +383,10 @@ export async function replayToken(
       slippageBps: 100n,
       idempotencyKey: `${token.address}-${String(i)}`,
       approvalsNeeded: false,
+      // NOW SWEEPABLE. `@strays/hunt` threads this through `DecideConfig`; before that change it
+      // was a module-level const `decide()` read directly, and RESULTS.md recorded the resulting
+      // four byte-identical sweep rows as a finding rather than reporting them as a test.
+      edgeMultiple: params.edgeMultiple,
     };
 
     const decision = await decide(state, market, cfg);
