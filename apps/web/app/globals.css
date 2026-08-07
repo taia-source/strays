@@ -331,12 +331,52 @@ img[data-pixel] {
 .rank td, .tiers td { padding: var(--s1); border-bottom: var(--px) solid var(--soot-line); }
 
 .log-list { list-style: none; padding: 0; margin: 0; }
-.log-list li { display: grid; grid-template-columns: auto auto 1fr auto; gap: var(--s2);
+/* Five columns now: block, action, what-happened, THE RESULT, and the tx link. The result column
+   is `auto` and sits immediately before the link so every PnL on the page forms one right-hand
+   edge — a column of signed figures is only scannable if the signs line up. */
+.log-list li { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: var(--s2);
   align-items: baseline; padding: var(--s1) 0; border-bottom: var(--px) solid var(--soot-line);
   font-size: var(--t-micro); }
 .log-list .act { color: var(--fed); text-transform: uppercase; letter-spacing: 0.08em; }
 .log-list .why { color: var(--phos-dim); }
 .log-list li[data-outcome="failed"] .act { color: var(--starve); }
+
+/* The TICKER. Brighter than the sentence around it, because "what did it buy" is the first thing
+   the eye should find on a trade row. Underlined on hover only — a log of a hundred rows with a
+   hundred permanent underlines is noise. */
+.log-list .tok {
+  color: var(--phos);
+  text-decoration: none;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.log-list .tok:hover { text-decoration: underline; }
+
+/*
+ * ══ THE PnL COLUMN ══
+ *
+ * DESIGN §9: no hidden losses. A loss is set at the SAME size and the SAME weight as a win and
+ * differs only in hue — there is no smaller type, no lower opacity and no de-emphasis anywhere in
+ * this block, because every one of those is a way of hiding a loss while technically showing it.
+ * `.fed` / `.starve` supply the colour; this only supplies the shape.
+ */
+.log-list .pnl {
+  display: grid;
+  justify-items: end;
+  gap: 0;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The bps restatement, under the ETH figure. It INHERITS the PnL hue rather than going grey: the
+   proportional loss is not a footnote to the absolute one, it is the same fact in the unit that
+   makes small-ETH trades comparable. */
+.log-list .pnl-bps {
+  font-size: var(--t-micro);
+  opacity: 0.85;
+  letter-spacing: 0.04em;
+}
 
 .warn { background: var(--wash); padding: var(--s3); border-left: calc(2 * var(--px)) solid var(--starve); }
 .doc section { margin-bottom: var(--s5); }
@@ -1255,15 +1295,21 @@ body[data-route="scroll"] {
  * the sentence. Measured at 320px: the rationale needs the full width or it wraps every word.
  */
 @media (max-width: 559px) {
+  /*
+   * Three areas over two rows. The PnL joins the METADATA line rather than the sentence, beside
+   * the tx link: the result and "did it land" are the two things a reader scans a log for, and
+   * putting the result on the wrapping prose row would bury it mid-paragraph at some widths.
+   */
   .log-list li {
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: auto auto 1fr auto;
     grid-template-areas:
-      "blk act link"
-      "why why why";
+      "blk act result link"
+      "why why why why";
   }
   .log-list li > .stamp:first-child { grid-area: blk; }
   .log-list .act { grid-area: act; }
   .log-list .why { grid-area: why; }
+  .log-list .pnl { grid-area: result; justify-self: end; }
   .log-list li > :last-child { grid-area: link; justify-self: end; }
 }
 

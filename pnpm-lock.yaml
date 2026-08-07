@@ -113,6 +113,34 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@22.19.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@22.19.1)(jiti@2.7.0)(tsx@4.19.2))
 
+  packages/backtest:
+    dependencies:
+      '@strays/hunt':
+        specifier: workspace:*
+        version: link:../hunt
+      '@taia/backtest':
+        specifier: workspace:*
+        version: link:../../vendor/backtest
+    devDependencies:
+      '@taia/tsconfig':
+        specifier: workspace:*
+        version: link:../../vendor/tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.1
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.10(vitest@4.1.10)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.19.2
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@22.19.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@22.19.1)(jiti@2.7.0)(tsx@4.19.2))
+
   packages/cat:
     dependencies:
       '@taia/ui':

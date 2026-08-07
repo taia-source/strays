@@ -16,9 +16,28 @@
  * The auto-refresh is a CLIENT island (`<LiveStamp>`) over a server-rendered list. The list is
  * data, and re-fetching a hundred chain logs every few seconds to change nothing would be spending
  * an RPC budget on a page that is already correct.
+ *
+ * ══ WHAT A TRADE ROW HAS TO SAY ══
+ *
+ * Ibrahim: *"why not showing pnls in logs and what token it bought?"* He was reading rows like
+ * `HUNT bought 561427.711 units for 0.0012 ETH` — a number of units of an unnamed thing, and no
+ * result anywhere on the page. Both facts were already being decoded off the events and discarded
+ * (see `lib/decisions.ts`). A trade row now carries three things it did not:
+ *
+ *   1. WHAT — the ticker, resolved from the launchpad, with the address linked to the explorer so
+ *      the claim is checkable. An unresolvable address renders truncated, never blank.
+ *   2. HOW MUCH — the realised `ethOut - ethIn` of the round trip, in ETH and in bps.
+ *   3. WHETHER IT IS DONE — an open position says "open" rather than showing a result it does not
+ *      have. `DESIGN.md` §9 bans presenting a mark as an outcome.
+ *
+ * The PnL is coloured with `.fed` / `.starve`, the same two hues the whole product uses for ate /
+ * starved, and a LOSS gets the identical weight and size as a win. §9: **no hidden losses.** The
+ * one real round trip on chain today is a −199 bps loss, so this column ships exercised against a
+ * losing trade rather than against a hypothetical winning one.
  */
 import type { Metadata } from "next";
-import { recentDecisions } from "../lib/decisions";
+import { recentDecisions, formatPnlEth, formatPnlBps } from "../lib/decisions";
+import { symbolsFor, shortAddress } from "../lib/token-names";
 import { EXPLORER } from "../lib/config";
 import { LiveStamp } from "../nav/live-stamp";
 
@@ -40,6 +59,18 @@ export default async function Logs() {
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
+
+  /*
+   * Ticker lookup, over the DEDUPLICATED set of traded addresses.
+   *
+   * Deliberately NOT inside the `try` above: the chain read is the page, and the launchpad is a
+   * decoration on it. A pad outage must degrade a ticker to an address, never turn a page of real
+   * on-chain trades into "the decision log could not be read". `symbolsFor` cannot reject, so the
+   * failure surfaces as a `null` per address and the row falls back on its own.
+   */
+  const symbols = await symbolsFor(
+    (data?.rows ?? []).flatMap((r) => (r.token === null ? [] : [r.token])),
+  );
 
   return (
     <main className="panel-route">
@@ -80,7 +111,51 @@ export default async function Logs() {
               <li key={`${r.txHash ?? r.at}-${r.strayId}-${r.block}`} data-outcome={r.outcome}>
                 <span className="stamp">blk {r.block.toString()}</span>
                 <span className="act">{r.action}</span>
-                <span className="why">{r.rationale}</span>
+                <span className="why">
+                  {r.token !== null ? (
+                    <>
+                      {/* WHAT it bought. The ticker is the label and the ADDRESS is the link, so
+                          the ticker is never the only evidence — memecoin tickers are not unique
+                          and a reader has to be able to check which contract this was. */}
+                      <a
+                        href={`${EXPLORER}/address/${r.token}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="tok"
+                        title={r.token}
+                      >
+                        {symbols.get(r.token.toLowerCase()) ?? shortAddress(r.token)}
+                      </a>{" "}
+                    </>
+                  ) : null}
+                  {r.rationale}
+                </span>
+                {/*
+                  THE RESULT. Three mutually exclusive states, and none of them is a blank cell:
+                  a closed round trip shows its realised PnL, an open position says so, and an exit
+                  we could not pair says THAT rather than inventing a cost basis of zero.
+                */}
+                {r.pnl !== null ? (
+                  <span
+                    className={`pnl fig ${r.pnl.eth > 0 ? "fed" : r.pnl.eth < 0 ? "starve" : ""}`}
+                    title={`in ${r.pnl.ethIn} ETH, out ${r.pnl.ethOut} ETH, opened at block ${r.pnl.openedAtBlock}`}
+                  >
+                    {formatPnlEth(r.pnl.eth)}
+                    {r.pnl.bps !== null ? (
+                      <span className="pnl-bps">{formatPnlBps(r.pnl.bps)}</span>
+                    ) : null}
+                  </span>
+                ) : r.open ? (
+                  <span className="pnl stamp">open</span>
+                ) : r.action === "flee" ? (
+                  /* An exit whose entry is outside the scan window. "We cannot compute this" is a
+                     different fact from "this broke even", and a 0 here would be a fabrication. */
+                  <span className="pnl stamp" title="the opening trade is outside the scanned range">
+                    unpaired
+                  </span>
+                ) : (
+                  <span className="pnl" />
+                )}
                 {r.txHash !== null ? (
                   <a
                     href={`${EXPLORER}/tx/${r.txHash}`}
