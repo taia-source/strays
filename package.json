@@ -7,7 +7,7 @@
     "gate": "biome check --error-on-warnings . && turbo run check-types test && knip",
     "test": "turbo run test",
     "check-types": "turbo run check-types",
-    "build": "pnpm --filter @strays/cat build && pnpm --filter @strays/hunt build && pnpm --filter @strays/web build && pnpm --filter @strays/indexer build",
+    "build": "set -e; pnpm --filter @taia/ui build; pnpm --filter @strays/cat build; pnpm --filter @strays/hunt build; pnpm --filter @strays/web build; pnpm --filter @strays/indexer build",
     "start": "node $(find apps/web/.next/standalone -name server.js -maxdepth 4 | head -1)"
   },
   "devDependencies": {
