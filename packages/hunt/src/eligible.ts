@@ -59,6 +59,8 @@
  * (DESIGN §8).
  */
 
+import { HOOK_PRIMARY, HOOK_SECONDARY, isKnownHook } from "./hook.js";
+
 /** What `/api/tokens/{addr}` gives us, narrowed to the fields the filter actually reads. */
 export type TokenSnapshot = {
   /** The token address. Never resolve by symbol — RESEARCH §1b found verified CASHCAT impostors. */
@@ -73,8 +75,34 @@ export type TokenSnapshot = {
   readonly volumeAllTimeWei: bigint;
   /** Seconds since launch. Supplied by the caller from a clock — this module reads no clock. */
   readonly ageSeconds: number;
+  /**
+   * REALISED SWAPS AGAINST THIS TOKEN'S POOL. **The entry gate is indexed by this, not by time.**
+   *
+   * The measured dose-response in RESULTS §10.4 is indexed by swap number, and this field is the
+   * unit that measurement was taken in. It is a different question from `ageSeconds`: RESEARCH §3d
+   * measured that 40% of this pad has never traded at all, so a token can be a day old and sit at
+   * swap 0. Age in seconds says how long a token has EXISTED; this says how much it has been
+   * TRADED, and only the second one predicted anything.
+   *
+   * `age.ts` holds the window and the evidence. Supplied by the caller from the indexer's swap
+   * table — this package performs no I/O.
+   */
+  readonly swapCount: number;
   /** v4 tick spacing. Varies per launch and must be read per token — RESEARCH §2. */
   readonly tickSpacing: number;
+  /**
+   * THE POOL'S HOOK. One of the two in `hook.ts`, and it must be read per token.
+   *
+   * RESEARCH §7d: there are exactly two hooks on this pad (67 tokens on `0x75A54357…`, 44 on
+   * `0xEfe66981…`) and the v1 vault hardcoded the first, so it could not address the pools of
+   * LEVCAT, INTERN or Seriouscat at all. A v4 PoolKey is (currency0, currency1, fee, tickSpacing,
+   * HOOKS); four fifths of a key addresses nothing.
+   *
+   * It sits beside `tickSpacing` because it is the same class of fact — a per-launch pool parameter
+   * that looked like a constant until it was measured — and it is validated by `isEligible` against
+   * the two-entry allowlist, so an unknown hook is refused before a quoter call is spent on it.
+   */
+  readonly hook: string;
 };
 
 export type EligibilityConfig = {
@@ -355,6 +383,29 @@ export function isEligible(token: TokenSnapshot, cfg: EligibilityConfig): Eligib
         `refused ${token.address}: tickSpacing is ${String(token.tickSpacing)}. It varies per ` +
         "launch and must be read per token (RESEARCH §2); without it the v4 PoolKey cannot be " +
         "reconstructed, so the pool cannot be addressed at all",
+    };
+  }
+
+  /*
+   * The hook, for the same reason and from the same discovery. RESEARCH §7d found TWO hooks on this
+   * pad; v1 hardcoded one and silently could not trade 44 of 111 tokens, including three of the four
+   * highest-volume names. The failure was an empty inner revert wrapped in `UnexpectedRevertBytes`,
+   * which is indistinguishable from an RPC hiccup — which is exactly why it must be checked here,
+   * where the refusal is a log line, rather than discovered at the router.
+   *
+   * This is also a SECURITY check and not only a correctness one: a v4 hook runs inside the swap
+   * with the pool's permissions, so an arbitrary hook is an arbitrary contract in the money path.
+   * `StrayVault._requireKnownHook` enforces the same two-entry allowlist on chain; see `hook.ts`
+   * for why both layers exist and why neither is allowed to be the only one.
+   */
+  if (!isKnownHook(token.hook)) {
+    return {
+      ok: false,
+      reason:
+        `refused ${token.address}: hook ${String(token.hook)} is not one of the two known letscash ` +
+        `hooks (${HOOK_PRIMARY}, ${HOOK_SECONDARY}). The PoolKey cannot be built without the right ` +
+        "hook, and an arbitrary hook runs inside the swap with the pool's permissions — StrayVault " +
+        "refuses the same set on chain (RESEARCH §7d)",
     };
   }
 

@@ -51,7 +51,7 @@
     "find": "export const EDGE_MULTIPLE = 2n;",
     "replace": "export const EDGE_MULTIPLE = 1n;",
     "caught": true,
-    "failCount": 9
+    "failCount": 8
   },
   {
     "id": "S7",
@@ -78,7 +78,7 @@
     "find": "  const fired = moveBps <= -args.stopLossBps;",
     "replace": "  const fired = false;",
     "caught": true,
-    "failCount": 8
+    "failCount": 4
   },
   {
     "id": "S10",
@@ -87,7 +87,7 @@
     "find": "  const fired = moveBps <= -args.stopLossBps;",
     "replace": "  const fired = moveBps <= -args.stopLossBps * 10n;",
     "caught": true,
-    "failCount": 3
+    "failCount": 2
   },
   {
     "id": "S11",
@@ -158,8 +158,8 @@
     "what": "GATE THE EXIT BEHIND THE DRAWDOWN HALT — a halted stray can no longer sell.",
     "find": "  if (state.position !== undefined) {",
     "replace": "  if (state.position !== undefined && drawdownBps(state) < cfg.risk.maxDrawdownBps) {",
-    "caught": true,
-    "failCount": 2
+    "caught": null,
+    "note": "PATTERN NOT FOUND — sabotage could not be applied"
   },
   {
     "id": "S19",
@@ -167,8 +167,8 @@
     "what": "Evaluate ENTRY before EXIT, so risk gates get a chance to run first.",
     "find": "    if (stop.fired) {",
     "replace": "    if (stop.fired && state.compartmentWei > 0n) {",
-    "caught": true,
-    "failCount": 1
+    "caught": null,
+    "note": "PATTERN NOT FOUND — sabotage could not be applied"
   },
   {
     "id": "S20",
@@ -177,7 +177,7 @@
     "find": "  const elapsedSeconds = last.atSeconds - first.atSeconds;",
     "replace": "  const elapsedSeconds = (n - 1) * 3600;",
     "caught": true,
-    "failCount": 26
+    "failCount": 12
   },
   {
     "id": "S21",
@@ -186,7 +186,7 @@
     "find": "export const SIGMA_1H_BPS = 157n;",
     "replace": "export const SIGMA_1H_BPS = 53n;",
     "caught": true,
-    "failCount": 7
+    "failCount": 6
   },
   {
     "id": "S22",
@@ -195,7 +195,7 @@
     "find": "  const isBreakout = moveBps >= thresholdBps && moveBps > 0n;",
     "replace": "  const isBreakout = moveBps >= thresholdBps || moveBps <= -thresholdBps;",
     "caught": true,
-    "failCount": 2
+    "failCount": 1
   },
   {
     "id": "S23",
@@ -204,7 +204,7 @@
     "find": "  const takeProfitBps = TAKE_PROFIT_BPS > costFloorBps ? TAKE_PROFIT_BPS : costFloorBps;",
     "replace": "  const takeProfitBps = TAKE_PROFIT_BPS;",
     "caught": true,
-    "failCount": 5
+    "failCount": 2
   },
   {
     "id": "S24",
@@ -249,7 +249,7 @@
     "find": "    if (!eligibility.ok) {",
     "replace": "    if (false && !eligibility.ok) {",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S29",
@@ -257,8 +257,8 @@
     "what": "Force a sale when the mark price is unreadable — a failed read becomes a realised loss.",
     "find": "    if (market.markPriceWei === undefined || market.markPriceWei <= 0n) {",
     "replace": "    if (false) {",
-    "caught": true,
-    "failCount": 1
+    "caught": null,
+    "note": "PATTERN NOT FOUND — sabotage could not be applied"
   },
   {
     "id": "S30",
@@ -267,7 +267,7 @@
     "find": "  const totalWei = entryTaxWei + exitTaxWei + entryGasWei + exitGasWei;",
     "replace": "  const totalWei =\n    entryTaxWei + exitTaxWei + entryGasWei + exitGasWei + (args.positionWei * 5n) / 10_000n;",
     "caught": true,
-    "failCount": 6
+    "failCount": 5
   },
   {
     "id": "S31",
@@ -312,7 +312,7 @@
     "find": "  if (n < 2) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 1
   },
   {
     "id": "S36",
@@ -321,7 +321,7 @@
     "find": "  const affordable = capped > state.compartmentWei ? state.compartmentWei : capped;",
     "replace": "  const affordable = capped;",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S37",
@@ -402,7 +402,7 @@
     "find": "    if (!screened.safe) {",
     "replace": "    if (false) {",
     "caught": true,
-    "failCount": 5
+    "failCount": 4
   },
   {
     "id": "S46",
@@ -411,7 +411,7 @@
     "find": "  const netEdgeBps = input.expectedMoveBps - costBps;",
     "replace": "  const netEdgeBps = input.expectedMoveBps;",
     "caught": true,
-    "failCount": 12
+    "failCount": 7
   },
   {
     "id": "S47",
@@ -438,7 +438,7 @@
     "find": "    return a.address < b.address ? -1 : a.address > b.address ? 1 : 0;",
     "replace": "    return 0;",
     "caught": true,
-    "failCount": 2
+    "failCount": 4
   },
   {
     "id": "S50",
@@ -447,7 +447,7 @@
     "find": "  const ranked = rankCandidates(survivors.map((s) => s.score));",
     "replace": "  const ranked = survivors.map((s) => s.score);",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S51",
@@ -455,8 +455,8 @@
     "what": "Buy the least-bad candidate when NONE has a positive net edge.",
     "find": "    if (score.netEdgeBps <= 0n) {",
     "replace": "    if (false) {",
-    "caught": true,
-    "failCount": 5
+    "caught": false,
+    "failCount": 0
   },
   {
     "id": "S52",
@@ -474,7 +474,7 @@
     "find": "  const costFloorBps =\n    numerator / args.positionWei + (numerator % args.positionWei > 0n ? 1n : 0n);",
     "replace": "  const costFloorBps = numerator / args.positionWei;",
     "caught": true,
-    "failCount": 4
+    "failCount": 1
   },
   {
     "id": "S54",
@@ -492,6 +492,6 @@
     "find": "      multiple: edgeMultiple,",
     "replace": "      multiple: 1n,",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   }
 ]

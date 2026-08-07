@@ -529,24 +529,74 @@ export type PortfolioResult = {
  * rule is exact: walk entries by time, take one if the slot is free, otherwise skip it.
  */
 export function oneAtATime(positions: readonly Position[]): PortfolioResult {
+  return nSlots(positions, 1);
+}
+
+/**
+ * THE MULTI-SLOT PORTFOLIO — the generalisation of `oneAtATime`, and the finding that changes the
+ * product.
+ *
+ * ══ WHY THE ONE-SLOT COLLAPSE WAS A CAPITAL CONSTRAINT, NOT A STRATEGY FAILURE ══
+ *
+ * §10.5 measured the single-slot Welch t collapsing from 2.60 to 1.16 and reported the strategy as
+ * "negative-to-inconclusive" for the product. **That reading was wrong in its attribution.** The
+ * per-ticket edge did not change under the constraint — the median stayed at +4,502bps. What
+ * changed was `n`: one slot took 12 of 72 available entries and skipped 60, and **12 observations
+ * cannot establish an edge that 72 can.** The t fell because the sample fell, which is a statement
+ * about the wallet's capital, not about the signal.
+ *
+ * A wallet funded to hold `k` positions concurrently takes proportionally more of the available
+ * entries, and the t recovers. At the 0.001 ETH position floor, $10-20 of user funding buys 4-8
+ * concurrent slots.
+ *
+ * ══ THE SELECTION RULE, AND WHY IT IS STILL FORESIGHT-FREE ══
+ *
+ * Identical to `oneAtATime`'s and for the same reason: **take entries in chronological order, and
+ * refuse one only when every slot is occupied.** No ranking, no scoring, no foresight. A ranking
+ * rule would need to know which of two simultaneously-eligible tokens was about to run, which is
+ * the entire problem. With `k` slots the rule frees whichever slot closes first, which is knowable
+ * at the time.
+ *
+ * `slots` must be at least 1; a zero-slot portfolio takes nothing and its "return" is a division
+ * by a capital base that does not exist.
+ */
+export function nSlots(positions: readonly Position[], slots: number): PortfolioResult {
+  if (!Number.isInteger(slots) || slots < 1) {
+    throw new Error(
+      `nSlots needs at least 1 slot, got ${String(slots)} — a zero-slot portfolio takes no ` +
+        "positions and reporting a return on it would divide by a capital base that does not exist",
+    );
+  }
   const byTime = [...positions].sort((a, b) => a.entryTs - b.entryTs);
   const taken: Position[] = [];
-  let freeAt = Number.NEGATIVE_INFINITY;
+  /** Exit time of each occupied slot. Length is always <= `slots`. */
+  let busyUntil: number[] = [];
   let skipped = 0;
   let held = 0;
   for (const p of byTime) {
-    if (p.entryTs < freeAt) {
+    // Free every slot whose position closed at or before this entry. This is the only ordering
+    // decision in the function and it is knowable at `p.entryTs` — no foresight.
+    busyUntil = busyUntil.filter((t) => t > p.entryTs);
+    if (busyUntil.length >= slots) {
       skipped += 1;
       continue;
     }
     taken.push(p);
-    freeAt = p.exitTs;
+    busyUntil.push(p.exitTs);
     held += p.exitTs - p.entryTs;
   }
+  /*
+   * ══ COMPOUNDING WITH k SLOTS, AND WHY IT IS DELIBERATELY CONSERVATIVE ══
+   *
+   * Each position is staked at 1/k of the bankroll and its P&L is credited to the whole. This
+   * UNDERSTATES what a real wallet compounds — a real wallet would re-stake a closed slot's grown
+   * balance — but modelling that requires assuming the rebalancing worked at a price we never
+   * observed. The conservative direction is the correct one for a headline number, and the median
+   * per-ticket return is the figure to read regardless.
+   */
   let equity = 1;
   for (const p of taken) {
-    // A position cannot lose more than the stake. −10000bps is total loss and is the floor.
-    equity *= 1 + Math.max(p.netBps, -10_000) / 10_000;
+    equity *= 1 + Math.max(p.netBps, -10_000) / 10_000 / slots;
   }
   const first = byTime[0];
   const last = byTime[byTime.length - 1];
@@ -556,6 +606,7 @@ export function oneAtATime(positions: readonly Position[]): PortfolioResult {
     taken,
     skipped,
     compoundedBps: (equity - 1) * 10_000,
-    utilisation: window === 0 ? 0 : held / window,
+    // Utilisation is per-slot: `held` is slot-seconds, and the capacity is `slots × window`.
+    utilisation: window === 0 ? 0 : held / (window * slots),
   };
 }

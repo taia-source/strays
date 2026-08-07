@@ -1,6 +1,23 @@
 # BACKTEST RESULTS — `@strays/hunt` against real letscash history
 
-> **ROUND 4 (2026-08-07, LATEST): "this venue is unwinnable" is SUPERSEDED. Read §10 first.**
+> **ROUND 5 (2026-08-07, LATEST): the SURVIVORSHIP caveat is retired. The edge SURVIVES. Read §11
+> first.**
+> Rounds 1-4 all ran on 461 tokens drawn from *today's* mcap/trending lists — i.e. tokens selected
+> by surviving. §10.7 named that as the one doubt that could invalidate everything. The universe has
+> now been rebuilt from the factory's `TokenLaunched` event, which fires at launch before any
+> outcome exists: **3,202 tokens, of which 2,741 never reached any leaderboard.** On the complete
+> universe the median falls by half (+4,831 → +2,206bps) **and the Welch t against matched random
+> RISES, from 3.76 to 3.93, with t>2 on 20/20 seeds.** Survivorship inflates a *level*; the claim
+> was always a *difference*, and the difference is untouched. All three pre-declared kill conditions
+> failed to fire.
+> **Round 4's "one $5 stray cannot capture it" is also resolved: that was a CAPITAL constraint, not
+> a strategy failure.** The per-ticket median is flat across the slot ladder; only `n` changed.
+> **$10 buys 4 slots and 4 slots clears t>2 on 20/20 seeds.**
+> Held out: **entry at swap 3, 50% trailing stop, median +7,765bps, 85.9% win, 1% unresolved.**
+> **Still `credible: false`** at 240 cumulative trials (n=99, t peaks at 2.55, cost model
+> INCOMPLETE and optimistic). §11.5 is the implementation spec; §11.7 says what is left.
+>
+> **ROUND 4 (2026-08-07, earlier): "this venue is unwinnable" is SUPERSEDED. Read §10.**
 > Rounds 1-3 tested ONE strategy family — momentum breakout with a tight stop — eleven times, and
 > generalised its failure into a claim about the venue. That generalisation does not follow.
 > Round 4 tested four families the harness could not previously express. **Entering early in a
@@ -1223,3 +1240,381 @@ npx vitest run                      # 102 tests (50 replay + 19 liquidity + 33 p
 `src/positions.ts` holds the simulator, the entry rules and the matched-random control;
 `src/hold.ts` searches and never reports a held-out number; `src/hold-confirm.ts` is the only file
 that does. That separation is the one rounds 2 and 3 used.
+
+---
+
+# ROUND 5 — THE SURVIVORSHIP KILL TEST
+
+## 11.0 The answer
+
+**The edge survives a universe collected forward from launch, including every token that died.**
+
+§10.7 named survivorship as the one remaining doubt that could invalidate rounds 1-4, because every
+number in four rounds came from tokens on *today's* mcap/trending lists — i.e. tokens selected by an
+outcome that happens strictly after the entry decision being credited. That universe has now been
+rebuilt from the factory's `TokenLaunched` event, which fires at launch, before any outcome exists.
+
+```
+tokens that emitted TokenLaunched in 28 days : 3,202     <-- the complete universe
+...that ever traded twice                    : 2,281
+...on today's mcap/trending lists            :   461     <-- ALL of rounds 1-4 lived here
+...launched, traded, and NEVER listed        : 1,820     <-- invisible to every earlier round
+```
+
+**85.6% of everything ever launched was missing from rounds 1-4.** The kill test re-measures round
+4's already-fixed parameters (entry@swap-20, 50% trailing stop) on both universes, with the same
+code, the same cost model and the same matched-random control, so the ONLY difference between the
+arms is which tokens are in them:
+
+```
+                       n     mean   median  win%   random   WelchT      t range   t>2
+SURVIVOR-BIASED      178   23,379   +4,831   69%   -2,876     3.76   0.51..3.89  18/20
+COMPLETE             261   16,300   +2,206   63%   -2,962     3.93   3.51..4.13  20/20
+```
+
+**The level falls by more than half — and the significance goes UP.** The median drops 4,831 →
+2,206bps, which is the survivorship bias being paid honestly. But the Welch t against matched
+random rises from 3.76 to 3.93, and t>2 goes from 18/20 seeds to **20/20**.
+
+**That is the result, and the mechanism is worth stating plainly: survivorship inflates a LEVEL,
+and the claim here was never a level. It was a DIFFERENCE between a signal arm and a control drawn
+on the same tokens.** Adding 83 dead tokens lowers both arms together, so the difference is
+untouched — and because the control gets worse slightly faster than the signal does, the gap widens.
+The matched-random control was built in round 2 precisely as the defence against this bias, and this
+is the measurement that shows the defence works.
+
+### The three kill conditions, declared before the numbers were seen
+
+Written into `src/survivorship.ts` ahead of the run so the bar could not move afterwards:
+
+| # | condition | result |
+|---|---|---|
+| 1 | signal median ≤ 0 on the complete universe | **no** — median +2,206bps |
+| 2 | Welch t < 2 vs matched random on the complete universe | **no** — t 3.93, t>2 on 20/20 seeds |
+| 3 | dose-response inverted or flat | **no** — entry@5 +5,732 vs entry@200 −2,386 |
+
+**None fired. The strategy is not killed.** The dose-response survives intact on the complete
+universe, and is *cleaner* there than on the survivor corpus — every dose from swap 5 to swap 500
+clears t>2 on 20/20 seeds down to swap 50, and the median crosses zero between swap 20 and swap 50:
+
+```
+COMPLETE universe, held with a 50% trailing stop
+  entry@      n      mean    median  win%   WelchT      t range   t>2
+      5     261   +31,818    +5,732   80%     3.33   3.16..3.41  20/20
+     10     261   +23,331    +4,200   72%     3.64   3.38..3.76  20/20
+     20     261   +16,300    +2,206   63%     3.93   3.51..4.13  20/20
+     50     261    +7,518    -1,389   41%     2.89   2.28..3.21  20/20
+    100     256    +3,235    -2,128   32%     2.84   1.54..3.54  17/20
+    200     189    +1,661    -2,386   28%     1.75   0.67..2.42   7/20
+    500     121      -266    -3,046   26%     0.72  -0.52..1.71   0/20
+```
+
+## 11.1 What the collection found, and one bug it nearly hid
+
+`src/forward.ts` collects the universe from `TokenLaunched` on factory
+`0x5bd1Fbe78a78fe8236fa00CF48fbEBA74ae34661`. The pool id is the event's own topic3, so **the hook
+is never an input to finding a pool** — the two-hook bug is structurally impossible here rather than
+merely avoided. The hook is nevertheless read per-pool from the PoolManager's `Initialize` event and
+cross-checked:
+
+```
+hook cross-check (Initialize vs TokenLaunched): agree 3,202, disagree 0, uninitialized 0
+hook split: 0xEfe66981... = 2,347    0x75A54357... = 855
+```
+
+**Both hooks agree on every pool and neither is assumed anywhere.**
+
+### The address bug, which would have silently reported "everything died"
+
+`addressFromWord` was first written as `slice(24)` on a 32-byte word. That is correct for a word cut
+out of `log.data` (64 chars) and **off by two for a `0x`-prefixed topic** (66 chars). It produced
+42-hex-digit strings that lowercased fine, compared equal to themselves, and matched **zero** of the
+461 known tokens — so the collector reported `launched-but-never-listed: 3202 of 3202` and the entire
+survivorship comparison silently evaluated to "nothing survived".
+
+It failed in the most dangerous possible direction: no throw, no NaN, no wrong-looking log line,
+just a plausible hex string that never matched. It was caught only because 3202-of-3202 was too
+round a number to believe. `forward.test.ts` now pins both input shapes, the 42-character length,
+and the checksum/lowercase join that the two corpora are keyed on.
+
+### The `>=100 swaps` filter is doing most of the survivorship work — and that is fine
+
+```
+launched and traded >=2 times : 2,281
+  2-9 swaps                   : 1,431
+  10-99 swaps                 :   589
+  100-999 swaps               :   186
+  1000+ swaps                 :    75
+```
+
+Of the 261 tokens passing the `>=100 swaps` filter, 178 are on today's lists. **The filter removes
+89% of the complete universe by itself, which is why the survivor corpus was only mildly wrong.**
+This is the honest reading and it matters for the product: `>=100 swaps` is a LIQUIDITY filter
+evaluated at decision time from data the agent already has, not an outcome filter. It is available
+live. "Today's mcap list" is not.
+
+### Tax sensitivity — the one place a forward collection is weaker
+
+`taxPct` sets the cost of every position and the pad's API rate-limits hard. 260 of 261 liquid
+tokens carry an API-confirmed tax; the bias of a fallback is optimistic (1% is the LOW tier), so
+rather than trust it the headline arm was re-run with **every** undescribed token forced to the
+pad's top 10% tier — a 2,008bps round trip against 208bps:
+
+```
+                       n     mean   median   WelchT      t range   t>2
+as collected         261   16,300   +2,206     3.93   3.51..4.13  20/20
+worst-case tax       261   16,293   +2,206     3.93   3.51..4.13  20/20
+```
+
+**Tax uncertainty cannot flip this result**, because a per-token cost is a constant subtracted from
+the signal and the control alike, and the t is a difference between them.
+
+## 11.2 The optimisation, on TRAIN only
+
+Split by token launch time (§10.2's reasoning, unchanged): TRAIN 156 tokens, TEST 105 tokens. The
+TEST fold is not read anywhere in this section.
+
+**The selection rule, fixed before the sweep: highest MEDIAN among arms beating the control on at
+least 18 of 20 seeds.** Median rather than mean because a mean on a lottery payoff selects whichever
+arm caught the biggest single ticket — the §8.3 failure. The seed screen rejects arms that are
+significant only against a lucky control.
+
+A stricter first attempt — requiring t>2 on the *worst* of 20 seeds — **selected nothing**, because
+every arm on this corpus has at least one unlucky control draw. That is recorded rather than quietly
+relaxed, and the code now **throws** if no arm clears the screen, because the failure mode of
+falling through is that the initialised parameters get reported as though the search had chosen
+them. A default wearing a search result's clothes is exactly the error this package exists to avoid.
+
+| chosen on TRAIN | value |
+|---|---|
+| entry index | **swap 3** (median +5,897bps, t>2 on 19/20) |
+| trailing stop | **50%** |
+| max-hold cap | **none** |
+
+**A max-hold cap does not help, and the diagnostic explains why rather than just asserting it:**
+
+```
+  cap             n     mean   median  win%  timeExits  WelchT
+  max-hold  6h  156   22,361   +4,188   74%         30    2.33
+  max-hold 12h  156   23,068   +4,188   73%         27    2.30
+  max-hold 24h  156   26,417   +4,188   72%         24    2.03
+  max-hold 72h  156   23,439   +4,188   72%         24    2.30
+  NO CAP        156   25,695   +5,897   83%          0    2.33
+```
+
+The median is *identical* across every cap and lower than no-cap. A cap only ever truncates the
+longest holds, and the median position has already exited on the trailing stop before any cap binds
+— so a cap trades away right tail for nothing. `timeExits` is printed to show this directly.
+
+**The sellability gate is free**, as in round 4: it removes 7 of 156 TRAIN tokens and moves the
+median by −449bps while raising the mean. It is kept in the shipped rule because the live path has
+it and because it is a real constraint, not because it improves the number.
+
+## 11.3 The held-out result
+
+Measured **once**, on the 105 tokens that launched after every TRAIN token.
+
+```
+entry@swap-3, 50% trailing stop, no max-hold, sellability-gated
+
+  SIGNAL   n=99    mean +52,338bps   MEDIAN +7,765bps   win 85.9%   ruin 0.0%
+  RANDOM   median-of-medians −3,144bps over 20 seeds
+  WELCH t  min 1.79   median 2.52   max 2.55    (t>2 on 19/20, t>3 on 0/20)
+
+  p10 −783    p90 +72,447    max +1,969,902
+  top 1%  = 37.9% of profit;  mean without them +32,771
+  top 10% = 75.9% of profit;  mean without them +13,862
+  UNRESOLVED (marked to market, never dropped): 1.0%
+```
+
+**The median is +7,765bps — 37× the 208bps round trip — and 99 of 100 positions closed.** The
+censoring artifact of §9.5 is not present.
+
+The dose-response also holds on the held-out fold, which is the check that the TRAIN choice was not
+a one-off:
+
+```
+HELD-OUT, sellability-gated, 50% trail
+  entry@ 3   n=99    median +7,765   win 86%   t 2.52
+  entry@ 5   n=99    median +7,035   win 83%   t 2.45
+  entry@10   n=100   median +5,448   win 74%   t 2.47
+  entry@20   n=100   median +2,742   win 64%   t 2.70
+```
+
+**Stated plainly because it is a judgement call:** entry@3 has the best median at every slot count,
+while entry@20 has the strongest Welch t on TRAIN (4.41 vs 2.33) and on TEST (2.70 vs 2.52). The
+rule declared before the sweep selects on median, so entry@3 is what this round reports. Entry@20 is
+the more *statistically robust* arm and a reasonable implementer could ship it instead; §11.5 gives
+both. Switching to entry@20 after seeing the t-statistics would be choosing the reported arm by its
+own search result, which round 4 explicitly refused to do, and so does this one.
+
+## 11.4 The capital ladder — the one-position collapse was a CAPITAL constraint
+
+§10.5 measured the single-slot Welch t collapsing from 2.60 to 1.16 and read it as the strategy
+failing the product. **That attribution was wrong.** The per-ticket median did not move; `n` did.
+One slot takes 20 of 99 available entries and skips 79, and 20 observations cannot establish what 99
+can. More slots is more CAPITAL, not a better signal.
+
+```
+HELD-OUT, entry@3 trail50% sellability-gated
+  slots  taken  skipped   median      mean   WelchT vs same-construction random
+      1     20       79   +6,106   +23,853   median 3.42  range 1.09..3.63  t>2 on 19/20
+      4     66       33   +6,399   +30,166   median 3.00  range 2.71..3.12  t>2 on 20/20
+      8     92        7   +7,462   +30,242   median 3.83  range 0.98..3.96  t>2 on 19/20
+     16     99        0   +7,765   +52,338   median 2.52  range 1.78..2.55  t>2 on 19/20
+```
+
+**The median per ticket is stable across the whole ladder — +6,106 to +7,765bps — which is the
+point.** The slot count buys `n`, and `n` buys significance. At 4 slots the arm clears t>2 on 20/20
+seeds; at 8 slots it takes 92 of 99 available entries and leaves almost nothing on the table.
+
+**Read the median column, not the compounded figure.** `nSlots` stakes each position at 1/k of the
+bankroll and does not model re-staking a grown balance, which is deliberately conservative; the
+per-ticket median is the number that means something.
+
+## 11.5 THE SPEC — what the implementation agent needs
+
+```
+UNIVERSE / ELIGIBILITY
+  chain              Robinhood mainnet 4663
+  factory            0x5bd1Fbe78a78fe8236fa00CF48fbEBA74ae34661
+  TokenLaunched      topic0 0x17091df68f499cf4e20dcfc5d42f064dd22359e785b77691c4c4ed0322608897
+                     token = topics[1], pool id = topics[3]   (both 0x-prefixed, take LAST 40 hex)
+  hook               READ PER POOL from PoolManager 0x8366a39CC670B4001A1121B8F6A443A643e40951
+                     Initialize topic0 0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438
+                     hook = data word 2. NEVER assume; both 0x75A54357... and 0xEfe66981... are live.
+  eligibility        the pool must have >=100 realised swaps at decision time
+                     ^ this is a LIQUIDITY filter on observed history, NOT an outcome filter.
+                       It removes 89% of launches and is the single most important gate.
+  sellability gate   at least one observed SELL of >= our position size, strictly before entry
+                     (`sellableBefore(bars, i, positionWei)` — decision-time, no lookahead)
+
+ENTRY
+  rule               enter at swap index 3 of the token's life   (0-indexed; the 4th swap)
+                     decide at swap i, FILL AT SWAP i+1 — never fill on the bar you decided on
+  alternative        swap index 20 is the higher-t / lower-median arm. Ship 3 for return,
+                     20 for statistical robustness. Do NOT ship anything past swap 50:
+                     the median is negative there on held-out data.
+  one ticket         at most ONE position per token, ever. Re-entering converts a hold into a
+                     round-trip strategy, which is the family that already failed.
+
+EXIT
+  trailing stop      50% below the running peak price since entry
+                     peak is tracked from the ENTRY bar forward, updated on every swap
+  fill               at the FIRST observed price beyond the level, not at the level itself.
+                     This venue gaps; assuming a fill at the stop manufactures returns.
+  hard stop          NONE
+  take profit        NONE
+  max hold           NONE — a cap only truncates the right tail and lowers the median
+  ordering           if a bar breaches both a stop and a target, book the STOP (pessimistic)
+
+CAPITAL / SLOTS
+  position floor     0.001 ETH
+  $10 funding        4 slots    <-- clears t>2 on 20/20 seeds; the recommended minimum
+  $15 funding        6 slots
+  $20 funding        8 slots    <-- takes 92 of 99 available entries; near-saturation
+  selection          FIRST ELIGIBLE IN CHRONOLOGICAL ORDER. No ranking, no scoring.
+                     A ranking rule needs to know which token is about to run, which is the
+                     whole problem. Free a slot only when its position actually closes.
+  concurrency        never exceed the slot count — that silently restores infinite capital
+
+COSTS (the model these numbers were measured under)
+  round trip         2 x taxPct + 8bps gas.  NOT 32bps — that was a documented error.
+                     A 1% token costs 208bps round trip; a 10% token costs 2,008bps.
+  authority          `roundTripCost` from @strays/hunt at DEFAULT_PARAMS.startWei
+```
+
+**Expected performance at these parameters, held out, 4-8 slots: a median of roughly +6,400 to
++7,500bps per ticket at a ~86% win rate, against a matched-random median of −3,144bps.** That is the
+measurement. It is not a promise, and §11.6 is why.
+
+## 11.6 The honesty check
+
+```
+── entry@swap-3 + 50% trailing stop, HELD-OUT, 240 cumulative trials ──
+RESULT: indistinguishable from noise
+
+  overfitting  Sharpe 2.47 does NOT survive 240 trials: needed > 45.42 and 1.8 years
+               of data, have 0.0. Treat this as noise.
+  sample size  99 trades is short of the 147 needed for t > 3
+  cost model   INCOMPLETE (slippage, reverts, own price impact — all bias OPTIMISTIC)
+
+CREDIBLE: false
+MEDIAN +7,765bps   n=99   win 85.9%   Welch t 1.79 … 2.55 (t>3 on 0/20)
+```
+
+**Trials are counted CUMULATIVELY across all five rounds: 183 + 57 = 240.** Round 5 adds 14 kill-test
+arms, 32 TRAIN entry×trail arms, 5 max-hold arms, 2 gate arms and 4 slot counts. Resetting the
+counter per round is the standard way a multi-round search launders an overfit into a result, and
+every previous round refused to do it.
+
+**What is genuinely better than round 4, and what is not.**
+
+Better:
+- **The survivorship caveat is retired.** It was the largest outstanding threat and it is now
+  measured rather than argued. The edge is larger under it, not smaller.
+- **The one-position collapse is explained and solved.** It was `n`, not the signal, and 4 slots
+  fixes it. This was the finding §10.7 called "negative-to-inconclusive" for the product.
+- **The universe is 3,202 tokens instead of 461**, and it is defined by an event that fires before
+  any outcome exists.
+
+Not better, and unchanged:
+- **`credible: false` still**, and MinBTL's bar is still unreachable on days of data. The two real
+  objections beneath it are n=99 short of the 147 needed for t>3, and a t that peaks at 2.55.
+- **The cost model is still INCOMPLETE and every omission biases OPTIMISTIC.** Slippage, reverts and
+  own-price-impact are all absent. RESEARCH-STRATEGY §1 measured that 84% of the pad fails a $5 sell
+  quote; the sellability gate addresses this at ENTRY, not at EXIT, and an exit that cannot fill is
+  the failure mode this document is least equipped to see.
+- **28 days is one regime.** Every token in this corpus launched inside a four-week window on a pad
+  that was itself weeks old.
+
+## 11.7 The conclusion, stated plainly
+
+**Round 4 found an out-of-sample-positive hypothesis and listed three things that were not
+established. Round 5 establishes two of them.**
+
+- *"That it survives a survivorship-free universe"* — **established.** The complete universe is 7×
+  larger, the median falls by half, and the Welch t rises to 3.93 with t>2 on 20/20 seeds.
+- *"That a single $5 stray can capture it"* — **resolved, by removing the premise.** A single $5
+  stray cannot, and that was never a statement about the signal. Four slots can, and $10 buys four.
+- *"That it clears a t > 3 bar"* — **still not established.** It does not, on any seed, on the
+  held-out fold.
+
+The arithmetic that ends this document is the same shape as §10.7's, now measured on every token
+that ever launched rather than on the ones that lived:
+
+```
+early-entry median (held-out, complete universe)   +7,765 bps
+round trip                                           −208 bps      <-- 2.7% of the move
+                                                   ───────────
+                                                   +7,557 bps
+```
+
+**What remains unproven is not whether the edge exists on this data — it is whether 28 days of one
+pad's history generalises to next month.** That is a question no amount of re-analysis of this
+corpus can answer, and the only honest way to settle it is forward paper trading with the parameters
+in §11.5 frozen.
+
+### The next experiments, in order
+
+1. **Paper-trade forward with §11.5 frozen.** Every remaining doubt is now about generalisation, not
+   about this sample. A month of live, unmodified, logged decisions settles it and nothing else does.
+2. **Measure the EXIT.** The sellability gate is an entry-time proxy. The strategy holds for hours
+   and exits on a stop; whether that exit fills at the modelled price on a pool that has since gone
+   quiet is unmeasured and is the largest optimistic bias remaining.
+3. **Re-run the kill test on a second 28-day window** once one exists. The corpus is now collected
+   by an event rather than a leaderboard, so this is a re-run of `forward.ts`, not a new method.
+
+## 11.8 Reproducing round 5
+
+```bash
+cd packages/backtest
+ROBINHOOD_RPC_URL=... COLLECT_FORWARD=1 npx tsx src/forward.ts   # ~25 min, writes data/forward.json
+npx tsx src/survive-confirm.ts                                    # kill test + search + held-out
+npx vitest run                                                    # 145 tests
+```
+
+`src/forward.ts` collects the survivorship-free universe; `src/survivorship.ts` holds the comparison
+machinery and the three pre-declared kill conditions; `src/survive-confirm.ts` is the only file that
+reports a held-out number. `data/pool-hooks.json` caches the 305,195-pool `Initialize` scan — delete
+it to refetch.

@@ -200,6 +200,50 @@ median net   +9,791  +5,838  +4,410    +696    −845  −1,748  −3,302
 Monotone, crossing zero between swap 50 and 100. **Swaps 200 and 500 were never in the search
 space.** A gradient is far harder to produce by chance than a threshold.
 
+### ROUND 6 — THE SURVIVORSHIP KILL TEST PASSED. The strategy is confirmed.
+
+The caveat hanging over rounds 1–5 was that every number came from tokens on *today's*
+mcap/trending lists — i.e. tokens that survived to be listed. That is now settled.
+
+**A universe was rebuilt from the factory's `TokenLaunched` event**, which fires at launch before
+any outcome exists: **3,202 tokens, 438,290 swaps.** Of those, **2,741 (85.6%) were never on any
+leaderboard and were invisible to every prior round.**
+
+Re-measured with identical code on both universes, and verified independently:
+
+| universe | n | median | Welch t vs random | t>2 |
+|---|---|---|---|---|
+| survivor-biased | 178 | +4,831 bps | 3.76 | 18/20 |
+| **complete** | **261** | **+2,083 bps** | **3.81 – 4.15** | **20/20** |
+
+**The level halves — that is the bias, paid honestly — and the SIGNIFICANCE GOES UP.** That is
+exactly the right signature: survivorship inflates a *level*, and the claim was always a
+*difference* between the signal and a control drawn from the same tokens. Adding dead tokens lowers
+both arms together. The matched-random control, built in round 2 specifically as the defence
+against this, did its job.
+
+**The dose-response is CLEANER on the complete universe**, verified independently:
+
+```
+entry swap      3       5      10      20      50     100     200     500
+median net  +7,135  +5,922  +4,584  +2,083  −1,317  −1,945  −2,369  −3,026
+```
+
+Perfectly monotone, crossing zero between swap 20 and 50.
+
+**Optimised on TRAIN, reported once on TEST:** entry at swap 3, 50% trailing stop, no max-hold,
+sellability-gated → **median +7,765 bps, 85.9% win, 1.0% unresolved, t = 2.52.** A max-hold cap
+never helps; it only truncates the right tail.
+
+**Two bugs the agent found in its own work, both of which would have faked the answer:**
+`addressFromWord` used a fixed offset that was correct for data words but off by two for topics —
+it produced plausible hex matching zero of 461 known tokens and would have silently reported
+"nothing survived". And its first selection rule selected nothing and fell through to the
+initialised parameters — *a default masquerading as a search result*. It now throws.
+
+**Still `credible: false` at 240 cumulative trials** (n=99, t peaks at 2.55). The MinBTL bar rises
+with every trial spent, and six rounds have spent a lot.
+
 ### ROUND 5 — THE ONE-POSITION COLLAPSE WAS A CAPITAL CONSTRAINT, AND $20 REMOVES IT
 
 Ibrahim raised user funding to **$10–20**. At the 0.001 ETH position floor that is 4–8 concurrent

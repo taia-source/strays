@@ -7,6 +7,7 @@ import {
   isEligible,
   type TokenSnapshot,
 } from "./eligible.js";
+import { HOOK_PRIMARY, HOOK_SECONDARY } from "./hook.js";
 import { LOOKBACK_MINUTES } from "./signal.js";
 
 /** A token that passes every filter, so each test can break exactly one thing. */
@@ -18,7 +19,11 @@ function huntable(overrides: Partial<TokenSnapshot> = {}): TokenSnapshot {
     holders: 120,
     volumeAllTimeWei: 500_000_000_000_000_000n, // 0.5 ETH
     ageSeconds: 7200,
+    // 25 realised swaps: inside `age.ts`'s [20, 50] entry window, so the age gate is not what any
+    // of these tests are measuring. The window itself is tested in `age.test.ts`.
+    swapCount: 25,
     tickSpacing: 200,
+    hook: HOOK_PRIMARY,
     ...overrides,
   };
 }
@@ -258,5 +263,65 @@ describe("purity", () => {
     const frozenToken = Object.freeze({ ...t });
     const frozenCfg = Object.freeze({ ...DEFAULT_ELIGIBILITY });
     expect(() => isEligible(frozenToken, frozenCfg)).not.toThrow();
+  });
+});
+
+describe("THE HOOK — there are two, and v1 could only reach one (RESEARCH §7d)", () => {
+  /*
+   * ══ THE MEASURED FAILURE THIS GATE PREVENTS ══
+   *
+   * RESEARCH §7d reconstructed every token's poolId against both candidate hooks and matched the
+   * result against the pad's own `pool` field: 67 tokens on 0x75A54357…, 44 on 0xEfe66981…, 3
+   * unmatched. The v1 vault hardcoded the first as an immutable, so for 44 of 111 tokens it built
+   * a PoolKey addressing a pool that does not exist — including LEVCAT, INTERN and Seriouscat,
+   * three of the four highest-volume names on the pad.
+   *
+   * The failure hid because the revert was an empty inner revert wrapped in
+   * `UnexpectedRevertBytes`, which reads exactly like a transient RPC problem.
+   */
+  it("ADMITS a token on the primary hook", () => {
+    expect(isEligible(huntable({ hook: HOOK_PRIMARY }), DEFAULT_ELIGIBILITY).ok).toBe(true);
+  });
+
+  it("ADMITS a token on the SECOND hook — the 44 tokens v1 could not trade at all", () => {
+    // Both directions matter. A suite that only proved the refusal would pass just as happily
+    // against the old single-hook rule, which is the thing being replaced.
+    expect(isEligible(huntable({ hook: HOOK_SECONDARY }), DEFAULT_ELIGIBILITY).ok).toBe(true);
+  });
+
+  it("REFUSES an arbitrary hook, and says why in a sentence", () => {
+    const verdict = isEligible(
+      huntable({ hook: "0x000000000000000000000000000000000000dEaD" }),
+      DEFAULT_ELIGIBILITY,
+    );
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(/not one of the two known letscash hooks/);
+    // Both allowlisted addresses are named, so an operator reading /logs can see what was expected.
+    expect(verdict.reason).toContain(HOOK_PRIMARY);
+    expect(verdict.reason).toContain(HOOK_SECONDARY);
+  });
+
+  it("REFUSES a missing or malformed hook rather than defaulting to the primary", () => {
+    // Defaulting is precisely the v1 bug. A token whose hook we failed to read is a token whose
+    // pool we cannot address, and guessing produces a revert with empty bytes.
+    for (const bad of ["", "0x", undefined as unknown as string]) {
+      expect(isEligible(huntable({ hook: bad }), DEFAULT_ELIGIBILITY).ok).toBe(false);
+    }
+  });
+
+  it("is CASE-INSENSITIVE — a lowercase read of the same hook is the same hook", () => {
+    // The pad's API and the RPC disagree about EIP-55 casing. An allowlist that a lowercase
+    // address fails refuses every legitimate trade from one data source while passing tests
+    // written against the other.
+    for (const spelling of [
+      HOOK_SECONDARY.toLowerCase(),
+      HOOK_PRIMARY.toLowerCase(),
+      // `toUpperCase()` also uppercases the `0X` prefix, which is still the same address value.
+      HOOK_PRIMARY.toUpperCase(),
+      ` ${HOOK_PRIMARY} `,
+    ]) {
+      expect(isEligible(huntable({ hook: spelling }), DEFAULT_ELIGIBILITY).ok, spelling).toBe(true);
+    }
   });
 });

@@ -25,6 +25,7 @@ import {
   donchian,
   firstBar,
   maCross,
+  nSlots,
   oneAtATime,
   openAt,
   randomBasket,
@@ -361,6 +362,111 @@ suite("oneAtATime — the single-slot product constraint", () => {
     const port = oneAtATime(simulate([t], firstBar, { label: "x", trailingStopBps: 5_000 }));
     expect(port.utilisation).toBeGreaterThan(0);
     expect(port.utilisation).toBeLessThanOrEqual(1);
+  });
+});
+
+/*
+ * ══ THE MULTI-SLOT PORTFOLIO ══
+ *
+ * §10.5 reported the one-slot Welch t collapsing to 1.16 and read it as the strategy failing the
+ * product. The attribution was wrong: `n` fell from 72 to 12, and the per-ticket median did not
+ * move. These tests pin the properties that make `nSlots` a capital model rather than a knob —
+ * chiefly that it NEVER exceeds its slot count (which would silently restore infinite capital and
+ * reproduce the basket result under a portfolio label) and that it degenerates to `oneAtATime`.
+ */
+suite("nSlots — the multi-slot portfolio", () => {
+  /** A basket of `n` tokens that all launch together, so every slot is contested. */
+  function contested(n: number): readonly ReturnType<typeof simulate>[number][] {
+    const tokens = [];
+    for (let i = 0; i < n; i++) tokens.push(token([100n, 150n, 60n, 200n, 90n], 1, `0x${String(i)}`));
+    return simulate(tokens, firstBar, { label: "x", trailingStopBps: 5_000 });
+  }
+
+  it("is identical to oneAtATime at slots=1", () => {
+    const basket = contested(30);
+    const a = oneAtATime(basket);
+    const b = nSlots(basket, 1);
+    expect(b.taken.map((p) => p.token)).toEqual(a.taken.map((p) => p.token));
+    expect(b.skipped).toBe(a.skipped);
+    expect(b.compoundedBps).toBe(a.compoundedBps);
+  });
+
+  it("NEVER holds more than `slots` positions at once", () => {
+    // The property that matters most: if this fails, the "portfolio" is the infinite-capital
+    // basket wearing a portfolio label, and its Welch t would be the basket's t.
+    for (const k of [1, 2, 4, 8]) {
+      const port = nSlots(contested(60), k);
+      // Sweep every entry instant and count how many taken positions straddle it.
+      for (const probe of port.taken) {
+        const concurrent = port.taken.filter(
+          (p) => p.entryTs <= probe.entryTs && p.exitTs > probe.entryTs,
+        ).length;
+        expect(concurrent).toBeLessThanOrEqual(k);
+      }
+    }
+  });
+
+  it("takes monotonically more entries as slots increase", () => {
+    const basket = contested(60);
+    let prev = 0;
+    for (const k of [1, 2, 4, 8, 16]) {
+      const port = nSlots(basket, k);
+      expect(port.taken.length).toBeGreaterThanOrEqual(prev);
+      prev = port.taken.length;
+      // Conservation: every position is either taken or skipped, never lost.
+      expect(port.taken.length + port.skipped).toBe(basket.length);
+    }
+  });
+
+  it("converges on the whole basket once slots exceed the contention", () => {
+    const basket = contested(20);
+    const port = nSlots(basket, 1000);
+    expect(port.taken.length).toBe(basket.length);
+    expect(port.skipped).toBe(0);
+  });
+
+  it("stakes each position at 1/k of the bankroll when compounding", () => {
+    // Two slots means a position moves the bankroll half as far as it would at one slot. This is
+    // the conservative direction and it must not be silently dropped: compounding k positions at
+    // full stake each would report a return no wallet could earn.
+    const t = token([100n, 100n, 200n], 1, "0xc");
+    const basket = simulate([t], firstBar, { label: "x" });
+    const net = basket[0]?.netBps ?? 0;
+    expect(nSlots(basket, 1).compoundedBps).toBeCloseTo(net, 6);
+    expect(nSlots(basket, 2).compoundedBps).toBeCloseTo(net / 2, 6);
+    expect(nSlots(basket, 4).compoundedBps).toBeCloseTo(net / 4, 6);
+  });
+
+  it("floors a position at total loss before dividing by the slot count", () => {
+    const t = token([100n, 100n, 1n], 10, "0xz");
+    const basket = simulate([t], firstBar, { label: "x" });
+    expect(basket[0]?.netBps).toBeLessThan(-10_000);
+    // Floored at −10000 then staked at 1/4 => −2500bps, not −(12000/4).
+    expect(nSlots(basket, 4).compoundedBps).toBeCloseTo(-2_500, 6);
+  });
+
+  it("reports utilisation per slot, never above 1", () => {
+    for (const k of [1, 2, 8]) {
+      const port = nSlots(contested(40), k);
+      expect(port.utilisation).toBeGreaterThan(0);
+      expect(port.utilisation).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("refuses a slot count below 1 rather than dividing by a capital base that does not exist", () => {
+    const basket = contested(5);
+    expect(() => nSlots(basket, 0)).toThrow(/at least 1 slot/);
+    expect(() => nSlots(basket, -1)).toThrow(/at least 1 slot/);
+    expect(() => nSlots(basket, 1.5)).toThrow(/at least 1 slot/);
+  });
+
+  it("reports zero rather than NaN on an empty basket at any slot count", () => {
+    for (const k of [1, 4, 8]) {
+      const port = nSlots([], k);
+      expect(port.taken).toEqual([]);
+      expect(port.compoundedBps).toBe(0);
+      expect(port.utilisation).toBe(0);
+    }
   });
 });
 

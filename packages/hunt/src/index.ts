@@ -1,3 +1,13 @@
+export {
+  type AgeConfig,
+  type AgeVerdict,
+  DEFAULT_AGE,
+  ENTRY_SWAP_INDEX,
+  MAX_ENTRY_SWAP_INDEX,
+  measuredMedianNetBps,
+  MEASURED_MEDIAN_NET_BPS,
+  withinEntryWindow,
+} from "./age.js";
 export { type BarVerdict, clearsBar, EDGE_MULTIPLE, requiredGainBps } from "./bar.js";
 export {
   exitCostWei,
@@ -27,6 +37,14 @@ export {
   type TokenSnapshot,
 } from "./eligible.js";
 export {
+  assertKnownHook,
+  canonicalHook,
+  HOOK_PRIMARY,
+  HOOK_SECONDARY,
+  isKnownHook,
+  KNOWN_HOOKS,
+} from "./hook.js";
+export {
   DEFAULT_SCREEN,
   explainSellRevert,
   type HolderDistribution,
@@ -49,12 +67,15 @@ export {
 } from "./score.js";
 export {
   assertDurableLedger,
+  committedWei,
   createMemorySpendLedger,
   DEFAULT_RISK,
   drawdownBps,
   type EntryDenialReason,
   type EntryGate,
+  firstFreeSlot,
   LEDGER_COMMIT_RULE,
+  MAX_POSITIONS,
   mayEnter,
   mayExit,
   minOutFor,
@@ -66,6 +87,12 @@ export {
   stopFired,
   type StrayState,
 } from "./risk.js";
+export {
+  raisePeak,
+  TRAIL_BPS,
+  trailingStopFired,
+  type TrailingStopVerdict,
+} from "./trail.js";
 export {
   BREAKOUT_SIGMA,
   type Direction,

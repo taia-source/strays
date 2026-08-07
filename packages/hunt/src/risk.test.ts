@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   assertDurableLedger,
@@ -6,6 +7,9 @@ import {
   drawdownBps,
   mayEnter,
   mayExit,
+  committedWei,
+  firstFreeSlot,
+  MAX_POSITIONS,
   minOutFor,
   type OpenPosition,
   type RiskConfig,
@@ -15,7 +19,9 @@ import {
   stopFired,
   type StrayState,
 } from "./risk.js";
+import { HOOK_PRIMARY } from "./hook.js";
 import { STOP_LOSS_BPS } from "./signal.js";
+import { TRAIL_BPS } from "./trail.js";
 
 const NOW = 1_700_000_000;
 const BASE_PRICE = 1_000_000_000_000_000_000n;
@@ -23,10 +29,12 @@ const BASE_PRICE = 1_000_000_000_000_000_000n;
 function state(overrides: Partial<StrayState> = {}): StrayState {
   return {
     strayId: "stray-1",
-    compartmentWei: 5_000_000_000_000_000n, // 0.005 ETH
-    highWaterMarkWei: 5_000_000_000_000_000n,
-    equityWei: 5_000_000_000_000_000n,
-    position: undefined,
+    // 0.016 ETH ~= $31. Funded for EIGHT slots at 1/8 each (0.002 ETH, twice the 0.001 floor) —
+    // §10.5's ladder is denominated in dollars precisely because slot count is a funding question.
+    compartmentWei: 16_000_000_000_000_000n,
+    highWaterMarkWei: 16_000_000_000_000_000n,
+    equityWei: 16_000_000_000_000_000n,
+    positions: [],
     ...overrides,
   };
 }
@@ -34,13 +42,23 @@ function state(overrides: Partial<StrayState> = {}): StrayState {
 function position(overrides: Partial<OpenPosition> = {}): OpenPosition {
   return {
     token: "0xCatDay",
-    entryWei: 2_500_000_000_000_000n,
+    slot: 0,
+    entryWei: 2_000_000_000_000_000n, // 1/8 of the 0.016 ETH compartment
     entryPriceWei: BASE_PRICE,
+    peakPriceWei: BASE_PRICE,
+    hook: HOOK_PRIMARY,
     tokenBalance: 1_298_451_422_972_480_224_401_102n,
     openedAtSeconds: NOW - 600,
     taxPct: 1,
     ...overrides,
   };
+}
+
+/** `n` positions in slots 0..n-1, each on its own token. For the multi-slot tests. */
+function positions(n: number, overrides: Partial<OpenPosition> = {}): OpenPosition[] {
+  return Array.from({ length: n }, (_v, i) =>
+    position({ slot: i, token: `0xToken${String(i)}`, ...overrides }),
+  );
 }
 
 /** A ledger that is `durable: true` — for tests about the caps rather than about durability. */
@@ -104,7 +122,7 @@ describe("THE HARD STOP LOSS — meridian has none, and for memecoins that is no
   it("depends on price ALONE — no other risk state can veto it", () => {
     const mark = (BASE_PRICE * 5000n) / 10_000n;
     const halted = state({
-      position: position(),
+      positions: [position()],
       equityWei: 1n,
       highWaterMarkWei: 5_000_000_000_000_000n,
       compartmentWei: 0n,
@@ -145,7 +163,7 @@ describe("GETTING OUT IS ALWAYS ALLOWED (DESIGN §6 Rule 5)", () => {
       compartmentWei: 0n, // no funds
       equityWei: 1n, // -99.99% drawdown
       highWaterMarkWei: 5_000_000_000_000_000n,
-      position: position(), // already holding
+      positions: positions(MAX_POSITIONS), // every slot occupied
     });
 
     // A ledger that has blown through both the value cap and the count cap, and already holds
@@ -202,7 +220,8 @@ describe("GETTING OUT IS ALWAYS ALLOWED (DESIGN §6 Rule 5)", () => {
     // ever be refused, a reason for it would have to exist somewhere — and none does.
     const entryReasons = [
       "drawdown-halt",
-      "position-open",
+      "slots-full",
+      "duplicate-token",
       "size-below-floor",
       "window-spend-cap",
       "window-count-cap",
@@ -217,12 +236,12 @@ describe("GETTING OUT IS ALWAYS ALLOWED (DESIGN §6 Rule 5)", () => {
 
 describe("the per-stray drawdown halt", () => {
   it("computes drawdown from the high-water mark", () => {
-    expect(drawdownBps(state({ equityWei: 4_000_000_000_000_000n }))).toBe(2000n); // -20%
-    expect(drawdownBps(state({ equityWei: 5_000_000_000_000_000n }))).toBe(0n);
+    expect(drawdownBps(state({ equityWei: 12_800_000_000_000_000n }))).toBe(2000n); // -20%
+    expect(drawdownBps(state({ equityWei: 16_000_000_000_000_000n }))).toBe(0n);
   });
 
   it("is 0 above the high-water mark, never negative", () => {
-    expect(drawdownBps(state({ equityWei: 9_000_000_000_000_000n }))).toBe(0n);
+    expect(drawdownBps(state({ equityWei: 30_000_000_000_000_000n }))).toBe(0n);
   });
 
   it("is 0 when there is no high-water mark yet", () => {
@@ -230,7 +249,7 @@ describe("the per-stray drawdown halt", () => {
   });
 
   it("HALTS entry at or past -20%", async () => {
-    const halted = state({ equityWei: 4_000_000_000_000_000n });
+    const halted = state({ equityWei: 12_800_000_000_000_000n });
     const gate = await mayEnter({
       state: halted,
       cfg: DEFAULT_RISK,
@@ -246,8 +265,8 @@ describe("the per-stray drawdown halt", () => {
   });
 
   it("does NOT halt one bp inside the limit", async () => {
-    // -19.99%: 5e15 * (10000-1999)/10000
-    const nearly = state({ equityWei: (5_000_000_000_000_000n * 8001n) / 10_000n });
+    // -19.99%: 1.6e16 * (10000-1999)/10000
+    const nearly = state({ equityWei: (16_000_000_000_000_000n * 8001n) / 10_000n });
     expect(drawdownBps(nearly)).toBeLessThan(DEFAULT_RISK.maxDrawdownBps);
     const gate = await mayEnter({
       state: nearly,
@@ -259,13 +278,29 @@ describe("the per-stray drawdown halt", () => {
     expect(gate.allowed).toBe(true);
   });
 
-  it("the halt is ~8-9 losing cycles, as derived — not a number picked to look prudent", () => {
-    // 231bps round trip + 235bps stop = ~466bps of position per full losing cycle; at a 5000bps
-    // position fraction that is ~233bps of total equity per cycle.
-    const perCycleBps = ((231n + 235n) * DEFAULT_RISK.positionFractionBps) / 10_000n;
-    const cycles = DEFAULT_RISK.maxDrawdownBps / perCycleBps;
-    expect(cycles).toBeGreaterThanOrEqual(5n); // not so tight it fires on variance
-    expect(cycles).toBeLessThanOrEqual(12n); // not so loose it never binds
+  it("the halt is ~3 fully-lost positions, as re-derived for the trailing exit", () => {
+    /*
+     * The derivation moved with the exit rule, and the NUMBER did not — which is exactly the
+     * situation where an unasserted derivation rots. It was: 231bps round trip + 235bps hard stop
+     * = ~466bps per losing cycle, at a 5000bps position fraction = ~233bps of equity, so 2000bps
+     * was ~8-9 cycles. It is now: a 5000bps trailing stop + ~208bps round trip = ~5208bps per
+     * fully-lost position, at a 1250bps fraction = ~651bps of equity, so 2000bps is ~3.
+     *
+     * Three is the right direction for a strategy whose measured win rate is 73.6% (§10.4): three
+     * total losses out of eight concurrent tickets is far outside what that rate produces by
+     * chance, where eight would only fire after most of the money was gone.
+     */
+    const perLostPositionBps =
+      ((TRAIL_BPS + 208n) * DEFAULT_RISK.positionFractionBps) / 10_000n;
+    const positionsLost = DEFAULT_RISK.maxDrawdownBps / perLostPositionBps;
+    expect(positionsLost).toBeGreaterThanOrEqual(2n); // not so tight it fires on the p10 tail
+    expect(positionsLost).toBeLessThanOrEqual(5n); // not so loose it only binds after the money is gone
+
+    // And the halt must be reachable by BREADTH as well as depth: eight positions each down 20%
+    // of a 1250bps stake is 2000bps of equity — exactly the halt. That is the genuinely new shape.
+    const breadthBps =
+      (2000n * DEFAULT_RISK.positionFractionBps * BigInt(MAX_POSITIONS)) / 10_000n;
+    expect(breadthBps).toBe(DEFAULT_RISK.maxDrawdownBps);
   });
 
   it("sits inside the measured -17.1% left tail, so it can actually fire", () => {
@@ -275,9 +310,71 @@ describe("the per-stray drawdown halt", () => {
 
 describe("position sizing — flat, because cost is flat (RESEARCH §3c Rule 2)", () => {
   it("takes the configured fraction of the compartment", () => {
-    expect(sizePosition(state({ compartmentWei: 4_000_000_000_000_000n }), DEFAULT_RISK)).toBe(
-      2_000_000_000_000_000n,
+    // 1250bps = 1/8 of 0.004 ETH = 0.0005 ETH... which is UNDER the 0.001 ETH floor, so this
+    // stray cannot fund eight slots at all and correctly refuses. That is the floor doing its job,
+    // and it is why §10.5's ladder is denominated in dollars: 8 slots needs $20, not $5.
+    expect(sizePosition(state({ compartmentWei: 4_000_000_000_000_000n }), DEFAULT_RISK)).toBe(0n);
+    // A stray funded for eight slots at the floor: 0.008 ETH -> 0.001 ETH per slot, exactly.
+    expect(sizePosition(state({ compartmentWei: 8_000_000_000_000_000n }), DEFAULT_RISK)).toBe(
+      1_000_000_000_000_000n,
     );
+  });
+
+  /*
+   * ══ THE MULTI-SLOT SIZING PROPERTY: EIGHT EQUAL POSITIONS, NOT A SHRINKING SEQUENCE ══
+   *
+   * The bug this pins is the obvious implementation: apply the fraction to the FREE compartment.
+   * That compounds downward — slot 1 gets 1/8 of everything, slot 2 gets 1/8 of the remaining 7/8,
+   * and by slot 4 the size is under the 0.001 ETH floor and the stray reports `size-below-floor`
+   * while holding money and free slots. §10.5's whole finding is about how many opportunities get
+   * TAKEN, so a sizing rule that silently caps the portfolio at 3 positions undoes the round.
+   */
+  it("sizes EIGHT EQUAL positions from one compartment — the fraction does not compound down", () => {
+    const funded = 16_000_000_000_000_000n; // 0.016 ETH ~= $31, comfortably above the $20 rung
+    const perSlot = funded / BigInt(MAX_POSITIONS); // 0.002 ETH
+    let free = funded;
+    const opened: OpenPosition[] = [];
+
+    for (let i = 0; i < MAX_POSITIONS; i++) {
+      const s = state({ compartmentWei: free, positions: opened });
+      const size = sizePosition(s, DEFAULT_RISK);
+      expect(size, `slot ${String(i)} must be sized like every other slot`).toBe(perSlot);
+      opened.push(position({ slot: i, token: `0xToken${String(i)}`, entryWei: size }));
+      free -= size;
+    }
+
+    // Eight equal positions exactly consume the compartment. Nothing left, nothing stranded.
+    expect(free).toBe(0n);
+    expect(committedWei(state({ positions: opened }))).toBe(funded);
+  });
+
+  it("sizes against free + committed, so a full portfolio would size the same as an empty one", () => {
+    // The denominator is trading capital, not free cash. Same stray, same total money, different
+    // split between free and committed: the target size must not move.
+    const empty = state({ compartmentWei: 16_000_000_000_000_000n, positions: [] });
+    const halfDeployed = state({
+      compartmentWei: 8_000_000_000_000_000n,
+      positions: positions(4, { entryWei: 2_000_000_000_000_000n }),
+    });
+    expect(sizePosition(halfDeployed, DEFAULT_RISK)).toBe(sizePosition(empty, DEFAULT_RISK));
+  });
+
+  it("never sizes above FREE cash, however much is committed", () => {
+    // Committed capital sets the target size; it cannot pay for a new position. A stray whose
+    // positions have lost value cannot conjure the difference.
+    const strapped = state({
+      compartmentWei: 1_200_000_000_000_000n,
+      positions: positions(7, { entryWei: 2_000_000_000_000_000n }),
+    });
+    const size = sizePosition(strapped, DEFAULT_RISK);
+    expect(size).toBeLessThanOrEqual(strapped.compartmentWei);
+    expect(size).toBeGreaterThan(0n);
+  });
+
+  it("the fraction IS 10000/MAX_POSITIONS — the two cannot drift apart", () => {
+    // If someone raises MAX_POSITIONS without re-deriving the fraction, the stray would fund only
+    // some of its slots and the ladder measurement would no longer describe what it does.
+    expect(DEFAULT_RISK.positionFractionBps).toBe(10_000n / BigInt(MAX_POSITIONS));
   });
 
   it("clamps to the maximum", () => {
@@ -288,7 +385,7 @@ describe("position sizing — flat, because cost is flat (RESEARCH §3c Rule 2)"
   it("returns 0 below the minimum rather than opening a position gas will eat", () => {
     // At $1 the flat ~$0.016 gas is ~160bps of the position and the round trip ~360bps, which
     // pushes the required gain past 720bps — most of a full mean-absolute 24h move.
-    const tiny = state({ compartmentWei: 1_000_000_000_000_000n }); // fraction -> 5e14, under the floor
+    const tiny = state({ compartmentWei: 1_000_000_000_000_000n }); // 1/8 -> 1.25e14, under the floor
     expect(sizePosition(tiny, DEFAULT_RISK)).toBe(0n);
   });
 
@@ -306,13 +403,13 @@ describe("position sizing — flat, because cost is flat (RESEARCH §3c Rule 2)"
   it("is NOT size-optimised — the same bps cost applies across the whole range", () => {
     // openhood's U-shaped cost justified an optimal size. Ours is flat, so a flat fraction is
     // the honest rule and anything fancier would be fitting a curve that does not exist.
-    const a = sizePosition(state({ compartmentWei: 4_000_000_000_000_000n }), DEFAULT_RISK);
-    const b = sizePosition(state({ compartmentWei: 8_000_000_000_000_000n }), DEFAULT_RISK);
+    const a = sizePosition(state({ compartmentWei: 8_000_000_000_000_000n }), DEFAULT_RISK);
+    const b = sizePosition(state({ compartmentWei: 16_000_000_000_000_000n }), DEFAULT_RISK);
     // Exactly LINEAR in the compartment while under the cap: double the funds, double the size.
     // A U-shaped cost model would instead produce an interior optimum, where doubling the
     // compartment moves the size toward a preferred absolute notional rather than doubling it.
-    expect(a).toBe(2_000_000_000_000_000n);
-    expect(b).toBe(4_000_000_000_000_000n);
+    expect(a).toBe(1_000_000_000_000_000n);
+    expect(b).toBe(2_000_000_000_000_000n);
     expect(b).toBe(a * 2n);
 
     // And the cap — not an optimum — is what eventually stops it growing.
@@ -533,12 +630,63 @@ describe("mayEnter — the caps, each refusing for its own reason", () => {
     });
     expect(gate.allowed).toBe(true);
     if (!gate.allowed) throw new Error("unreachable");
-    expect(gate.sizeWei).toBe(2_500_000_000_000_000n);
+    expect(gate.sizeWei).toBe(2_000_000_000_000_000n);
+    // A fresh stray takes slot 0 and has seven left. `hunt` scans lowest-first and must agree.
+    expect(gate.slot).toBe(0);
+    expect(gate.freeSlotsAfter).toBe(MAX_POSITIONS - 1);
   });
 
-  it("refuses a stray that already holds a position", async () => {
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════
+   * ══ THE RULE THAT WAS DELETED, AND THE MEASUREMENT THAT DELETED IT (RESULTS §10.5) ══
+   * ══════════════════════════════════════════════════════════════════════════════════════
+   *
+   * `mayEnter` used to refuse with `reason: "position-open"` the moment a stray held anything,
+   * justified as "one position at a time: a stray with $5 cannot diversify". Measured on the
+   * held-out fold:
+   *
+   *     slots  usd  taken/72  skipped  median bps
+   *       1    $ 5     17        55     +1,921    <- Welch t 1.16, NOT significant
+   *       4    $10     48        24     +4,263
+   *       6    $15     66         6     +4,410
+   *       8    $20     71         1     +4,410    <- Welch t 2.38 … 2.72 on 20/20 seeds
+   *
+   * The per-ticket edge is the SAME across the ladder. What changed is n. These tests assert the
+   * new behaviour in both directions, because a suite that only proved the refusal at 8 would pass
+   * just as happily against the old rule.
+   */
+  it("ALLOWS a stray that already holds a position — this is the §10.5 change", async () => {
     const gate = await mayEnter({
-      state: state({ position: position() }),
+      state: state({ positions: [position()] }),
+      cfg: DEFAULT_RISK,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+    });
+    expect(gate.allowed).toBe(true);
+    if (!gate.allowed) throw new Error("unreachable");
+    expect(gate.slot).toBe(1);
+  });
+
+  it("ALLOWS entries all the way to the EIGHTH slot", async () => {
+    for (let held = 0; held < MAX_POSITIONS; held++) {
+      const gate = await mayEnter({
+        state: state({ positions: positions(held) }),
+        cfg: DEFAULT_RISK,
+        ledger: durableLedger(),
+        idempotencyKey: `k-${String(held)}`,
+        nowSeconds: NOW,
+      });
+      expect(gate.allowed, `a stray holding ${String(held)} must still be able to enter`).toBe(true);
+      if (!gate.allowed) throw new Error("unreachable");
+      expect(gate.slot).toBe(held);
+      expect(gate.freeSlotsAfter).toBe(MAX_POSITIONS - held - 1);
+    }
+  });
+
+  it("REFUSES the ninth — slots-full, and the reason says slot count is capital not conviction", async () => {
+    const gate = await mayEnter({
+      state: state({ positions: positions(MAX_POSITIONS) }),
       cfg: DEFAULT_RISK,
       ledger: durableLedger(),
       idempotencyKey: "k",
@@ -546,12 +694,116 @@ describe("mayEnter — the caps, each refusing for its own reason", () => {
     });
     expect(gate.allowed).toBe(false);
     if (gate.allowed) throw new Error("unreachable");
-    expect(gate.reason).toBe("position-open");
+    expect(gate.reason).toBe("slots-full");
+    expect(gate.detail).toMatch(/CAPITAL, not/);
+    // It must NOT claim the stray cannot diversify — that was the deleted, refuted justification.
+    expect(gate.detail).not.toMatch(/cannot diversify/);
+  });
+
+  it("honours a SMALLER configured slot count — $10 of funding is four slots, not eight", async () => {
+    const fourSlot: RiskConfig = { ...DEFAULT_RISK, maxPositions: 4 };
+    const gate = await mayEnter({
+      state: state({ positions: positions(4) }),
+      cfg: fourSlot,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+    });
+    expect(gate.allowed).toBe(false);
+    if (gate.allowed) throw new Error("unreachable");
+    expect(gate.reason).toBe("slots-full");
+  });
+
+  it("CLAMPS a configured slot count above MAX_POSITIONS — the contract's array is fixed at 8", async () => {
+    // A keeper that believed in 9 slots would commit the spend to the ledger and then get
+    // `NoFreeSlot` from `hunt`, which is a spend recorded for a trade that never happened.
+    const greedy: RiskConfig = { ...DEFAULT_RISK, maxPositions: 32 };
+    const gate = await mayEnter({
+      state: state({ positions: positions(MAX_POSITIONS) }),
+      cfg: greedy,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+    });
+    expect(gate.allowed).toBe(false);
+    if (gate.allowed) throw new Error("unreachable");
+    expect(gate.reason).toBe("slots-full");
+  });
+
+  it("REFUSES a token the stray already holds in another slot", async () => {
+    // Eight slots is eight ideas, not one idea eight times.
+    const gate = await mayEnter({
+      state: state({ positions: [position({ token: "0xCatDay" })] }),
+      cfg: DEFAULT_RISK,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+      token: "0xcatday", // deliberately different casing
+    });
+    expect(gate.allowed).toBe(false);
+    if (gate.allowed) throw new Error("unreachable");
+    expect(gate.reason).toBe("duplicate-token");
+    expect(gate.detail).toMatch(/eight ideas, not one idea eight times/);
+  });
+
+  it("allows a DIFFERENT token while holding one", async () => {
+    const gate = await mayEnter({
+      state: state({ positions: [position({ token: "0xCatDay" })] }),
+      cfg: DEFAULT_RISK,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+      token: "0xSomethingElse",
+    });
+    expect(gate.allowed).toBe(true);
+  });
+
+  it("fills the LOWEST free slot, matching StrayVault.hunt's own scan", async () => {
+    /*
+     * The contract scans `if (held == address(0) && slot == MAX_POSITIONS) slot = i` — lowest
+     * first. If this disagreed, the indexer would attach its peak watermark to one slot while the
+     * chain filled another, and the trailing stop for one token would then be computed from
+     * another token's peak.
+     */
+    const gappy = state({
+      positions: [position({ slot: 0 }), position({ slot: 2, token: "0xB" })],
+    });
+    expect(firstFreeSlot(gappy)).toBe(1);
+    const gate = await mayEnter({
+      state: gappy,
+      cfg: DEFAULT_RISK,
+      ledger: durableLedger(),
+      idempotencyKey: "k",
+      nowSeconds: NOW,
+    });
+    expect(gate.allowed).toBe(true);
+    if (!gate.allowed) throw new Error("unreachable");
+    expect(gate.slot).toBe(1);
+  });
+
+  it("firstFreeSlot is undefined only when every slot is genuinely taken", () => {
+    expect(firstFreeSlot(state({ positions: [] }))).toBe(0);
+    expect(firstFreeSlot(state({ positions: positions(MAX_POSITIONS - 1) }))).toBe(
+      MAX_POSITIONS - 1,
+    );
+    expect(firstFreeSlot(state({ positions: positions(MAX_POSITIONS) }))).toBeUndefined();
+  });
+
+  it("MAX_POSITIONS is 8 and matches StrayVault.MAX_POSITIONS character for character", () => {
+    // RESEARCH §7g is about the gap between a claim and the code that would have to run for it.
+    // The contract source is the authority; if it changes, this goes red rather than the keeper
+    // silently believing in a ninth slot that reverts NoFreeSlot.
+    expect(MAX_POSITIONS).toBe(8);
+    const sol = readFileSync(
+      new URL("../../contracts/src/StrayVault.sol", import.meta.url),
+      "utf8",
+    );
+    expect(sol).toContain(`uint256 public constant MAX_POSITIONS = ${String(MAX_POSITIONS)};`);
   });
 
   it("refuses an empty compartment", async () => {
     const gate = await mayEnter({
-      state: state({ compartmentWei: 0n, equityWei: 5_000_000_000_000_000n }),
+      state: state({ compartmentWei: 0n, equityWei: 16_000_000_000_000_000n }),
       cfg: DEFAULT_RISK,
       ledger: durableLedger(),
       idempotencyKey: "k",
@@ -615,14 +867,14 @@ describe("mayEnter — the caps, each refusing for its own reason", () => {
    */
   it("refuses on the WINDOW COUNT cap even when the value cap is nowhere near", async () => {
     const l = durableLedger(
-      Array.from({ length: 6 }, (_v, i) => ({
+      Array.from({ length: MAX_POSITIONS }, (_v, i) => ({
         idempotencyKey: `tiny-${String(i)}`,
         strayId: "stray-1",
         amountWei: 1n,
         atSeconds: NOW,
       })),
     );
-    expect(await l.spentInWindow("stray-1", 86_400, NOW)).toBe(6n); // trivially under the cap
+    expect(await l.spentInWindow("stray-1", 86_400, NOW)).toBe(BigInt(MAX_POSITIONS)); // under the cap
     const gate = await mayEnter({
       state: state(),
       cfg: DEFAULT_RISK,
@@ -637,9 +889,19 @@ describe("mayEnter — the caps, each refusing for its own reason", () => {
 
   it("every refusal detail is a sentence a human can act on", async () => {
     const cases: Array<{ s: StrayState; l: SpendLedger; k: string }> = [
-      { s: state({ position: position() }), l: durableLedger(), k: "k" },
+      { s: state({ positions: positions(MAX_POSITIONS) }), l: durableLedger(), k: "k" },
       { s: state({ equityWei: 1n }), l: durableLedger(), k: "k" },
       { s: state({ compartmentWei: 0n }), l: durableLedger(), k: "k" },
+      // A funded stray whose 1/8 slice falls under the 0.001 ETH floor.
+      {
+        s: state({
+          compartmentWei: 2_000_000_000_000_000n,
+          equityWei: 2_000_000_000_000_000n,
+          highWaterMarkWei: 2_000_000_000_000_000n,
+        }),
+        l: durableLedger(),
+        k: "k",
+      },
     ];
     for (const c of cases) {
       const gate = await mayEnter({

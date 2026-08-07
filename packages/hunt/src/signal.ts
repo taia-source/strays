@@ -1,8 +1,60 @@
 /**
- * THE ENTRY SIGNAL. A short-horizon momentum breakout, sized to the cost bar.
+ * A short-horizon momentum breakout. **REFUTED. THIS IS NO LONGER THE ENTRY RULE.**
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ * ══ READ THIS BEFORE THE REST OF THE FILE, WHICH ARGUES FOR A HYPOTHESIS THAT LOST ══
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Everything below this block is the original derivation, kept verbatim. It is careful, it is
+ * measured, and its conclusion is wrong. Four rounds of backtesting tested this family eleven
+ * times and RESULTS.md §10.7 states the arithmetic that closed it:
+ *
+ *     momentum edge (held-out)      +145 bps over random
+ *     round trip                    −208 bps
+ *                                   ─────────
+ *                                    −63 bps        <-- lose, every time, forever
+ *
+ * And STATE.md records something worse than "it did not work": **the signal was inverted.**
+ * Forward net, bucketed by how far a token had ALREADY run when the breakout fired:
+ *
+ *     already fallen      +3,260 bps forward    97.4% win
+ *     +0…19%                +842 bps            71.8%
+ *     +20…85%             −1,838 bps            23.1%
+ *     +87…296%            −3,878 bps            33.3%
+ *     +296%…              −5,999 bps            17.1%
+ *
+ * A breakout entry buys the bottom row by construction. *"The shipped strategy was designed to
+ * chase exactly what predicts losses. That, not the 200bps tax, is why it lost money on tokens
+ * that went 278×."*
+ *
+ * **The live entry gate is `age.ts`** — a token's age in SWAPS, on a monotone dose-response
+ * measured out of sample. **The live exit is `trail.ts`** — a 50% trail from the running peak,
+ * replacing `STOP_LOSS_BPS` and `TAKE_PROFIT_BPS` below, both of which §10 measured as closing
+ * exactly the positions that produce the returns.
+ *
+ * ── WHY THIS FILE STILL EXISTS, AND STILL RUNS ON EVERY LIVE TICK ──
+ *
+ * `decide()` still calls `evaluateEntry` and still logs its verdict; what it no longer does is
+ * gate on it. Three reasons, none of them sentiment:
+ *
+ *   1. **`@strays/backtest` replays the refuted family against these exact functions.** A
+ *      refutation you can no longer run is a refutation taken on trust, and §10.1 records what a
+ *      harness that cannot express a hypothesis costs: three rounds never tested four strategy
+ *      families because `replay.ts` could only drive one. *"The search space was bounded by the
+ *      harness, not by the evidence."* Deleting this file would bound the next one the same way.
+ *   2. **A refuted hypothesis that is still MEASURED on every live tick keeps being tested.** If
+ *      the momentum reading turned out to predict the trailing-exit outcome after all, `/logs`
+ *      would show it.
+ *   3. `levelsFor` is still used to derive the take-profit that `evaluateEntry`'s expected-gain
+ *      estimate is scaled by. That estimate no longer reaches the cost bar — `decide()` feeds the
+ *      bar the measured held-out median from `age.ts` instead.
+ *
+ * `STOP_LOSS_BPS` likewise survives as `RiskConfig.stopLossBps` and `risk.ts`'s `stopFired`, off
+ * the decision path, for reason 1. Nothing in the live keeper reads it.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
  * ══ WHY THERE IS A DIRECTIONAL SIGNAL HERE AT ALL, WHEN OPENHOOD PROVED THERE WASN'T ONE ══
+ * ══ (the original argument, preserved. It was reasonable and it did not survive contact.) ══
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
  * openhood measured autocorrelation across 7 lags of hourly log returns on the ETH/NVDA pool

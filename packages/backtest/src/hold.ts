@@ -62,10 +62,10 @@ const DAY = 86_400;
  * A rank cut fixes the fold sizes and makes the imbalance visible in the SPAN report instead of
  * hiding it in the token count.
  */
-export function splitByLaunch(
-  tokens: readonly TokenBars[],
+export function splitByLaunch<T extends TokenBars>(
+  tokens: readonly T[],
   frac: number,
-): { readonly train: readonly TokenBars[]; readonly test: readonly TokenBars[] } {
+): { readonly train: readonly T[]; readonly test: readonly T[] } {
   const sorted = [...tokens].sort(
     (a, b) => (a.bars[0]?.ts ?? 0) - (b.bars[0]?.ts ?? 0),
   );
@@ -73,8 +73,14 @@ export function splitByLaunch(
   return { train: sorted.slice(0, cut), test: sorted.slice(cut) };
 }
 
-/** Tokens with at least `n` realised swaps. The one universe filter this round uses. */
-export function withMinSwaps(tokens: readonly TokenBars[], n: number): readonly TokenBars[] {
+/**
+ * Tokens with at least `n` realised swaps. The one universe filter this round uses.
+ *
+ * Generic in the token type so that a corpus carrying extra per-token fields — round 5's forward
+ * corpus adds `listedToday` and `taxFromApi` — keeps them through the filter. Widening to
+ * `TokenBars` here would erase exactly the flags the survivorship comparison is keyed on.
+ */
+export function withMinSwaps<T extends TokenBars>(tokens: readonly T[], n: number): readonly T[] {
   return tokens.filter((t) => t.bars.length >= n);
 }
 

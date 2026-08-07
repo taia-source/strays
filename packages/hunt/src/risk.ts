@@ -18,6 +18,34 @@
  * risk.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
+ * ══ EIGHT SLOTS, NOT ONE — THE MEASUREMENT THAT RESCUED THE STRATEGY ══
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * This module used to refuse every entry with `reason: "position-open"` while a stray held
+ * anything, and the refusal carried a confident justification: *"One position at a time: a stray
+ * with $5 cannot diversify, and pretending otherwise just multiplies the round-trip cost."* That
+ * sentence is arithmetically fine and it was the single most expensive line in the package,
+ * because the constraint it defends is not about diversification at all — **it is about sample
+ * size**, and RESULTS §10.5 measured what it costs on held-out data:
+ *
+ *     slots   usd   taken/72   skipped   median bps
+ *       1     $ 5      17         55      +1,921     <- Welch t 1.16, NOT significant
+ *       4     $10      48         24      +4,263
+ *       6     $15      66          6      +4,410
+ *       8     $20      71          1      +4,410     <- Welch t 2.38 … 2.72 on 20/20 seeds
+ *
+ * **The per-ticket edge is identical across the ladder. What changes is n.** A single slot is
+ * occupied for hours or days by the first eligible token and refuses the other 55, so seventeen
+ * observations have to carry the whole claim and they cannot. More capital does not improve the
+ * edge; it lets the cat TAKE the trades it was already identifying. Ibrahim raised user funding to
+ * $10–20, which at the 0.001 ETH position floor is 4–8 concurrent slots.
+ *
+ * `MAX_POSITIONS` is 8 here and 8 in `StrayVault.sol`, and they are not allowed to disagree — the
+ * contract's slot array is fixed at 8 so `withdraw`'s gas cannot be inflated by a keeper, and a
+ * keeper that believed in 9 would simply get `NoFreeSlot` on the ninth every time. `risk.test.ts`
+ * pins the constant against the contract source.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════
  * ══ STOP LOSSES EXIST HERE BECAUSE MERIDIAN HAD NONE (DESIGN §6 Rule 4) ══
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
@@ -29,8 +57,8 @@
  *
  * So a stray carries two independent controls, at two different scales:
  *
- *   1. **A HARD STOP on the position** (`STOP_LOSS_BPS`, −235bps, derived in `signal.ts`).
- *      Per-trade. Fires on price alone.
+ *   1. **A TRAILING STOP on each position** (`TRAIL_BPS`, 50% from the running peak, derived in
+ *      `trail.ts`). Per-trade. Fires on price relative to the position's own watermark.
  *   2. **A DRAWDOWN HALT on the stray** (`maxDrawdownBps`). Per-agent, across trades. Stops it
  *      opening anything new once cumulative equity has fallen far enough.
  *
@@ -39,6 +67,12 @@
  * exited above its stop. DESIGN §2 makes this visible in the product — *"a cat that is losing
  * money is drawn starving"* — and the halt is what starves it rather than letting it round-trip
  * to zero.
+ *
+ * **`stopFired` — the −235bps hard level stop — is NO LONGER ON THE DECISION PATH.** It remains
+ * exported and tested because `@strays/backtest` replays the old family against it and a refuted
+ * hypothesis you can no longer run is a refutation you have to take on trust. RESULTS §10 measured
+ * that a level stop derived from typical volatility closes exactly the positions that pay for
+ * everything; `trail.ts`'s header has the arithmetic.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
  * ══ THE SPEND LEDGER IS AN INTERFACE, NOT A MAP, BECAUSE OF RESEARCH §7f ══
@@ -73,8 +107,31 @@
  */
 
 import { STOP_LOSS_BPS } from "./signal.js";
+import { TRAIL_BPS } from "./trail.js";
 
 const BPS_DENOMINATOR = 10_000n;
+
+/**
+ * How many positions one stray may hold at once. **Eight, and it must equal
+ * `StrayVault.MAX_POSITIONS`.**
+ *
+ * DERIVED FROM A MEASUREMENT, not from a preference — the ladder in the header. At 8 slots the
+ * strategy takes 71 of 72 held-out opportunities and the Welch t against matched random is
+ * 2.38–2.72 on 20 of 20 seeds; at 1 slot it takes 17 and the t collapses to 1.16, which is not
+ * significant. The edge per ticket is the same number in both rows.
+ *
+ * Why not 16: the contract bounds every loop — including the one inside `withdraw` — at this
+ * constant, so it is also the bound on how expensive a keeper can make a user's exit. §10.5's
+ * ladder is already flat between 6 and 8 slots (both +4,410bps median, 66 and 71 of 72 taken), so
+ * a larger array buys ~1 extra opportunity at the cost of doubling the gas a user must pay to get
+ * out. **An exit whose cost the keeper controls is an exit the keeper can deny**, and that trade is
+ * not worth one ticket.
+ *
+ * Why not 4: $10 of funding buys 4 slots and takes 48 of 72, which is most of the way there. 8 is
+ * the top of the funding range Ibrahim actually raised to, and the contract has to be built for the
+ * largest stray it will hold rather than the median one.
+ */
+export const MAX_POSITIONS = 8;
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
  * THE DURABLE SPEND LEDGER
@@ -201,6 +258,22 @@ export type RiskConfig = {
    * ported**, because the curve it optimised against does not exist here.
    *
    * So size is a flat fraction of the compartment rather than an optimisation. See `sizePosition`.
+   *
+   * ══ RETUNED FOR EIGHT SLOTS: 1250bps, WHICH IS 10000/8 ══
+   *
+   * It was 5000bps — half the compartment per position — which was the right number for a stray
+   * that could hold exactly one thing and is the wrong number for one that holds eight. At 5000bps
+   * a stray puts half its money in its FIRST idea and is out of capital after two, so it would own
+   * a 2-slot portfolio while paying for an 8-slot contract: the §10.5 ladder's whole finding
+   * (17 → 71 of 72 opportunities taken) would be silently unavailable.
+   *
+   * 1250bps = 10000/8 is the fraction that lets the eighth slot be funded from the same compartment
+   * the first one was, so a stray divides its compartment ACROSS its slots rather than concentrating
+   * it in one. Note this is deliberately expressed against the WHOLE compartment rather than against
+   * "free capital / free slots": a rule that re-divides the remainder each time sizes the first
+   * position at 1/8, the second at 1/8 of 7/8, and so on, which gives the earliest and least
+   * informed idea the largest stake. Flat is the honest rule for a cost curve that is flat, and
+   * §10.5 measured no per-ticket edge difference between slots.
    */
   readonly positionFractionBps: bigint;
 
@@ -218,22 +291,58 @@ export type RiskConfig = {
    */
   readonly minPositionWei: bigint;
 
-  /** Hard per-position stop, in bps of the entry. Defaults to `signal.ts`'s derived level. */
+  /**
+   * The TRAILING stop, in bps below each position's running peak. **The live exit rule.**
+   *
+   * Derived in `trail.ts` from held-out measurement: 5000bps = 50% from the watermark. Config
+   * rather than a constant `decide()` reads directly, for the reason `edgeMultiple` is config —
+   * `@strays/backtest` recorded that a parameter it cannot sweep is a parameter nobody can show to
+   * be the right one, having swept one and got four byte-identical rows.
+   */
+  readonly trailBps: bigint;
+
+  /**
+   * The old HARD level stop, in bps of the entry. **No longer on the decision path.**
+   *
+   * Retained on the config so `@strays/backtest` can replay the refuted family it belongs to
+   * (`stopFired` is still exported for the same reason). RESULTS §10 measured that a level stop
+   * derived from typical volatility is precisely backwards on this asset: it closes the positions
+   * that pay for everything. `decide()` does not read this field.
+   */
   readonly stopLossBps: bigint;
+
+  /**
+   * How many positions this stray may hold at once. Capped at `MAX_POSITIONS` by `mayEnter`.
+   *
+   * Config rather than the constant directly because the funding ladder is a REAL product variable
+   * — §10.5 measured 1/4/6/8 slots at $5/$10/$15/$20 — and a $10 stray genuinely has four slots,
+   * not eight. `mayEnter` clamps it to `MAX_POSITIONS` regardless, because the contract's array is
+   * fixed at 8 and a ninth entry would revert `NoFreeSlot` after we had already committed the spend
+   * to the ledger.
+   */
+  readonly maxPositions: number;
 
   /**
    * Per-stray drawdown halt, in bps below the stray's high-water mark.
    *
-   * DERIVATION: at a 231bps round trip and a −235bps stop, a stray that enters, is stopped out,
-   * and pays the round trip loses ~466bps of the position per full losing cycle. At the default
-   * `positionFractionBps` of 5000 (half the compartment per trade) that is ~233bps of TOTAL equity
-   * per losing cycle. 2000bps (−20%) is therefore ~8–9 consecutive full losing cycles.
+   * DERIVATION, RE-RUN FOR THE NEW EXIT AND THE NEW SIZING — the old one is stated first because
+   * the number did not change and that could otherwise look like inattention.
    *
-   * Why not tighter: fewer than ~5 cycles and the halt fires on ordinary variance rather than on
-   * evidence, and DESIGN §2 wants a cat that is genuinely losing to starve — not one that had a
-   * bad afternoon. Why not looser: RESEARCH §3d's measured left tail is −17.1% over 24h, so a halt
-   * set beyond ~2500bps could be jumped clean over by a single day's move and would never bind.
-   * 2000bps sits inside that tail with room to actually fire.
+   * It was: at a 231bps round trip and a −235bps hard stop, a full losing cycle costs ~466bps of
+   * the position; at `positionFractionBps` 5000 that is ~233bps of total equity, so 2000bps is
+   * ~8–9 consecutive losing cycles.
+   *
+   * It is now: the exit is a 50% trailing stop, so a full losing cycle costs up to ~5000bps of the
+   * position plus the ~208bps round trip. But `positionFractionBps` is now 1250 rather than 5000,
+   * so a single losing position costs ~(5000+208) x 0.125 = ~651bps of total equity. 2000bps is
+   * therefore ~3 fully-lost positions out of eight — and note the halt is now reached by BREADTH as
+   * well as depth, which is the genuinely new shape: eight positions each down 20% trips it too.
+   *
+   * Three is fewer cycles than the old derivation's eight, and that is the correct direction for a
+   * strategy whose measured win rate is 73.6% (§10.4): three total losses out of eight concurrent
+   * tickets is far outside what that rate produces by chance, whereas eight would only fire after
+   * the stray had lost most of the money. Why not tighter than 2000bps: §10.4's p10 is −2,446bps
+   * per ticket, so a halt much below this fires on the ordinary left tail of a winning strategy.
    */
   readonly maxDrawdownBps: bigint;
 
@@ -262,30 +371,46 @@ export type RiskConfig = {
    * admitted 1 token in 100, the observed rate was ~0.4/day. The stated aim is **a few trades per
    * hour when signals are genuinely good**.
    *
-   * The window is now ONE HOUR and the cap is 3, so the ceiling is 3/hour rather than 6/day. It is
-   * a CEILING, not a target: a trade still has to pass the sell simulation, clear its own tax bar
-   * and win the ranking, so the realised rate is bounded by opportunity. The measured supply says
-   * that is the binding constraint — only 16 of the newest 100 tokens are sellable at all.
+   * The window is ONE HOUR, so this is a per-hour ceiling rather than a per-day one. It is a
+   * CEILING, not a target: a trade still has to pass the sell simulation, clear its own tax bar,
+   * sit inside the entry-swap window and win the ranking, so the realised rate is bounded by
+   * opportunity. The measured supply says that is the binding constraint — only 16 of the newest
+   * 100 tokens are sellable at all.
    *
-   * The ceiling exists because DESIGN §6 Rule 6 records a measured failure: meridian's 20-second
-   * rotation loop lost 2.8% on a single round trip in two hours and the strategy was retired —
-   * *"15-minute signals decay faster than the fees they incur."* At a 60-minute signal horizon,
-   * 3 entries an hour is already turning over faster than the signal resolves, so this is the
-   * outer bound of defensible rather than a rate to aim at.
+   * ══ RAISED FROM 3 TO 8, BECAUSE AT 3 IT WOULD HAVE SILENTLY UNDONE THE SLOT LADDER ══
+   *
+   * 3/hour was derived against a ONE-SLOT stray with a 60-minute momentum horizon, where a fourth
+   * entry in an hour meant churning a position that had not resolved yet. Under the new strategy
+   * neither half of that holds: positions are held for hours-to-days on a trailing exit, and a
+   * stray that is allowed 8 concurrent slots but only 3 new entries per hour cannot fill its own
+   * portfolio in under three hours. §10.5's whole finding is about how many of the 72 available
+   * opportunities get TAKEN (17 vs 71), and a 3/hour count cap is a second, undocumented way of
+   * skipping them.
+   *
+   * 8 = `MAX_POSITIONS`, so the cap is "you may fill every slot you have, once per hour" and never
+   * less. It still binds against the failure a count cap exists for — `@taia/authority` on Zodiac
+   * Roles v2: *"a retry storm can stay under every value cap while making hundreds of calls, and
+   * only a count catches it"* — because a retry storm produces far more than 8 in an hour, and
+   * DESIGN §6 Rule 6's measured failure (meridian's 20-second rotation loop, 2.8% lost in two
+   * hours) is a rotation rate this cannot reach: 8 entries/hour against positions held for hours
+   * is not rotation, it is filling a portfolio once.
    */
   readonly maxEntriesPerWindow: number;
 };
 
 export const DEFAULT_RISK: RiskConfig = {
-  positionFractionBps: 5000n, // half the compartment per position
+  // 1250bps = 10000/8: the compartment divided ACROSS the slots, not concentrated in the first idea.
+  positionFractionBps: 1250n,
   maxPositionWei: 5_000_000_000_000_000n, // 0.005 ETH ~= $9.64 — above the $5 stake, below the $10 budget
   minPositionWei: 1_000_000_000_000_000n, // 0.001 ETH ~= $1.93 — below this gas dominates
-  stopLossBps: STOP_LOSS_BPS, // −235bps, derived in signal.ts
+  trailBps: TRAIL_BPS, // 50% from the running peak, derived in trail.ts from held-out measurement
+  stopLossBps: STOP_LOSS_BPS, // −235bps, derived in signal.ts. RETAINED FOR REPLAY; not on the path
+  maxPositions: MAX_POSITIONS, // 8 — and the contract's array is 8, so it cannot usefully be higher
   maxDrawdownBps: 2000n, // −20%
   // ONE HOUR. The cap below is therefore a per-hour ceiling, not a per-day one — see the field doc.
   spendWindowSeconds: 3600,
   maxSpendPerWindowWei: 10_000_000_000_000_000n, // 0.01 ETH ~= $19.27
-  maxEntriesPerWindow: 3,
+  maxEntriesPerWindow: MAX_POSITIONS, // fill every slot once an hour, and no more
 };
 
 /** A stray's durable state. Supplied by the caller; this module holds nothing. */
@@ -295,18 +420,65 @@ export type StrayState = {
   readonly compartmentWei: bigint;
   /** Highest total equity this stray has ever reached, in wei. The drawdown reference. */
   readonly highWaterMarkWei: bigint;
-  /** Current total equity: free ETH plus the mark-to-market value of any open position. */
+  /** Current total equity: free ETH plus the mark-to-market value of any open positions. */
   readonly equityWei: bigint;
-  /** The open position, if any. */
-  readonly position: OpenPosition | undefined;
+  /**
+   * THE OPEN POSITIONS. Up to `MAX_POSITIONS` of them, in slot order.
+   *
+   * An ARRAY, replacing the single `position: OpenPosition | undefined` this type used to carry —
+   * and the replacement is the §10.5 finding expressed in the type system. A field that can hold
+   * one position is a field that skips 55 of 72 opportunities, and no amount of keeper cleverness
+   * gives it a second value. `StrayVault` makes the same change for the same reason, from a
+   * `holding` address to `Position[MAX_POSITIONS]`.
+   *
+   * Mirrors the contract's slot array: index i here is slot i there, which is what lets the keeper
+   * name a slot in `flee` and `mark`. Empty slots are simply absent rather than represented by an
+   * `undefined` hole — the contract uses `token == address(0)` as its one emptiness test and a
+   * second representation of emptiness is a second thing that can disagree.
+   */
+  readonly positions: readonly OpenPosition[];
 };
 
 export type OpenPosition = {
   readonly token: string;
+  /**
+   * Which contract slot holds this position, 0..MAX_POSITIONS-1.
+   *
+   * Carried explicitly rather than inferred from the array index, because the keeper has to name a
+   * slot in `flee(strayId, slot, minOut)` and `mark(strayId, slot, priceWei)`. An index that means
+   * "position of this element in whatever array the caller built" is an index that silently
+   * renumbers when a filtered or sorted list is passed, and the object it renumbers into is a
+   * different token's money. `StrayVault.flee` reads the token, hook and tickSpacing back FROM the
+   * slot, so naming the wrong one sells a different position at this one's `minOut`.
+   */
+  readonly slot: number;
   /** ETH committed at entry, in wei. */
   readonly entryWei: bigint;
   /** ETH price per token at entry, scaled 1e18. */
   readonly entryPriceWei: bigint;
+  /**
+   * THE PEAK PRICE WATERMARK. ETH-per-token, scaled 1e18. **The exit is computed from this.**
+   *
+   * Set to the entry price at entry and raised — never lowered — as the mark climbs. It is on the
+   * POSITION because the trailing exit is stateful: `trail.ts` can evaluate it from price relative
+   * to the highest price seen since entry, and from nothing else.
+   *
+   * Supplied by the CALLER, which is the whole point. The chain holds the authoritative copy in
+   * `Position.peakPriceWei` (raised by the keeper-only monotone `mark()`), the indexer persists a
+   * second copy in Postgres, and this package holds none — a watermark that lived in this process
+   * would reset on redeploy, which does not merely lose information but re-anchors the stop to the
+   * current price and silently disarms it (RESEARCH §7f, meridian's 'spend since last boot').
+   */
+  readonly peakPriceWei: bigint;
+  /**
+   * The hook of the pool this position was entered through.
+   *
+   * ON THE POSITION rather than re-derived at exit, mirroring `StrayVault.Position.hook` and for
+   * the same reason: a sell must address the SAME pool the buy addressed. RESEARCH §7d found two
+   * hooks on this pad, and building the exit PoolKey with the other one addresses a pool that
+   * either does not exist (a revert) or exists with different liquidity (a real, silent loss).
+   */
+  readonly hook: string;
   /** Full-precision token balance. NEVER a number — RESEARCH §7d. */
   readonly tokenBalance: bigint;
   readonly openedAtSeconds: number;
@@ -321,18 +493,52 @@ export type OpenPosition = {
 };
 
 /**
+ * How much of this stray's money is committed to open positions, in wei.
+ *
+ * At COST BASIS, deliberately, not at mark. The number this feeds is the sizing denominator, and
+ * sizing off marked-to-market value would make every new position larger while the portfolio is
+ * winning and smaller while it is losing — a momentum bet on our own book, added silently to a
+ * strategy that already has a directional thesis. Cost basis is the number that does not move.
+ */
+export function committedWei(state: StrayState): bigint {
+  return state.positions.reduce((sum, p) => sum + p.entryWei, 0n);
+}
+
+/**
  * The size of a new position, in wei. Returns 0 when no position may be opened.
  *
- * A flat fraction of the compartment, clamped to [min, max]. Deliberately NOT an optimiser:
- * RESEARCH §3c Rule 2 measured cost as flat in bps across the whole size range we can reach, so
- * there is no curve to optimise against and any sizing rule fancier than this would be fitting a
- * shape that does not exist.
+ * A flat fraction of the stray's TRADING CAPITAL, clamped to [min, max]. Deliberately NOT an
+ * optimiser: RESEARCH §3c Rule 2 measured cost as flat in bps across the whole size range we can
+ * reach, so there is no curve to optimise against and any sizing rule fancier than this would be
+ * fitting a shape that does not exist.
+ *
+ * ══ WHY THE DENOMINATOR IS free + committed AND NOT free ══
+ *
+ * This is the multi-slot change, and it is the difference between owning eight positions and
+ * owning two.
+ *
+ * `positionFractionBps` is 1250 = 1/8. Applied to the FREE compartment it compounds downward:
+ * a 0.008 ETH stray sizes its first position at 0.001, its second at 1/8 of the remaining 0.007,
+ * its third at 1/8 of 0.006125, and by slot 4 it is under the 0.001 ETH floor and refuses to
+ * trade — a stray with eight slots and money in the bank would report `size-below-floor` while
+ * §10.5's ladder says it should be taking 71 of 72 opportunities.
+ *
+ * Applied to free + committed it is flat: every slot is sized against the same denominator the
+ * first one was, so eight equal positions exactly consume the compartment. That is what "a stray
+ * divides its compartment across its slots" means arithmetically, and it is why the fraction is
+ * 10000/MAX_POSITIONS rather than a number that felt prudent.
+ *
+ * The `affordable` clamp below is still what stops it overspending: the fraction says what a slot
+ * SHOULD be, and the free compartment says what can actually be paid. A stray whose positions have
+ * lost value cannot conjure the difference.
  */
 export function sizePosition(state: StrayState, cfg: RiskConfig): bigint {
   if (state.compartmentWei <= 0n) return 0n;
-  const raw = (state.compartmentWei * cfg.positionFractionBps) / BPS_DENOMINATOR;
+  const tradingCapitalWei = state.compartmentWei + committedWei(state);
+  const raw = (tradingCapitalWei * cfg.positionFractionBps) / BPS_DENOMINATOR;
   const capped = raw > cfg.maxPositionWei ? cfg.maxPositionWei : raw;
-  // Never size ABOVE what is actually in the compartment, whatever the caps say.
+  // Never size ABOVE what is actually FREE in the compartment, whatever the fraction works out to.
+  // Committed capital is already spent; it sets the target size, it cannot pay for a new one.
   const affordable = capped > state.compartmentWei ? state.compartmentWei : capped;
   return affordable < cfg.minPositionWei ? 0n : affordable;
 }
@@ -380,7 +586,17 @@ export function drawdownBps(state: StrayState): bigint {
 }
 
 /**
- * Has the HARD STOP fired on an open position?
+ * Has the HARD LEVEL STOP fired on an open position? **NOT THE LIVE EXIT RULE.**
+ *
+ * The live exit is `trail.ts`'s `trailingStopFired` — a 50% trail from the position's own peak
+ * watermark. This function evaluates the −235bps level stop that used to be the exit, and RESULTS
+ * §10 measured that rule to be backwards on this asset: a level derived from typical volatility
+ * closes exactly the positions that produce the returns (§10.4: the top 10% of positions carry
+ * 76.1% of all profit, and a −235bps stop is inside the noise of every one of them).
+ *
+ * It is kept, exported and tested because `@strays/backtest` replays the refuted family against it.
+ * A refutation you can no longer run is a refutation taken on trust, and this corpus keeps
+ * recording what that costs. `decide()` does not call it.
  *
  * Price-only and unconditional. It does not consult the drawdown halt, the spend ledger, or the
  * cost of exiting — a stop that could be talked out of firing by another control is not a stop.
@@ -408,10 +624,18 @@ export function stopFired(args: {
   };
 }
 
-/** Why an ENTRY was refused. Note there is no exit reason type — exits are never refused. */
+/**
+ * Why an ENTRY was refused. Note there is no exit reason type — exits are never refused.
+ *
+ * `"position-open"` is gone and `"slots-full"` has replaced it. The rename is not cosmetic: the old
+ * reason asserted that holding ANYTHING disqualified a stray, which §10.5 measured as the single
+ * most expensive rule in the package (17 of 72 opportunities taken, Welch t 1.16). The new reason
+ * can only fire when all `maxPositions` slots are genuinely occupied.
+ */
 export type EntryDenialReason =
   | "drawdown-halt"
-  | "position-open"
+  | "slots-full"
+  | "duplicate-token"
   | "size-below-floor"
   | "window-spend-cap"
   | "window-count-cap"
@@ -419,8 +643,36 @@ export type EntryDenialReason =
   | "no-compartment";
 
 export type EntryGate =
-  | { readonly allowed: true; readonly sizeWei: bigint }
+  | {
+      readonly allowed: true;
+      readonly sizeWei: bigint;
+      /** The contract slot this entry should occupy: the lowest free index. */
+      readonly slot: number;
+      /** How many slots remain free AFTER this entry. For `/logs`. */
+      readonly freeSlotsAfter: number;
+    }
   | { readonly allowed: false; readonly reason: EntryDenialReason; readonly detail: string };
+
+/**
+ * The lowest free slot index, or `undefined` when every slot is occupied.
+ *
+ * LOWEST-FIRST, matching `StrayVault.hunt`'s own scan (`if (held == address(0) && slot ==
+ * MAX_POSITIONS) slot = i`). The two have to agree: the keeper tells the indexer which slot it
+ * expects to have filled, and if this function said "slot 5" while the contract chose 2, the
+ * indexer's watermark and the chain's would be attached to different positions — and the trailing
+ * stop would then be computed for one token from another token's peak.
+ */
+export function firstFreeSlot(
+  state: StrayState,
+  maxPositions: number = MAX_POSITIONS,
+): number | undefined {
+  const bound = maxPositions < MAX_POSITIONS ? maxPositions : MAX_POSITIONS;
+  const taken = new Set(state.positions.map((p) => p.slot));
+  for (let i = 0; i < bound; i++) {
+    if (!taken.has(i)) return i;
+  }
+  return undefined;
+}
 
 /**
  * May this stray open a NEW position, and for how much?
@@ -438,17 +690,65 @@ export async function mayEnter(args: {
   readonly ledger: SpendLedger;
   readonly idempotencyKey: string;
   readonly nowSeconds: number;
+  /**
+   * The token this entry is FOR, when the caller knows it.
+   *
+   * Optional so the gate can still be asked the stray-level question ("could this stray enter
+   * anything at all?") before a winner has been chosen — which is exactly how `decide()` uses it,
+   * once per tick rather than once per candidate. When supplied, it additionally refuses a token
+   * the stray is already holding in another slot.
+   */
+  readonly token?: string;
 }): Promise<EntryGate> {
   const { state, cfg, ledger, nowSeconds } = args;
 
-  if (state.position !== undefined) {
+  /*
+   * ══ THE SLOT CHECK, WHICH USED TO BE `state.position !== undefined` ══
+   *
+   * The old refusal fired whenever a stray held anything and carried this justification: "One
+   * position at a time: a stray with $5 cannot diversify." §10.5 measured what that costs — 17 of
+   * 72 held-out opportunities taken, 55 skipped, Welch t 1.16 (not significant) — against 71 of 72
+   * and t 2.38–2.72 at eight slots, with an IDENTICAL per-ticket median. The constraint was never
+   * about diversification; it was destroying the sample size the claim needed.
+   */
+  const configuredSlots =
+    cfg.maxPositions < MAX_POSITIONS ? cfg.maxPositions : MAX_POSITIONS;
+  const slot = firstFreeSlot(state, configuredSlots);
+  if (slot === undefined) {
     return {
       allowed: false,
-      reason: "position-open",
+      reason: "slots-full",
       detail:
-        `${state.strayId} already holds ${state.position.token}. One position at a time: a stray ` +
-        "with $5 cannot diversify, and pretending otherwise just multiplies the round-trip cost",
+        `${state.strayId} holds ${String(state.positions.length)} positions and all ` +
+        `${String(configuredSlots)} slots are occupied (${state.positions
+          .map((p) => `${String(p.slot)}:${p.token}`)
+          .join(", ")}). It hunts again as soon as one exits. Note the slot count is CAPITAL, not ` +
+        "conviction: §10.5 measured the same per-ticket edge at 1, 4, 6 and 8 slots and only the " +
+        "number of opportunities taken changed (17 -> 71 of 72)",
     };
+  }
+
+  /*
+   * A stray does not open the SAME token twice. Eight slots is eight ideas, not one idea eight
+   * times: doubling into a token multiplies the exposure without adding an observation, which is
+   * the opposite of the reason the slots exist. The contract does not enforce this — nothing about
+   * a second position in the same token is unsafe — so it is a strategy rule, made here.
+   */
+  if (args.token !== undefined) {
+    const already = state.positions.find(
+      (p) => p.token.toLowerCase() === args.token?.toLowerCase(),
+    );
+    if (already !== undefined) {
+      return {
+        allowed: false,
+        reason: "duplicate-token",
+        detail:
+          `${state.strayId} already holds ${already.token} in slot ${String(already.slot)}. Eight ` +
+          "slots is eight ideas, not one idea eight times — a second position in the same token " +
+          "doubles the exposure without adding an observation, and §10.5's finding is entirely " +
+          "about the number of DISTINCT opportunities taken",
+      };
+    }
   }
 
   const dd = drawdownBps(state);
@@ -519,7 +819,12 @@ export async function mayEnter(args: {
     };
   }
 
-  return { allowed: true, sizeWei };
+  return {
+    allowed: true,
+    sizeWei,
+    slot,
+    freeSlotsAfter: configuredSlots - state.positions.length - 1,
+  };
 }
 
 /**
