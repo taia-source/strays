@@ -429,25 +429,68 @@ export function geometryFor(id: string): CatGeometry {
      * the head. The difference between 3.4 and 5.2 is a scottish fold and a lynx.
      */
     /*
-     * 2.6..4.0 rows above the crown, LOWERED from 3.4..5.2.
+     * ══ 2.0..3.0 ROWS ABOVE THE CROWN — CUT TWICE, AND THE RANGE NARROWED BOTH TIMES ══
      *
-     * At the higher range the ears rose four to five clear rows over a head 11 rows tall, and
-     * rendered at 384x zoom they read as DEVIL HORNS or as a lynx's tufts — tall, narrow spikes
-     * rather than a cat's soft triangles. bloodhorn's horn occupies four of twenty-four rows and it
-     * is the creature's ORNAMENT; an ear is bigger than that but it is still not allowed to out-mass
-     * the head it sits on.
+     * 3.4..5.2 first, then 2.6..4.0, now 2.0..3.0. Each cut came from a render, and the range got
+     * NARROWER each time as well as shorter, which is the more important half.
      *
-     * At 2.6..4.0 against a base half-width of 1.8..2.8, every ear in the range is at least as wide
-     * as it is tall above the crown, which is what makes it read as a triangle rather than as a
-     * spike. The difference between the ends of the range is still a scottish fold and a lynx.
+     * The height is what makes an ear read as a lynx, and a range wide enough to reach a lynx at one
+     * end contains cats that are the wrong SPECIES. The rule the package's own header states — "if
+     * one axis makes a cat read as a different species, that axis is too wide" — is a constraint on
+     * the RANGE, not on the midpoint, and it is the one this axis kept violating. A one-row spread
+     * between the shortest and tallest ear is still a visible difference at 24px (a row is 4% of the
+     * sprite) and it cannot leave the genus.
+     *
+     * The variation the ears used to carry through height now comes through WIDTH, which is the safe
+     * axis: a wide ear and a narrow ear are both cat ears, where a tall ear is a different animal.
      */
-    earHeight: 2.6 + unit(id, SALT.earHeight) * 1.4,
+    earHeight: 2.4 + unit(id, SALT.earHeight) * 1.0,
     /*
-     * The ear's base half-width. Combined with `earHeight` this produces the flat-and-wide to
-     * tall-and-narrow range: a 5.2-row ear at half-width 1.5 is a spike, and a 3.4-row ear at 2.4 is
-     * a broad triangle. Neither is reachable when the width is a constant.
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     * ══ THE BASE HALF-WIDTH, 1.5..2.1 — WIDENED, THEN CUT BACK HARDER THAN IT STARTED ══
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * When the ear height was cut to fix the lynx read, the width was raised to 2.3..3.3 on the
+     * reasoning that a cat's ear is about as wide as it is tall, so a shorter ear needs a broader
+     * base or it becomes a nub. The arithmetic was right and the result was worse: the cats now read
+     * as having HORNS or a pair of BOWS.
+     *
+     * The part grid shows why, and it is not about the ear's own proportions at all. A half-width of
+     * 3.3 is a base SEVEN cells across, and the two roots sit about six cells apart on a head
+     * fourteen wide — so the two bases nearly touch and rasterise into a single continuous band right
+     * across the crown. The dome that the root-depth fix had just restored was covered again, this
+     * time from the side rather than from above, and a band across a skull with two dark hollows in it
+     * is a pair of horns.
+     *
+     * ══ WHAT THE EAR ACTUALLY NEEDS IS CLEAR DOME BETWEEN THE TWO OF THEM ══
+     *
+     * "As wide as it is tall" is a statement about ONE ear in isolation and it ignores the only
+     * constraint that matters at 24px: there are two of them on a 14-cell skull, and what makes them
+     * read as ears rather than as a crest is the FOREHEAD SHOWING BETWEEN THEM. The budget has to be
+     * set against the head's width and the gap, not against the ear's own aspect.
+     *
+     * At 1.8..2.5 each base is 4-6 cells, the roots are ~7 apart, and there are two to four clear
+     * dome cells between them on every head width. The ears are still squat — 3-4 rows tall on a 4-6
+     * cell base — and they are now plainly two separate triangles on a round head.
+     *
+     * ══ AND IT WAS CUT TOO FAR ONCE, WHICH IS THE OTHER HALF OF THE CALIBRATION ══
+     *
+     * The first cut went to 1.5..2.1 and fixed the horn read completely — and at 48px, which is the
+     * COLONY MAP size and the one that matters most, the smallest ears had shrunk to two or three
+     * cells and simply disappeared. A cat with no visible ears on the map is worse than a cat with
+     * slightly horn-like ones, because the ears are the entire species cue at that size.
+     *
+     * Both bounds of this axis are therefore load-bearing and they are set by DIFFERENT sizes: the
+     * ceiling is set at 96px (above it the ears read as horns) and the floor at 48px (below it they
+     * vanish). A single render cannot calibrate it, which is why `scripts/preview.mjs` draws every
+     * sheet at three scales and why judging this axis from the detail sheet alone got it wrong twice.
+     *
+     * This is the third consecutive fix to this feature where the correct move was the OPPOSITE of
+     * what the local reasoning suggested, and each time the local reasoning was about the ear alone
+     * while the defect was about the ear's relationship to the skull. `grid.test.ts` now asserts the
+     * dome gap between the ears directly, so the next edit that closes it fails rather than ships.
      */
-    earWidth: 1.8 + unit(id, SALT.earWidth) * 1.0,
+    earWidth: 1.8 + unit(id, SALT.earWidth) * 0.7,
     tailCurl: signed(id, SALT.tailCurl),
     tailLift: unit(id, SALT.tailLift),
     eyeShape: Math.floor(unit(id, SALT.eyeShape) * 3),
@@ -756,47 +799,69 @@ function coatDrop(coat: Coat, px: number, py: number, drop: number): number {
      */
     case "patched": {
       /*
-       * ══ THE PATCH WAS HALF THE ANIMAL, AND IT READ AS DAMAGE ══
+       * ══════════════════════════════════════════════════════════════════════════════════════
+       * ══ PATCHED IS ONE EYE PATCH, AND THAT IS THE THIRD ATTEMPT AT THIS AXIS ══
+       * ══════════════════════════════════════════════════════════════════════════════════════
        *
-       * The first version darkened everything right of centre below the shoulder plus a block over
-       * one eye. That is not a marking, it is a shadow falling across the cat, and rendered at 384x
-       * zoom it looked like the sprite had been bitten: a hard vertical value break down the middle
-       * of a symmetric animal reads as a missing chunk, not as a bicolour coat.
+       * v1 darkened everything right of centre below the shoulder: a hard vertical value break down
+       * the middle of a symmetric animal, which reads as a missing chunk rather than as a bicolour
+       * coat. v2 replaced it with a bounded flank blob plus a spot over one BROW — and the brow spot
+       * landed beside the ear, where at 96px it was indistinguishable from an ear shadow and made
+       * three of twelve cats look damaged around the head.
        *
-       * The same failure is recorded three times in this package under different names — the tabby
-       * bands as louvres, the brow drop as a visor, the eye row as a mask — and it has one cause: a
-       * dark region that spans a shape from one edge to another reads as a GAP IN THE SHAPE.
+       * Both attempts were trying to place a marking somewhere it would be NOTICED, and both put it
+       * somewhere it competed with a feature. The third attempt puts it exactly where a marking on a
+       * cat is not merely tolerated but LOVED: over one eye.
        *
-       * The patch is now a bounded blob on one flank and a small spot over one ear, both inset from
-       * the silhouette on every side. It reads as a marking because it has coat all the way round it.
+       * A cat with a patch over one eye is instantly charming and instantly legible — it is the most
+       * recognisable cat marking there is, it is asymmetric by definition (so it does the job this
+       * axis exists for, breaking the sprite's bilateral symmetry), and it reads at 32px because the
+       * eye is the thing a viewer is already looking at. It cannot be mistaken for damage because it
+       * SURROUNDS a feature rather than interrupting one.
+       *
+       * ══ WHY THE PATCH IS ON THE HEAD AND NOT ON THE BODY ══
+       *
+       * The body is small, it is mostly hidden behind the head's silhouette at 32px, and it is the
+       * part of this sprite with the least going on. A marking there is a dark smudge on a plinth. On
+       * the face it is a character trait. The whole reason this axis was rated the weakest is that it
+       * was spending its two ramp steps on the least-looked-at part of the animal.
+       *
+       * The patch reaches the eye's own rows and a row above and below it, and one column outside it
+       * on each side — a rounded blot AROUND the eye rather than a rectangle through it. It is on the
+       * LEFT eye always: this is the one place the sprite is deliberately not mirrored, because a
+       * patch that switched sides per id would read as two different markings rather than as one.
        */
-      const flank =
-        px > CX + 0.5 && px < CX + 4 && py > ROWS.body[0] + 1 + drop && py < ROWS.body[1] + drop;
-      const brow = px > CX + 1 && px < CX + 5 && py > ROWS.head[0] + 1 + drop && py < EYE_Y + drop;
-      return flank || brow ? 2 : 0;
+      const ex = EYE_L_X - 1;
+      const ey = EYE_Y + drop - 1;
+      const dx = px - (ex + EYE_D / 2);
+      const dy = py - (ey + EYE_D / 2);
+      // An ellipse a little wider than tall, so it reads as a blot rather than as a circle.
+      return (dx * dx) / 12.5 + (dy * dy) / 9 <= 1 ? 2 : 0;
     }
     /*
-     * TORTIE — a deterministic mottle, `fnv1a` on the coordinate rather than `Math.random`, so it is
-     * stable across renders and the ban holds. The cell is 1x2 so the mottle sits at a different
-     * spatial frequency from the Bayer dither underneath it; at 1x1 the two were indistinguishable.
+     * ══ TORTIE — a coarse mottle, kept OFF the face ══
+     *
+     * A deterministic scatter, `fnv1a` on the coordinate rather than `Math.random`, so it is stable
+     * across renders and the ban holds. The cell is 2x2 so the mottle sits at a coarser spatial
+     * frequency than the Bayer dither underneath it; at 1x1 the two were indistinguishable and the
+     * result read as a corrupted sprite rather than as a tortoiseshell.
+     *
+     * ══ AND IT STOPS AT THE EYES, WHICH IS WHAT MAKES IT A COAT RATHER THAN DAMAGE ══
+     *
+     * Applied over the whole animal it put dark blocks across the forehead and around the eyes, and
+     * at 96px those are indistinguishable from bruising — the face is where a viewer looks, so a
+     * random dark patch there reads as something having HAPPENED to the cat rather than as its
+     * markings. That is the same failure the `patched` coat had twice, and the same fix: a marking
+     * has to be somewhere it cannot be mistaken for an injury.
+     *
+     * Below the eye line only, and at 26% rather than 40%, so the crown and the face stay clean and
+     * the brindling reads on the cheeks, the chest and the flanks — which is where a real
+     * tortoiseshell's patching is most visible anyway.
      */
     case "tortie": {
-      /*
-       * ══ THE MOTTLE IS COARSE AND SPARSE, AFTER IT RENDERED AS DAMAGE ══
-       *
-       * At a 1x2 cell and 40% density the mottle put isolated dark pixels all over the head and body,
-       * and rendered at 384x zoom it read as the sprite being CORRUPTED — scattered single dark cells
-       * on an otherwise clean coat is what a decoding error looks like, not what a tortoiseshell
-       * looks like. A tortie's brindling is made of PATCHES, and a patch is several cells.
-       *
-       * A 2x2 cell at 30% density gives blocks rather than speckles, and the lower density leaves
-       * enough clean coat between them that they read as markings ON a cat rather than as noise
-       * across one. The cell also has to stay coarser than the Bayer dither running underneath it: at
-       * 1x1 the two were indistinguishable, which is the defect that produced the fine scatter in the
-       * first place.
-       */
+      if (py < EYE_Y + EYE_D + drop) return 0;
       const h = fnv1a(`tortie:${px >> 1}:${py >> 1}`);
-      return h % 100 < 30 ? 2 : 0;
+      return h % 100 < 26 ? 2 : 0;
     }
     default:
       return 0;
@@ -976,9 +1041,19 @@ export function catGrid(
   const ident = frameGeometry(stateGeometry(geometryFor(id), state), dead ? 0 : frame);
   const g = cuteGeometry(ident, state, frame);
   const drop = stateDrop(state);
-  // The eyes close on the BLINK frame and stay half-lidded while starving. Both use the same mask;
-  // the state is carried by the fact that the lid is held rather than by a different curve.
-  const sleepy = (!dead && frame === 2) || state === "starving";
+  /*
+   * ══ A BLINK AND A SAD FACE ARE DIFFERENT DRAWINGS, AND CONFLATING THEM MADE THE CAT ANGRY ══
+   *
+   * These were one `sleepy` flag, on the reasoning that a half-lidded eye and a blinking eye are the
+   * same shape and the state is carried by the lid being HELD. Rendered at 96px, every starving cat
+   * read as hostile: a blink is a horizontal SLIT, and narrowed eyes are the universal anger signal.
+   *
+   * A starving stray has to be PITIABLE — the whole mechanic depends on the user wanting to feed it,
+   * and an angry animal invites nothing. So the two are separate flags with separate masks. See
+   * `EYE_MASK_SAD`.
+   */
+  const blinking = !dead && frame === 2 && state !== "starving";
+  const sad = !dead && state === "starving";
 
   const tail = new Map<number, number>();
   for (const cell of cuteTailCells(g, drop)) tail.set(cell.y * GRID_W + cell.x, cell.t);
@@ -991,7 +1066,7 @@ export function catGrid(
 
   for (let y = 0; y < GRID_H; y++) {
     for (let x = 0; x < GRID_W; x++) {
-      const hit = cutePartAt(x, y, g, tail, drop, sleepy, dead);
+      const hit = cutePartAt(x, y, g, tail, drop, blinking, sad, dead);
       if (!hit) continue;
       const key = y * GRID_W + x;
 
@@ -1020,7 +1095,26 @@ export function catGrid(
            * of event-hued pixels, so the code has to count them, and `grid.test.ts` asserts the count
            * rather than the intent.
            */
-          ...(hit.part === "eye" && hit.light === true ? { accent: true } : {}),
+          /*
+           * ══ THE ACCENT DOES NOT LAND ON A STARVING CAT'S EYE — IT READ AS DEMONIC ══
+           *
+           * The accent flags the catchlight, which is the brightest pixel on the face and the one a
+           * viewer's eye already goes to. That is correct for `fed`, where the amber lands on a bright
+           * highlight and reads as warmth.
+           *
+           * For `starving` it was a disaster the moment the sad eye arrived. §3's `starving` hue is
+           * EMBER RED, and an ember-red pixel in the middle of a big dark eye is a GLOWING RED EYE —
+           * every cat in the starving row read as demonic, which is even further from pitiable than
+           * the angry squint this whole change set out to fix. Two fixes in a row landed on the wrong
+           * emotion because each was made without re-rendering the state it fed into.
+           *
+           * A starving cat's state is already carried by its ears, its dimmed eyes and its exposure;
+           * it does not need a tint, and the one hue available actively fights the read. So the
+           * accent is scoped to states whose hue HELPS. `STATE_ACCENT` still declares both hues and
+           * `render.ts` still honours whatever is flagged — this decides only WHERE it may land, and
+           * the count is unchanged at two-or-fewer, which is what §8 caps.
+           */
+          ...(hit.part === "eye" && hit.light === true && state === "fed" ? { accent: true } : {}),
         });
         filled.add(key);
         if (hit.part !== "whisker") outlineSeed.add(key);
@@ -1106,18 +1200,29 @@ export function catGrid(
        */
       if (hit.part === "ear") step = Math.max(4, Math.min(5, step));
       /*
-       * ══ THE INNER EAR IS ITS OWN STEP, and it is the detail that most changes the face ══
+       * ══════════════════════════════════════════════════════════════════════════════════════
+       * ══ THE INNER EAR IS STEP 3, RAISED FROM 2 WHEN THE EAR SHRANK ══
+       * ══════════════════════════════════════════════════════════════════════════════════════
        *
-       * FOUR steps below the outer ear's rim rather than a shading bias. That gap is what makes the
-       * ear read as a CONE OPEN TOWARD THE VIEWER: a bright rim of cartilage with a shadowed hollow
-       * inside it. v1 shaded this through the normal and the wedge landed within one step of the rim,
-       * which the dither then erased about half the time.
+       * The hollow sat at 2 against a rim floored at 5 — a four-step gap, chosen so the ear reads as
+       * a CONE OPEN TOWARD THE VIEWER rather than as a flat triangle, and correct while the ear was
+       * five rows tall and seven cells wide.
        *
-       * Floored at 2 rather than 1 so it stays clear of the outline's 0 — an inner ear that reaches
-       * the outline's value reads as a HOLE punched through the ear rather than as a hollow in it,
-       * which at 24px is the difference between a cat and a cat with a bite out of its ear.
+       * Once the ear was cut to 3-4 rows on a 3-5 cell base to stop it reading as a lynx, that same
+       * four-step gap became the ear's dominant feature: on a 3-cell ear the hollow is the middle
+       * cell, so a near-black column ran up the centre of a small bright triangle and the pair read
+       * as HORNS — two dark wedges rising off a round skull.
+       *
+       * A contrast ratio tuned against an area does not survive the area shrinking. The gap is now
+       * two steps rather than four, which still separates the hollow from the rim (two steps is above
+       * the Bayer dither's own range, which is the threshold this file uses everywhere for "a break
+       * that survives rasterisation") without the hollow becoming the shape a viewer reads.
+       *
+       * Still floored clear of the outline's 0: an inner ear that reaches the outline's value reads
+       * as a HOLE punched through the ear rather than as a hollow in it, which at 24px is the
+       * difference between a cat and a cat with a bite taken out of its ear.
        */
-      if (hit.part === "earInner") step = 2;
+      if (hit.part === "earInner") step = 3;
       /*
        * ══ THE THROAT — what remains of the neck rule, and front-on it is only a shading ══
        *

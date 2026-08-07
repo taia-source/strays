@@ -102,13 +102,13 @@
   --wash: oklch(0.195 0.042 295);
 
   /* ── The two EVENT hues. One hue means exactly one thing. ── */
-  --fed: oklch(0.8 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
-  --starve: oklch(0.68 0.19 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+  --fed: oklch(0.83 0.165 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
+  --starve: oklch(0.73 0.165 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
 
   /* ── The DECORATIVE tier. Carries NO state. See the header. ── */
-  --iris: oklch(0.72 0.17 300);
-  --bloom: oklch(0.74 0.17 350);
-  --cyan: oklch(0.78 0.12 195);
+  --iris: oklch(0.76 0.15 300);
+  --bloom: oklch(0.78 0.15 350);
+  --cyan: oklch(0.82 0.11 195);
 
   /* Green is NOT profit here. Green is the SENSOR. A green number means "measured", not "up".
      This deliberately kills the green=good/red=bad convention. */
@@ -155,11 +155,11 @@
     --rail: oklch(0.68 0.05 295);
     --band: oklch(0.895 0.042 300);
     --wash: oklch(0.928 0.032 300);
-    --fed: oklch(0.47 0.14 65);
-    --starve: oklch(0.47 0.195 25);
-    --iris: oklch(0.455 0.19 300);
-    --bloom: oklch(0.47 0.19 350);
-    --cyan: oklch(0.44 0.11 215);
+    --fed: oklch(0.435 0.13 65);
+    --starve: oklch(0.43 0.185 25);
+    --iris: oklch(0.415 0.18 300);
+    --bloom: oklch(0.425 0.18 350);
+    --cyan: oklch(0.365 0.1 215);
     color-scheme: light;
   }
 }
@@ -174,11 +174,11 @@
   --rail: oklch(0.42 0.045 290);
   --band: oklch(0.255 0.055 290);
   --wash: oklch(0.195 0.042 295);
-  --fed: oklch(0.8 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
-  --starve: oklch(0.68 0.19 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
-  --iris: oklch(0.72 0.17 300);
-  --bloom: oklch(0.74 0.17 350);
-  --cyan: oklch(0.78 0.12 195);
+  --fed: oklch(0.83 0.165 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
+  --starve: oklch(0.73 0.165 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+  --iris: oklch(0.76 0.15 300);
+  --bloom: oklch(0.78 0.15 350);
+  --cyan: oklch(0.82 0.11 195);
   color-scheme: dark;
 }
 
@@ -192,11 +192,11 @@
   --rail: oklch(0.68 0.05 295);
   --band: oklch(0.895 0.042 300);
   --wash: oklch(0.928 0.032 300);
-  --fed: oklch(0.47 0.14 65);
-  --starve: oklch(0.47 0.195 25);
-  --iris: oklch(0.455 0.19 300);
-  --bloom: oklch(0.47 0.19 350);
-  --cyan: oklch(0.44 0.11 215);
+  --fed: oklch(0.435 0.13 65);
+  --starve: oklch(0.43 0.185 25);
+  --iris: oklch(0.415 0.18 300);
+  --bloom: oklch(0.425 0.18 350);
+  --cyan: oklch(0.365 0.1 215);
   color-scheme: light;
 }
 

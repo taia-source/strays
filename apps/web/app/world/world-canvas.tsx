@@ -560,19 +560,19 @@ type Palette = {
 
 function readPalette(el: HTMLElement): Palette {
   return {
-    soot: readVar(el, "--soot", "oklch(0.14 0.014 145)"),
-    sootHi: readVar(el, "--soot-hi", "oklch(0.19 0.02 145)"),
-    rail: readVar(el, "--rail", "oklch(0.34 0.075 145)"),
-    band: readVar(el, "--band", "oklch(0.24 0.045 145)"),
-    phos: readVar(el, "--phos", "oklch(0.9 0.055 145)"),
-    phosDim: readVar(el, "--phos-dim", "oklch(0.63 0.045 145)"),
-    phosGhost: readVar(el, "--phos-ghost", "oklch(0.58 0.038 145)"),
-    fed: readVar(el, "--fed", "oklch(0.78 0.17 85)"),
-    starve: readVar(el, "--starve", "oklch(0.6 0.2 25)"),
+    soot: readVar(el, "--soot", "oklch(0.145 0.03 285)"),
+    sootHi: readVar(el, "--soot-hi", "oklch(0.225 0.048 285)"),
+    rail: readVar(el, "--rail", "oklch(0.42 0.045 290)"),
+    band: readVar(el, "--band", "oklch(0.255 0.055 290)"),
+    phos: readVar(el, "--phos", "oklch(0.925 0.045 150)"),
+    phosDim: readVar(el, "--phos-dim", "oklch(0.775 0.055 175)"),
+    phosGhost: readVar(el, "--phos-ghost", "oklch(0.755 0.05 300)"),
+    fed: readVar(el, "--fed", "oklch(0.83 0.165 85)"),
+    starve: readVar(el, "--starve", "oklch(0.73 0.165 25)"),
     sootLine: readVar(el, "--soot-line", "oklch(0.32 0.06 288)"),
-    iris: readVar(el, "--iris", "oklch(0.72 0.17 300)"),
-    bloom: readVar(el, "--bloom", "oklch(0.74 0.17 350)"),
-    cyan: readVar(el, "--cyan", "oklch(0.78 0.12 195)"),
+    iris: readVar(el, "--iris", "oklch(0.76 0.15 300)"),
+    bloom: readVar(el, "--bloom", "oklch(0.78 0.15 350)"),
+    cyan: readVar(el, "--cyan", "oklch(0.82 0.11 195)"),
   };
 }
 

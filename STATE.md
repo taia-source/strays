@@ -156,7 +156,33 @@ take-profit at `cost × multiple / position` while `evaluateEntry` defines
 `expectedGain = position × takeProfitBps` — the bar compares a number against itself. **0 refusals
 across 72 combinations of tax tier, size and multiple**, now pinned by a test.
 
-### THE VENUE IS THE CONSTRAINT — and openhood already measured the alternative
+### IBRAHIM'S DECISION: STAY ON LETSCASH. The venue analysis below is recorded, not acted on.
+
+Asked directly whether to move venue, he said: *"we want the cats to trade on letscash tokens, and
+i do think there is mature tokens there that cats can be profitable of, you don't need to buy new
+pairs or whatever.. there is tokens there with 1m mcap that has daily volume"*
+
+And on live trading: **stay stopped until measured profitable.**
+
+**His instinct points at something the backtest may have averaged away.** The −117bps figure is a
+mean across all 461 tokens, and that corpus contains a long tail of near-dead tokens with 2–40 swaps
+alongside genuinely liquid ones. Verified in the corpus:
+
+```
+CRYINGCAT  38,867 swaps     INTERN 23,768     WINK 20,121     LEVCAT 15,479
+VIBECAT    14,816           CHUDCAT 8,356     SERIOUSCAT 7,615  CASHBIRD 5,461
+```
+
+These are real, actively traded, 1%-tax tokens with 500–1,200 holders and 100–400Ξ of daily volume.
+Round 2 reported that volume/holder floors made results *monotonically worse*, which contradicts
+that live evidence and is surprising enough to re-examine — the floors may have been applied to a
+stale API field rather than to realised swap activity. **That is being tested now.**
+
+The trap to guard against, and it is the same one that killed the last positive result:
+restricting to "tokens that are big and liquid TODAY" is itself a survivorship filter. Any result
+must beat RANDOM entries on the same restricted universe, or it has found nothing.
+
+### The venue analysis — recorded for completeness, NOT the chosen path
 
 A 0%-tax tier does not exist on letscash in practice: **zero** of the top 48 by market cap and
 **one** of 461 in the backtest corpus (WINLOSE, two swaps). That path is closed.

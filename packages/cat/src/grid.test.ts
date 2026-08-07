@@ -668,7 +668,7 @@ describe("the state tints AT MOST TWO PIXELS", () => {
     }
   });
 
-  it("droops a starving cat's ears and half-closes its eyes — the CUTE register", () => {
+  it("droops a starving cat's ears and dims its eyes — SAD, never angry", () => {
     /*
      * ══ WHAT REPLACED "drops it into a crouch", AND WHY ══
      *
@@ -697,12 +697,44 @@ describe("the state tints AT MOST TWO PIXELS", () => {
         earSpan("starving"),
         `id ${id}: a starving cat's ears are not drooping`,
       ).toBeGreaterThanOrEqual(earSpan("fed"));
-      // And the eyes are half-lidded: fewer eye cells than the wide-open fed state.
+      /*
+       * ══ THE EYE IS DIMMER, NOT SMALLER — and this assertion was inverted with the fix ══
+       *
+       * It read `eyeArea("starving") < eyeArea("fed")` — a starving cat's eyes must be SMALLER — and
+       * it passed while every starving cat in the colony read as ANGRY. That is the assertion doing
+       * real harm rather than merely failing to help: narrowed eyes are the universal anger signal,
+       * and this test was requiring them.
+       *
+       * A sad eye is LARGE and round with a heavy upper lid and NO CATCHLIGHT. Shrinking an eye reads
+       * as narrowing it; keeping it big keeps the neoteny, which is what makes the face pitiable
+       * rather than threatening. `DESIGN.md` §2 needs a losing cat drawn losing, and the product
+       * needs the user to WANT to feed it — an angry stray invites nothing.
+       *
+       * So what is asserted is the cue that actually carries sadness and costs one pixel: the
+       * catchlight goes out. A catchlight is what makes an eye look alive and engaged, and removing
+       * it makes the same eye read as dull and downcast immediately.
+       */
+      const lights = (state: CatState) =>
+        catGrid(id, { state }).filter((p) => p.part === "eye" && p.step === RAMP_STEPS - 1).length;
+      expect(lights("fed"), `id ${id}: a fed cat has no catchlight`).toBe(2);
+      /*
+       * The starving cat's catchlight is DULLED, not removed. Removing it entirely was tried and
+       * rendered as big empty black voids — the cats read as vacant or already dead, which collides
+       * with the `dead` state and invites even less than anger did. A sad eye has a highlight that
+       * has gone dull, not a missing one. So the assertion is that nothing in the eye reaches the
+       * reserved top step, while the eye still carries a lit pixel below it.
+       */
+      expect(lights("starving"), `id ${id}: a starving cat's eyes still catch the light`).toBe(0);
+      const starvingEye = catGrid(id, { state: "starving" }).filter((p) => p.part === "eye");
+      const brightest = Math.max(...starvingEye.map((p) => p.step));
+      expect(brightest, `id ${id}: a starving cat's eyes are a dead void`).toBeGreaterThan(1);
+      // And the eye stays BIG — at least as much eye as the fed state, never less.
       const eyeArea = (state: CatState) =>
         catGrid(id, { state }).filter((p) => p.part === "eye").length;
-      expect(eyeArea("starving"), `id ${id}: a starving cat's eyes are not lidded`).toBeLessThan(
-        eyeArea("fed"),
-      );
+      expect(
+        eyeArea("starving"),
+        `id ${id}: a starving cat's eyes were narrowed — that reads as ANGRY`,
+      ).toBeGreaterThanOrEqual(eyeArea("fed"));
     }
   });
 

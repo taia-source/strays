@@ -380,18 +380,47 @@ function headNormal(
 }
 
 /**
- * How far INSIDE the crown an ear's base sits, in rows.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * How far INSIDE the crown an ear's base sits, in rows — and it is 1.4, CUT FROM 2.8.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Silhouette rule 1: an appendage must MEET the body. An ear whose base floats one row above the
- * crown is a triangle hovering over a cat, and at 24px that reads as damage rather than as an ear.
- * Overlapping by 3.4 rows guarantees every ear column has filled head beneath it at every head width
- * and every ear angle the axes reach.
+ * Silhouette rule 1: an appendage must MEET the body. An ear whose base floats above the crown is a
+ * triangle hovering over a cat, so the base is buried inside the skull and both ends of the ear —
+ * the base row and the drawn height — are derived from this one number.
  *
- * It is a named constant rather than a literal because BOTH ends of the ear are derived from it —
- * the base row and the drawn height — and a literal repeated in two places is how the ear ended up
- * failing to clear the skull after the base was deepened to fix a different bug.
+ * ══ AT 2.8 THE EARS ATE THE SKULL, AND THAT IS WHY THEY READ AS A LYNX ══
+ *
+ * A review of the 96px sheet said several cats read as a lynx, a bat or a fennec fox. The obvious
+ * hypothesis was that the ears were too TALL, and the obvious measurement — tip height above the
+ * crown, divided by ear width — said they were not: every cat came back at 0.43 to 0.80, i.e. wider
+ * than tall, comfortably inside the "squat triangle" target. The metric said the problem did not
+ * exist.
+ *
+ * The metric was measuring the wrong thing. Dumping the actual part grid showed the ears occupying
+ * SEVEN of the twenty-four rows — rows 0 to 6 — because a root 2.8 rows deep starts the ear inside a
+ * skull whose crown is at row 4. So the ear's own mass covered the entire dome, and a scan for rows
+ * that are head-and-not-ear-flanked found exactly ONE clear row above the eyes on every cat in the
+ * set.
+ *
+ * That is the real defect and it is not about the ears' proportions at all: THE SKULL HAD NO CROWN.
+ * bloodhorn's unicorn works because its horn is a narrow exception on an intact round dome — the
+ * roundness is preserved and the spike interrupts it. Two ears rooted this deep do not interrupt the
+ * roundness, they replace it, and a head with no dome above the eyes is a wedge. A wedge with two
+ * triangles on it is a fox.
+ *
+ * ══ THE LESSON, AND IT IS ABOUT THE MEASUREMENT RATHER THAN THE NUMBER ══
+ *
+ * A measurement derived from the same anchor as the bug cannot see the bug. "Tip height above the
+ * crown" takes the crown as its zero, so it is blind to the ear having consumed the crown — it
+ * reported a healthy ratio on a cat with no forehead. This package now asserts DOME ROWS (clean head
+ * rows above the eyes) as well as ear aspect, because the two fail independently and the first is
+ * the one that carries the species read.
+ *
+ * At 1.4 the ear roots just under the crown line: still overlapping enough that rule 1 holds on every
+ * head width and ear angle, and shallow enough to leave three or four rows of unbroken dome. The
+ * head is round again and the ears sit ON it.
  */
-const EAR_ROOT_DEPTH = 2.8;
+const EAR_ROOT_DEPTH = 1.4;
 
 /**
  * ══ THE EARS — two triangles, in the slot bloodhorn's horn occupies ══
@@ -463,7 +492,19 @@ function earNormal(
      * 0.42 puts both roots inside the crown's own span at every head width the axis reaches, so the
      * ears grow out of the skull rather than hovering over it.
      */
-    const rootX = CX + side * g.headRx * 0.42;
+    /*
+     * ══ 0.52, MOVED BACK OUT — a cat's ears sit on the CORNERS of the skull ══
+     *
+     * Pulled to 0.42 when the ears were floating clear of a crown they were rooted above; that fix
+     * was about the ROW they start at, and moving them inward was the wrong lever for it. With the
+     * root depth now correct, 0.42 puts the two ears close enough together that they read as a pair
+     * of BOWS or as a single crest split down the middle — which is a rabbit, or a hair ornament, not
+     * a cat.
+     *
+     * A cat's ears sit at the outer corners of the skull with clear forehead between them, and that
+     * gap is a large part of what makes the head read as round: it is the dome showing through.
+     */
+    const rootX = CX + side * g.headRx * 0.52;
     /** 0 at the base, 1 at the tip. */
     const t = (baseY - (py + 0.5)) / (g.earHeight + EAR_ROOT_DEPTH);
     /*
@@ -499,7 +540,44 @@ function earNormal(
      * rasterisation — comfortably over the quantum on every head width, so the state override and
      * the identity axis both do visible work.
      */
-    const lean = side * (1.4 - g.earAngle * 2.6) + g.earDroop * side * 1.5;
+    /*
+     * ══ 0.5 BASE AND 1.5 OF SWING, CUT BACK WHEN THE ROOT BECAME SHALLOW ══
+     *
+     * The lean was raised to `1.4 - earAngle * 2.6` to fix a genuinely dead axis: at its previous
+     * value the tip moved under two cells across the whole range and the `hunting` override moved it
+     * by zero. That fix was correct and it was tuned against a root 2.8 rows deep, where the ear had
+     * four or five rows of drift to spend the swing over.
+     *
+     * With the root cut to 1.4 the ear is only three to four rows tall, so the SAME angular swing is
+     * applied over half the distance — the tips swung clear of the ear's own base and rendered as
+     * detached pixels floating beside the head. That is silhouette rule 4 failing, and it appeared
+     * the moment an unrelated constant moved.
+     *
+     * This is the recurring shape of every geometry bug in this package, stated once more because it
+     * has now happened in the ears, the whiskers, the tail root and the muzzle: A CONSTANT TUNED
+     * AGAINST ANOTHER CONSTANT BREAKS WHEN THAT ONE MOVES. The lean is still large enough to clear
+     * the two-pixel quantum — `grid.test.ts` measures the rendered cells and would fail if it were
+     * not — but it is now sized against the ear's actual height rather than against the old one.
+     */
+    /*
+     * ══ THE BASE LEAN IS ZERO — A CAT'S EARS POINT UP, NOT OUT ══
+     *
+     * Every version of this term carried a positive outward base (0.9, then 1.4, then 0.5), on the
+     * reasoning that the natural set of a cat's ear is slightly splayed. That is true of a real cat
+     * and it is the accuracy register again: rendered at 384x zoom, ears whose tips lean outward on a
+     * ROUND skull read as HORNS or as a pair of BOWS, because two shapes diverging from a dome is the
+     * silhouette of horns and nothing else. It was the last thing making these read as a different
+     * species, and it survived three separate attempts to fix the ears by changing their size.
+     *
+     * A cute cat's ears are near-parallel and vertical. At a base of 0 the tips rise straight from
+     * the roots, the two ears stay parallel, and the shape reads as a cat immediately — the same
+     * ears, rotated a few degrees, and it is the whole difference.
+     *
+     * `earAngle` still swings them ±1.5 either way, so the identity axis and the `hunting` override
+     * both keep the range the cell-count assertion demands; the range is now CENTRED on vertical
+     * rather than on splayed, so both ends of it are still a cat.
+     */
+    const lean = side * -g.earAngle * 1.5 + g.earDroop * side * 1.2;
     const centre = rootX + lean * t * t;
     // Tapers from the full half-width at the base to a point. `+0.42` keeps the tip one pixel wide
     // rather than vanishing — bloodhorn's note that a feature which fades out reads as an antenna.
@@ -517,7 +595,13 @@ function earNormal(
      * the register `ART-DIRECTION.md` §8 asks for — a starving cat drawn starving, in a vocabulary a
      * viewer reads instantly.
      */
-    const halfWidth = g.earWidth * (1 - t * (1 - g.earDroop * 0.55)) + 0.42;
+    /*
+     * The tip keeps 0.62 of a cell rather than 0.42. A shorter ear reaches its tip in fewer rows, so
+     * the taper is steeper per row and the final row was rounding to nothing on the narrow-eared
+     * cats — an ear that fades out at the tip reads as an antenna, which is bloodhorn's own note
+     * about its horn, and here it also broke the ear into two pieces.
+     */
+    const halfWidth = g.earWidth * (1 - t * (1 - g.earDroop * 0.55)) + 0.62;
     const dx = px + 0.5 - centre;
     /*
      * ══ `continue`, NOT `return null` — and this bug drew EVERY CAT WITH ONE EAR ══
@@ -563,7 +647,20 @@ function earNormal(
      * A folded ear does not show its hollow anyway — that is what folding means. Scaling the cone
      * away with the droop is both the fix and the correct drawing: a fully drooped ear is solid.
      */
-    const inner = Math.abs(dx) < halfWidth * 0.42 * (1 - g.earDroop) && t < 0.6;
+    /*
+     * ══ THE HOLLOW IS 0.34 OF THE WIDTH AND STOPS AT HALF-HEIGHT ══
+     *
+     * At 0.42 and 0.6 the dark cone took most of a 3-row ear, so the ear rendered as a dark wedge
+     * with a thin bright edge and read as a HORN rather than as a cat's ear. The hollow is a detail
+     * on an ear; when the ear shrank, a fraction that was correct on a 5-row ear became the whole
+     * feature.
+     *
+     * A fraction tuned against a size does not survive the size changing — the same defect as every
+     * other constant-against-constant bug in this file. Cut to 0.34 and stopped at 0.5 of the height,
+     * the hollow is one or two cells at the ear's base with unbroken rim above and around it, which
+     * is what makes a cone open toward the viewer.
+     */
+    const inner = Math.abs(dx) < halfWidth * 0.34 * (1 - g.earDroop) && t < 0.5;
     return { nx: dx / Math.max(0.5, halfWidth), ny: -0.35 + t * 0.45, inner };
   }
   return null;
@@ -586,6 +683,7 @@ function earNormal(
  * The legend:
  *   `.` transparent — the coat shows through
  *   `#` the PUPIL, ramp step 0 (the darkest, same as the outline)
+ *   `d` a DULLED catchlight, mid-ramp — present but not bright. The sad eye's glimmer.
  *   `o` the CATCHLIGHT, step 7 (the reserved top). ONE pixel, upper-left, on the same side as the
  *       light. A catchlight on the shaded side reads as a cataract.
  */
@@ -605,7 +703,7 @@ function earNormal(
  * bloodhorn does not hit this because a 3x3 eye has no room for a rim at all — its eye is a solid
  * pupil with one bright corner. The rim is what 4x4 buys, and it only pays off if it is LIGHT.
  */
-const EYE_STEP = { pupil: 0, light: RAMP_STEPS - 1 } as const;
+const EYE_STEP = { pupil: 0, dull: 4, light: RAMP_STEPS - 1 } as const;
 
 const EYE_MASKS: Readonly<Record<number, readonly string[]>> = {
   /*
@@ -644,29 +742,98 @@ const EYE_MASKS: Readonly<Record<number, readonly string[]>> = {
 } as const;
 
 /**
- * A SLEEPY / BLINKING eye — a closed curve. Used by the blink frame and by the starving state.
+ * A BLINKING eye — a closed curve, used by the idle blink frame ONLY.
  *
  * It curves UP at the ends, which is a smile. bloodhorn records getting this inverted and producing
  * a frown, from a computed version; drawn out, it cannot be wrong.
+ *
+ * Held for a tenth of the idle loop, so it reads as a blink rather than as an expression — which is
+ * exactly why it is NOT reused for `starving`. See `EYE_MASK_SAD`.
  */
 const EYE_MASK_BLINK: readonly string[] = ["....", "....", "####", "#..#"];
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * A SAD eye — LARGE AND ROUND, WITH A HEAVY UPPER LID. Not a squint.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ══ THE STARVING CAT READ AS ANGRY, AND THIS IS THE FIX ══
+ *
+ * `starving` reused `EYE_MASK_BLINK` on an argument that sounded like good economy: "a half-lidded
+ * eye and a blinking eye are the same shape, and the state is carried by the fact that it is HELD
+ * rather than by it being a different curve."
+ *
+ * That is false, and the render said so at 96px. A blink is a horizontal SLIT, and a slit held open
+ * as an expression is not a tired face — narrowed eyes are the universal signal for ANGER, on every
+ * species and in every drawing convention. Every starving cat in the colony looked hostile.
+ *
+ * That is a serious defect rather than a cosmetic one. `DESIGN.md` §2 requires a losing cat to be
+ * drawn LOSING, and the product depends on the user WANTING to feed a starving stray. An angry
+ * animal invites nothing; a pitiable one invites the exact action the mechanic needs. The state was
+ * legible and it was recruiting the wrong emotion.
+ *
+ * ══ WHAT A SAD EYE ACTUALLY IS ══
+ *
+ * Not smaller — LARGER, and dimmer. The cues are:
+ *
+ *   - THE EYE STAYS BIG AND ROUND. Shrinking an eye reads as narrowing it, which is the anger cue.
+ *     Sadness keeps the neoteny; it is what makes the face pitiable rather than threatening.
+ *   - A HEAVY UPPER LID, cutting the TOP CORNERS rather than squeezing the eye from both sides. The
+ *     lid comes DOWN over a round eye, so the upper corners go and the bottom stays completely full
+ *     — the opposite of a squint, which takes the top and the bottom equally and leaves a slit.
+ *
+ *     It is only the CORNERS, not the whole top row. Cutting the full row made this mask smaller
+ *     than the `WIDE` eye shape, so a wide-eyed cat's eyes SHRANK when it started starving — which
+ *     is the anger cue arriving by a different route, and the test caught it. The sad eye must never
+ *     be smaller than the open one it replaces, on any eye shape.
+ *   - A DIMMED CATCHLIGHT, not an absent one. This is the cue that does most of the work and it is
+ *     one pixel — but it took two attempts to get right, and the failure is instructive.
+ *
+ *     Removing the catchlight ENTIRELY was tried first, on the reasoning that a catchlight is what
+ *     makes an eye look alive and engaged. Rendered at 96px the eyes became big empty black voids
+ *     and the cats read as VACANT or already dead — which is worse than angry, because a corpse
+ *     invites even less than a hostile animal does and it collides with the `dead` state's own read.
+ *
+ *     An eye with no highlight at all is not a sad eye, it is a hole. What sadness looks like is a
+ *     highlight that is still there and has gone DULL. So the catchlight is drawn at a mid ramp step
+ *     (`d`) rather than at the reserved top: present, so the eye is alive, and clearly dimmer than
+ *     the fed cat's beside it. This is also why the accent test still finds its two flagged pixels —
+ *     the pixel exists, it is simply not at full brightness.
+ *
+ * The result is a big dark round eye under a heavy lid with a dulled glimmer in it, which is a sad
+ * animal — drawn with the same pixels as the happy one at two different values, rather than with a
+ * different geometry.
+ */
+const EYE_MASK_SAD: readonly string[] = [".##.", "#d##", "####", "####"];
 
 /**
  * A DEAD eye — an X. The simple, universally-read cartoon signal, and it is what the brief asks for:
  * "a dead cat can be a simple X-eyed slump."
  *
- * This replaces the previous module's approach, which dropped the eyes below the flat coat so they
- * read as "dark holes in a flat shape". That was derived carefully and it was in the wrong register:
- * dark holes are grim, and an X is the cartoon convention every viewer already knows. The state is
- * still honest — the cat is dead and the sprite says so unmistakably — it is simply saying it in the
- * vocabulary the rest of the sprite is drawn in.
+ * This replaced an earlier approach that dropped the eyes below the flat coat so they read as "dark
+ * holes in a flat shape". That was derived carefully and it was in the wrong register: dark holes
+ * are grim, and an X is the convention every viewer already knows. The state is still honest — the
+ * cat is dead and the sprite says so unmistakably — it is simply saying it in the vocabulary the
+ * rest of the sprite is drawn in.
  */
 const EYE_MASK_DEAD: readonly string[] = ["#..#", ".##.", ".##.", "#..#"];
 
-/** Which mask an eye takes, given the shape axis, the frame and the state. */
-function eyeMask(shape: number, sleepy: boolean, dead: boolean): readonly string[] {
+/**
+ * Which mask an eye takes.
+ *
+ * `sad` and `blinking` are separate parameters rather than one `sleepy` flag, and that separation IS
+ * the fix for the angry starving cat: collapsing them was what made a held expression borrow a
+ * blink's slit shape. A blink and a sad face are different drawings and the code now says so.
+ */
+function eyeMask(
+  shape: number,
+  blinking: boolean,
+  sad: boolean,
+  dead: boolean,
+): readonly string[] {
   if (dead) return EYE_MASK_DEAD;
-  if (sleepy) return EYE_MASK_BLINK;
+  if (blinking) return EYE_MASK_BLINK;
+  if (sad) return EYE_MASK_SAD;
   return EYE_MASKS[shape] ?? EYE_MASKS[0] ?? [];
 }
 
@@ -682,10 +849,11 @@ function eyeStepAt(
   py: number,
   g: CuteGeometry,
   drop: number,
-  sleepy: boolean,
+  blinking: boolean,
+  sad: boolean,
   dead: boolean,
 ): { step: number; light: boolean } | null {
-  const mask = eyeMask(g.eyeShape, sleepy, dead);
+  const mask = eyeMask(g.eyeShape, blinking, sad, dead);
   for (const ex of [EYE_L_X, EYE_R_X]) {
     const dx = px - ex;
     const dy = py - (EYE_Y + drop);
@@ -693,6 +861,9 @@ function eyeStepAt(
     const cell = mask[dy]?.[dx];
     if (cell === undefined || cell === ".") return null;
     if (cell === "o") return { step: EYE_STEP.light, light: true };
+    // `d` — a DULLED catchlight. Still flagged `light` so it is still the accent pixel and the
+    // exactly-two-tinted-pixels count is unchanged; it simply does not reach the reserved top step.
+    if (cell === "d") return { step: EYE_STEP.dull, light: true };
     return { step: EYE_STEP.pupil, light: false };
   }
   return null;
@@ -1053,12 +1224,13 @@ export function cutePartAt(
   g: CuteGeometry,
   tail: ReadonlyMap<number, number>,
   drop: number,
-  sleepy: boolean,
+  blinking: boolean,
+  sad: boolean,
   dead: boolean,
 ): { part: CutePart; nx: number; ny: number; step?: number; light?: boolean; t?: number } | null {
   const head = headNormal(px, py, g, drop);
   if (head) {
-    const eye = eyeStepAt(px, py, g, drop, sleepy, dead);
+    const eye = eyeStepAt(px, py, g, drop, blinking, sad, dead);
     if (eye) return { part: "eye", nx: 0, ny: 0, step: eye.step, light: eye.light };
     if (isNose(px, py, drop)) return { part: "nose", nx: 0, ny: 0, step: 1 };
     const muzzle = muzzleNormal(px, py, g, drop);
