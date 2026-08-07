@@ -24,10 +24,27 @@ source. If a role needs to move, the contract is redeployed; it cannot be reconf
 |---|---|
 | Project | `strays` — `55c2aeb2-bd93-4959-8333-61aa2c7bcdda` |
 | Environment | `production` — `a77756b7-486d-4e78-8973-e4b7f8a9f062` |
-| `web` | `79f179bd-0b21-4379-b8d7-ee8f9bef75e3` → <https://web-production-19a12.up.railway.app> |
-| `keeper` | `db601f9a-6283-4530-bfd2-8f8602ebe97d` |
+| `web` | `79f179bd-0b21-4379-b8d7-ee8f9bef75e3` → **LIVE** <https://web-production-19a12.up.railway.app> |
+| `keeper` | `db601f9a-6283-4530-bfd2-8f8602ebe97d` → **LIVE (observe)** <https://keeper-production-de42.up.railway.app/health> |
 | Postgres | deployed from template; `DATABASE_URL` referenced into `keeper` |
 | Repo | <https://github.com/taia-source/strays> |
+
+### The 502 that took five theories to fix
+
+Worth keeping, because four of the five theories found a REAL bug and none of them was the cause.
+
+The final cause: **Next's standalone server binds to the CONTAINER HOSTNAME by default.** The logs
+read `Ready in 0ms` / `Local: http://b95ccc0ad6c1:3000` — healthy, listening, and on an interface
+Railway's edge proxy cannot reach. **A server that is up and unreachable looks identical to a
+crashed one from outside.** Fixed with `HOSTNAME=0.0.0.0`, set both in the start script and as a
+service variable so it survives a config reset.
+
+The four real bugs found along the way, each of which had to be fixed anyway:
+
+1. `NIXPACKS_*` variables silently ignored — Railway uses Railpack.
+2. `outputFileTracingRoot` unpinned, so `standalone/` nested differently on Railway than locally.
+3. A trailing `|| true` that made every failed build exit 0 (see RESEARCH §7i-bis).
+4. The standalone bundle shipping with an empty `static/`, so every page 404'd its own CSS.
 
 **Railway uses RAILPACK, not Nixpacks.** `NIXPACKS_*` variables are silently ignored — the first
 build failed on exactly that. Build config lives in `railway.web.json` / `railway.keeper.json`,
