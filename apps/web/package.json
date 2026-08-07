@@ -8,7 +8,7 @@
     "start": "node -e \"const{execSync}=require('child_process');const o=execSync('find .next/standalone -name \\\"*.css\\\" -print -quit').toString().trim();if(!o){console.error('REFUSING TO START: the standalone bundle has no stylesheet. Run: npm run postbuild');process.exit(1)}\" && HOSTNAME=0.0.0.0 node .next/standalone/apps/web/server.js",
     "check-types": "tsc --noEmit",
     "test": "vitest run",
-    "postbuild": "rm -rf .next/standalone/apps/web/.next/static && cp -rT .next/static .next/standalone/apps/web/.next/static && { cp -rT public .next/standalone/apps/web/public 2>/dev/null || true; } && test -n \"$(find .next/standalone -name '*.css' -print -quit)\""
+    "postbuild": "rm -rf .next/standalone/apps/web/.next/static && cp -rT .next/static .next/standalone/apps/web/.next/static && { cp -rT public .next/standalone/apps/web/public 2>/dev/null || true; } && test -n \"$(find .next/standalone -name '*.css' -print -quit)\" && test -f .next/standalone/apps/web/public/fonts/JetBrainsMono.woff2"
   },
   "dependencies": {
     "next": "16.2.12",

@@ -469,8 +469,11 @@ export function geometryFor(id: string): CatGeometry {
      * read as ears rather than as a crest is the FOREHEAD SHOWING BETWEEN THEM. The budget has to be
      * set against the head's width and the gap, not against the ear's own aspect.
      *
-     * At 1.8..2.5 each base is 4-6 cells, the roots are ~7 apart, and there are two to four clear
-     * dome cells between them on every head width. The ears are still squat — 3-4 rows tall on a 4-6
+     * At 1.8..2.3 each base is 4-5 cells, the roots are ~7 apart, and there are at least two clear
+     * dome cells between them on every head width. The ceiling was 2.5 until the dome assertion found
+     * `stray-2` — widest ears on a narrow head — leaving a ONE-cell gap, which rasterises as the two
+     * bases touching. That is the band forming again, on a single id out of twelve, and it is exactly
+     * the kind of edge the eye misses on a sheet and a predicate does not. The ears are still squat — 3-4 rows tall on a 4-6
      * cell base — and they are now plainly two separate triangles on a round head.
      *
      * ══ AND IT WAS CUT TOO FAR ONCE, WHICH IS THE OTHER HALF OF THE CALIBRATION ══
@@ -490,7 +493,7 @@ export function geometryFor(id: string): CatGeometry {
      * while the defect was about the ear's relationship to the skull. `grid.test.ts` now asserts the
      * dome gap between the ears directly, so the next edit that closes it fails rather than ships.
      */
-    earWidth: 1.8 + unit(id, SALT.earWidth) * 0.7,
+    earWidth: 1.8 + unit(id, SALT.earWidth) * 0.5,
     tailCurl: signed(id, SALT.tailCurl),
     tailLift: unit(id, SALT.tailLift),
     eyeShape: Math.floor(unit(id, SALT.eyeShape) * 3),

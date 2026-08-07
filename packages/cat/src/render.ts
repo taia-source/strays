@@ -294,7 +294,21 @@ export function catRamp(id: string, state?: CatState): Ramp {
 export const STATE_ACCENT: Readonly<Partial<Record<CatState, string>>> = {
   /** AMBER — the cat ate. §3: a closed winning trade. */
   fed: "oklch(0.80 0.170 85)",
-  /** EMBER RED — the cat is starving. §3: a loss. */
+  /**
+   * EMBER RED — the cat is starving. §3: a loss.
+   *
+   * ══ DECLARED, BUT `catGrid` NO LONGER FLAGS ANY PIXEL FOR IT ══
+   *
+   * It is kept here because §3 declares two event hues and this module's job is to hold the palette,
+   * not to decide placement. What changed is WHERE it may land, and that decision lives in
+   * `catGrid`: the accent flags the eye's catchlight, and an ember-red pixel in the middle of a
+   * starving cat's big dark eye rendered as a GLOWING RED EYE — every cat in the state read as
+   * demonic, which is further from pitiable than the angry squint that fix had just replaced.
+   *
+   * A starving cat's state is carried by its drooping ears, its dulled catchlight and its exposure.
+   * It does not need a tint, and this particular hue fights the read. Left declared so a caller with
+   * a non-eye surface to tint — a status chip, a map marker — still has §3's colour to hand.
+   */
   starving: "oklch(0.62 0.200 25)",
 };
 

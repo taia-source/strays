@@ -81,8 +81,11 @@ run("the spend cap holds across a restart", () => {
         idempotencyKey: `${strayId}-after-cap`,
         nowSeconds: now,
       });
+      // Narrow on the discriminant before reading the failure fields — EntryGate is a union and
+      // `reason` exists only on the refusal arm. `tsc` catches this; vitest alone would not.
       expect(gate.allowed).toBe(false);
-      expect(`${gate.reason} ${"detail" in gate ? gate.detail : ""}`).toMatch(/spend|window|cap/i);
+      if (gate.allowed) throw new Error("unreachable: asserted above");
+      expect(`${gate.reason} ${gate.detail}`).toMatch(/spend|window|cap/i);
     } finally {
       await reborn.close();
     }
@@ -133,7 +136,8 @@ run("the spend cap holds across a restart", () => {
       nowSeconds: now,
     });
     expect(gate.allowed).toBe(false);
-    expect(`${gate.reason} ${"detail" in gate ? gate.detail : ""}`).toMatch(/entr/i);
+    if (gate.allowed) throw new Error("unreachable: asserted above");
+    expect(`${gate.reason} ${gate.detail}`).toMatch(/entr/i);
   });
 
   it("the window is measured from timestamps, so old spends expire", async () => {

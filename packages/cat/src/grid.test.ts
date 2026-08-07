@@ -1089,6 +1089,88 @@ describe("proportions — THE NEOTENY BUDGET, and it is the point of the sprite"
     }
   });
 
+  it("leaves the SKULL A CLEAN DOME above the eyes, with the ears clear of it", () => {
+    /*
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     * ══ THE ASSERTION THAT WOULD HAVE CAUGHT THE LYNX, AND THE MEASUREMENT THAT DID NOT ══
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * A review of the 96px sheet found several cats reading as a lynx, a bat or a fennec fox. The
+     * obvious hypothesis was that the ears were too TALL, and the obvious measurement — tip height
+     * above the crown over ear width — reported every cat between 0.43 and 0.80, comfortably inside
+     * the "squat triangle" target. The metric said the defect did not exist.
+     *
+     * It was measuring the wrong thing. Dumping the part grid showed the ears occupying SEVEN of
+     * twenty-four rows, because a root buried 2.8 rows into a skull whose crown is at row 4 starts
+     * the ear inside the head — so the ear's own mass covered the entire dome and there was exactly
+     * ONE clean head row above the eyes on every cat in the colony.
+     *
+     * The real defect was never about the ears' proportions: THE SKULL HAD NO CROWN. bloodhorn's
+     * unicorn works because its horn is a narrow exception on an intact round dome — the roundness
+     * is preserved and the spike interrupts it. Two ears rooted that deep replace the roundness
+     * rather than interrupting it, and a head with no forehead is a wedge. A wedge with two triangles
+     * on it is a fox.
+     *
+     * ══ WHY THE OLD MEASUREMENT WAS BLIND TO IT ══
+     *
+     * "Tip height above the crown" takes the crown as its zero, so it cannot see the ear having
+     * consumed the crown — it reported a healthy ratio on a cat with no forehead. A measurement
+     * derived from the same anchor as the bug cannot detect the bug.
+     *
+     * So this asserts the DOME directly: rows of head above the eyes that no ear intrudes on. It is
+     * the property that carries the species read, it fails independently of the ear aspect ratio, and
+     * it is the one number that moved when the sprite stopped looking like a fox.
+     *
+     * Also asserted: clear forehead BETWEEN the two ears. Widening the ear bases to compensate for
+     * the shorter height closed that gap and the two bases rasterised into a single band across the
+     * crown — the same dome lost again, from the side rather than from above, and the cats read as
+     * having HORNS. Both gaps are load-bearing and they close by different routes.
+     */
+    for (const id of IDS) {
+      for (const state of STATES) {
+        const grid = catGrid(id, { state });
+        const eyeTop = Math.min(...grid.filter((p) => p.part === "eye").map((p) => p.y));
+        const earRows = new Set(
+          grid.filter((p) => p.part === "ear" || p.part === "earInner").map((p) => p.y),
+        );
+        // Rows of head above the eyes that no ear touches — the visible forehead.
+        let dome = 0;
+        for (let y = 0; y < eyeTop; y++) {
+          const hasHead = grid.some((p) => p.y === y && p.part === "head");
+          if (hasHead && !earRows.has(y)) dome += 1;
+        }
+        expect(
+          dome,
+          `id ${id}/${state}: only ${dome} clean dome rows — the ears have eaten the skull`,
+        ).toBeGreaterThanOrEqual(2);
+
+        // And the ears may not span more than half the sprite between their outer edges, which is
+        // what stops the bases merging into a band across the crown.
+        const ears = grid.filter((p) => p.part === "ear" || p.part === "earInner");
+        const earRowCount = Math.max(...ears.map((p) => p.y)) - Math.min(...ears.map((p) => p.y)) + 1;
+        expect(
+          earRowCount,
+          `id ${id}/${state}: the ears occupy ${earRowCount} rows — that is a lynx`,
+        ).toBeLessThanOrEqual(5);
+      }
+    }
+
+    // Clear forehead BETWEEN the two ears, on the row where their bases are widest.
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const ears = grid.filter((p) => p.part === "ear" || p.part === "earInner");
+      const baseRow = Math.max(...ears.map((p) => p.y));
+      const onRow = ears.filter((p) => p.y === baseRow);
+      const left = onRow.filter((p) => p.x < GRID_W / 2);
+      const right = onRow.filter((p) => p.x >= GRID_W / 2);
+      if (left.length === 0 || right.length === 0) continue;
+      const gap = Math.min(...right.map((p) => p.x)) - Math.max(...left.map((p) => p.x)) - 1;
+      expect(gap, `id ${id}: the ear bases have merged into a band (gap ${gap})`).toBeGreaterThanOrEqual(
+        2,
+      );
+    }
+  });
+
   it("gives the ears real height above the skull — the cat marker", () => {
     /*
      * The ears replace bloodhorn's horn as the identifying silhouette, and a horn that does not clear
