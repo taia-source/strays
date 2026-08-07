@@ -124,6 +124,17 @@ export type DecideConfig = {
   readonly idempotencyKey: string;
   /** Whether the two one-time Permit2 approvals are still outstanding for the exit leg. */
   readonly approvalsNeeded: boolean;
+  /**
+   * THE COST BAR MULTIPLE. An expected gain must clear `edgeMultiple x roundTripCost` before a
+   * trade fires, and the same multiple floors the take-profit target in `levelsFor`.
+   *
+   * Optional, defaulting to the derived `EDGE_MULTIPLE = 2` in `bar.ts`, so every existing caller
+   * keeps its behaviour byte-for-byte. It is CONFIG rather than a module constant because a
+   * constant `decide()` reads directly cannot be varied by a backtest without editing this package
+   * — `@strays/backtest` recorded exactly that as a finding, having swept it and got four
+   * byte-identical rows. A parameter that cannot be swept cannot be shown to be the right one.
+   */
+  readonly edgeMultiple?: bigint;
 };
 
 export type Decision =
@@ -155,6 +166,10 @@ export async function decide(
   market: Market,
   cfg: DecideConfig,
 ): Promise<Decision> {
+  // Resolve the cost-bar multiple ONCE, here, so the entry bar and the take-profit floor can
+  // never disagree about it. `?? EDGE_MULTIPLE` keeps the derived default for every caller that
+  // does not set it. `clearsBar` still validates it and throws below 1.
+  const edgeMultiple = cfg.edgeMultiple ?? EDGE_MULTIPLE;
   /* ════════════════════════════════════════════════════════════════════════════════════════
    * 1. EXIT. FIRST, ALWAYS, AND GATED BY NOTHING.
    *
@@ -207,7 +222,7 @@ export async function decide(
     const levels = levelsFor({
       positionWei: position.entryWei,
       roundTripCostWei: cost.totalWei,
-      edgeMultiple: EDGE_MULTIPLE,
+      edgeMultiple,
     });
     const moveBps =
       ((market.markPriceWei - position.entryPriceWei) * 10_000n) / position.entryPriceWei;
@@ -322,7 +337,7 @@ export async function decide(
     const levels = levelsFor({
       positionWei: gate.sizeWei,
       roundTripCostWei: cost.totalWei,
-      edgeMultiple: EDGE_MULTIPLE,
+      edgeMultiple,
     });
 
     const signal = evaluateEntry({
@@ -339,7 +354,11 @@ export async function decide(
      * The cost bar, per candidate, against ITS OWN tax tier. This is where a 10%-tax token is
      * refused — by arithmetic (it must clear +38.8%), not by a rule that never let it be seen.
      */
-    const bar = clearsBar({ expectedGainWei: signal.expectedGainWei, costWei: cost.totalWei });
+    const bar = clearsBar({
+      expectedGainWei: signal.expectedGainWei,
+      costWei: cost.totalWei,
+      multiple: edgeMultiple,
+    });
     if (!bar.clears) {
       refusals.push(
         `${candidate.token.address}: signal fired but the cost bar refused it — ${bar.arithmetic}`,

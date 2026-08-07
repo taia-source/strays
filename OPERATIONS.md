@@ -69,6 +69,20 @@ STRAYS_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 This is meridian's rule, and its reasoning is worth keeping: *"setting an RPC URL for read access
 should never silently start spending real money."*
 
+### ⚠ LIVE TRADING IS STOPPED, DELIBERATELY, AS OF THE BACKTEST
+
+The backtest measured **−117 bps per trade over 1,723 trades** on 461 tokens and 394,635 real swaps.
+Running the keeper live at that expectancy loses money slowly and predictably, so it was stopped
+and both strays were confirmed FLAT (no open positions, nothing stranded).
+
+**Do not turn this on until the strategy is measured profitable OUT OF SAMPLE.** The machinery is
+proven — two autonomous round trips landed, one take-profit and one stop-loss — and that is exactly
+why leaving it running would be the wrong call: it works well enough to lose money reliably.
+
+The diagnosis is not "the signal is noise". Signal entries gross **+125 bps** against random entries'
++46 bps (Welch t = 2.63), so the edge is real; the round trip costs **218 bps**, of which **200 is
+the pad's own hook tax**. The edge exists and the toll eats it.
+
 ### Turning it on — the exact steps
 
 Everything else is done. **Two values must be pasted into the Railway dashboard by hand** (both are
