@@ -115,8 +115,18 @@ export default async function AppWorld() {
     */
     <WorldApp
       initial={initial}
+      /*
+       * `data-world-reserved` below tells the canvas this panel is opaque, so the simulation insets
+       * the field away from it. Without it the adopt panel is invisible to the layout and cats get
+       * parked underneath — measured at 390px, where the colony's second cat was clipped in half by
+       * this box while the roster reported it alive and hunting.
+       *
+       * It is an ATTRIBUTE rather than a class match because every other opaque panel uses one, and
+       * a canvas matching on `.world-adopt` couples the renderer to this component's class name — a
+       * coupling that breaks silently the day somebody renames it.
+       */
       adopt={
-        <details className="world-adopt" id="adopt">
+        <details className="world-adopt" id="adopt" data-world-reserved="">
           <summary>
             <span className="world-adopt-title">ADOPT A STRAY</span>
             <span className="stamp">

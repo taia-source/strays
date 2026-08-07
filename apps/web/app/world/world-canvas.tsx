@@ -160,6 +160,9 @@ export function WorldCanvas({
     const host = canvas.parentElement ?? canvas;
     let ramp = resolveRamp(host);
     let palette = readPalette(host);
+    // Re-derived wherever the palette is, so an OS toggle or a [data-theme] flip changes the
+    // glow's blend mode in the same breath as it changes the colours.
+    let light = isLightGround(palette.soot);
 
     /*
      * DPR is capped RESOLUTION-AWARE (§5a): `cssWidth < 700 ? 1.5 : 2`.
@@ -190,6 +193,7 @@ export function WorldCanvas({
       else resizeSim(simRef.current, width, height);
       ramp = resolveRamp(host);
       palette = readPalette(host);
+      light = isLightGround(palette.soot);
     };
 
     resize();
@@ -201,6 +205,7 @@ export function WorldCanvas({
     const onScheme = (): void => {
       ramp = resolveRamp(host);
       palette = readPalette(host);
+      light = isLightGround(palette.soot);
     };
     scheme.addEventListener("change", onScheme);
 
@@ -237,7 +242,7 @@ export function WorldCanvas({
        */
       const panels = new Set<Element>([
         ...document.querySelectorAll("[data-world-reserved]"),
-        ...document.querySelectorAll(".world-adopt"),
+        ...document.querySelectorAll(".world-adopt" /* legacy fallback; the attribute above is authoritative */),
       ]);
       reserved = [...panels].map((el) => el.getBoundingClientRect());
 

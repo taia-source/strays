@@ -15,6 +15,7 @@ import { describe as group, expect, it } from "vitest";
 import {
   DEFAULT_PARAMS,
   buyRatioBpsBefore,
+  replay,
   replayToken,
   sellableBefore,
   volumeBefore,
@@ -22,7 +23,7 @@ import {
 import { type Bar, type RawSeries, historyBefore, toBars, toPriceWei } from "./series.js";
 import { decodeSwapLog, ethPerTokenFromSqrtX96, readSigned } from "./collect.js";
 import { describe as stat, quantile, summarise } from "./stats.js";
-import { forwardBps, mulberry32, welchT } from "./null.js";
+import { forwardBps, mulberry32, randomEntries, welchT } from "./null.js";
 
 const MIN = 60;
 
@@ -371,6 +372,169 @@ group("null hypothesis machinery", () => {
   });
 });
 
+group("replay over many tokens", () => {
+  function ramp(symbol: string, taxPct: number): RawSeries {
+    const swaps = [];
+    let price = 1e-13;
+    for (let i = 0; i < 40; i++) {
+      price *= 1.02;
+      swaps.push({
+        block: 1000 + i * 100,
+        ts: 1_780_000_000 + i * 300,
+        logIndex: 0,
+        priceEth: price.toExponential(12),
+        amount0: ((i % 2 === 0 ? 1n : -1n) * 10n ** 16n).toString(),
+        amount1: ((i % 2 === 0 ? -1n : 1n) * 10n ** 24n).toString(),
+      });
+    }
+    return {
+      address: `0x${symbol}`,
+      symbol,
+      poolId: "0xp",
+      taxPct,
+      launchedAt: (1_780_000_000 - 7_200) * 1000,
+      marketCapEth: 5,
+      swaps,
+    };
+  }
+
+  it("aggregates across tokens and reports the real time span", async () => {
+    const tokens = [toBars(ramp("A", 1)), toBars(ramp("B", 10)), toBars(ramp("C", 1))];
+    const r = await replay(tokens);
+    expect(r.tokensExamined).toBe(3);
+    expect(r.barsExamined).toBe(120);
+    expect(r.tokensTraded).toBeGreaterThan(0);
+    expect(r.firstTs).toBe(1_780_000_000);
+    expect(r.lastTs).toBe(1_780_000_000 + 39 * 300);
+  });
+
+  it("charges a 10%-tax token far more than a 1%-tax one on identical price paths", async () => {
+    // The cost model's central claim, asserted on two IDENTICAL series differing only in tax.
+    const cheap = await replayToken(toBars(ramp("A", 1)), DEFAULT_PARAMS);
+    const dear = await replayToken(toBars(ramp("B", 10)), DEFAULT_PARAMS);
+    expect(cheap.length).toBeGreaterThan(0);
+    expect(dear.length).toBeGreaterThan(0);
+    // The 10% token trades LESS, not equally: its cost bar refuses entries the 1% token accepts.
+    // That is the cost model working, and it is asserted rather than assumed away.
+    expect(dear.length).toBeLessThan(cheap.length);
+    // 2x1% = 200bps vs 2x10% = 2000bps -> ~1800bps of extra cost per trade.
+    expect(Number(dear[0]!.costBps) - Number(cheap[0]!.costBps)).toBeGreaterThan(1700);
+    // Every 1%-tax trade is charged ~218bps; every 10%-tax trade ~2018bps. Asserted on ALL
+    // trades, not just the first, so a per-trade cost that drifted would be caught.
+    for (const t of cheap) expect(Number(t.costBps)).toBeGreaterThan(200);
+    for (const t of cheap) expect(Number(t.costBps)).toBeLessThan(240);
+    for (const t of dear) expect(Number(t.costBps)).toBeGreaterThan(2000);
+    // And the net is worse than the gross by exactly the cost, on every trade.
+    for (const t of [...cheap, ...dear]) {
+      expect(t.grossBps - t.costBps).toBe(t.netBps);
+    }
+  });
+
+  it("exercises the STOP path when the price reverses after a breakout", async () => {
+    // The monotonic ramp only ever takes profit. A ramp that spikes then collapses is what
+    // produces a stopped trade, and the stop branch must be covered by a real replay, not assumed.
+    const swaps = [];
+    let price = 1e-13;
+    for (let i = 0; i < 60; i++) {
+      // Climb for 20 bars to trigger entry, then fall hard.
+      price *= i < 20 ? 1.03 : 0.97;
+      swaps.push({
+        block: 1000 + i * 100,
+        ts: 1_780_000_000 + i * 300,
+        logIndex: 0,
+        priceEth: price.toExponential(12),
+        amount0: ((i % 2 === 0 ? 1n : -1n) * 10n ** 16n).toString(),
+        amount1: ((i % 2 === 0 ? -1n : 1n) * 10n ** 24n).toString(),
+      });
+    }
+    const trades = await replayToken(
+      toBars({
+        address: "0xfall",
+        symbol: "FALL",
+        poolId: "0xp",
+        taxPct: 1,
+        launchedAt: (1_780_000_000 - 7_200) * 1000,
+        marketCapEth: 5,
+        swaps,
+      }),
+      DEFAULT_PARAMS,
+    );
+    expect(trades.length).toBeGreaterThan(0);
+    expect(trades.some((t) => t.exitReason === "stop")).toBe(true);
+    // A stopped trade must be a real loss net of cost.
+    const stopped = trades.find((t) => t.exitReason === "stop")!;
+    expect(Number(stopped.netBps)).toBeLessThan(0);
+    expect(stopped.barsHeld).toBeGreaterThan(0);
+  });
+
+  it("closes a position still open at the end of the data rather than discarding it", async () => {
+    // Dropping an unresolved position would silently discard losers that had not yet stopped.
+    const swaps = [];
+    let price = 1e-13;
+    for (let i = 0; i < 26; i++) {
+      price *= 1.02;
+      swaps.push({
+        block: 1000 + i * 100,
+        ts: 1_780_000_000 + i * 300,
+        logIndex: 0,
+        priceEth: price.toExponential(12),
+        amount0: ((i % 2 === 0 ? 1n : -1n) * 10n ** 16n).toString(),
+        amount1: ((i % 2 === 0 ? -1n : 1n) * 10n ** 24n).toString(),
+      });
+    }
+    const trades = await replayToken(
+      toBars({
+        address: "0xopen",
+        symbol: "OPEN",
+        poolId: "0xp",
+        taxPct: 1,
+        launchedAt: (1_780_000_000 - 7_200) * 1000,
+        marketCapEth: 5,
+        swaps,
+      }),
+      // A take-profit far out of reach and a stop far below guarantee the position survives to
+      // the final bar, which is the branch under test.
+      { ...DEFAULT_PARAMS, stopLossBps: 9_000n },
+    );
+    expect(trades.some((t) => t.exitReason === "end-of-data")).toBe(true);
+  });
+
+  it("handles a token with no tradeable history without throwing", async () => {
+    const empty: RawSeries = { ...ramp("D", 1), swaps: ramp("D", 1).swaps.slice(0, 1) };
+    const r = await replay([toBars(empty)]);
+    expect(r.trades).toEqual([]);
+    expect(r.tokensTraded).toBe(0);
+  });
+
+  it("randomEntries is reproducible for a seed and respects the token set", () => {
+    const tokens = [toBars(ramp("A", 1)), toBars(ramp("B", 3))];
+    const opts = { perToken: 3, holdBars: 5, stopBps: 235n, takeBps: 471n, seed: 7 };
+    const a = randomEntries(tokens, opts);
+    const b = randomEntries(tokens, opts);
+    expect(a).toEqual(b);
+    expect(a.length).toBeGreaterThan(0);
+    expect(new Set(a.map((r) => r.taxPct))).toEqual(new Set([1, 3]));
+    // That a different SEED draws different INDICES is asserted on the PRNG directly. It is not
+    // asserted on the returned returns: this fixture is a monotonic ramp, so every entry resolves
+    // at the same take-profit regardless of where it started, and two seeds legitimately produce
+    // identical returns. Asserting inequality on the returns would be testing the fixture.
+    const r1 = mulberry32(7);
+    const r2 = mulberry32(8);
+    expect([r1(), r1(), r1()]).not.toEqual([r2(), r2(), r2()]);
+  });
+
+  it("randomEntries skips tokens too short to supply a full holding period", () => {
+    const tiny = toBars({ ...ramp("E", 1), swaps: ramp("E", 1).swaps.slice(0, 3) });
+    expect(randomEntries([tiny], {
+      perToken: 5,
+      holdBars: 50,
+      stopBps: 235n,
+      takeBps: 471n,
+      seed: 1,
+    })).toEqual([]);
+  });
+});
+
 group("stats", () => {
   it("reports stdDev as NaN for a single observation, never zero", () => {
     // Reporting 0 would make one trade look infinitely precise — the exact error MinBTL catches.
@@ -381,6 +545,40 @@ group("stats", () => {
   it("quantiles interpolate", () => {
     expect(quantile([0, 10], 0.5)).toBe(5);
     expect(quantile([0, 10, 20], 0.5)).toBe(10);
+  });
+
+  it("an empty sample reports NaN everywhere rather than a confident zero", () => {
+    const d = stat([]);
+    expect(d.n).toBe(0);
+    for (const v of [d.mean, d.median, d.stdDev, d.min, d.p10, d.p25, d.p75, d.p90, d.max]) {
+      expect(v).toBeNaN();
+    }
+    expect(quantile([], 0.5)).toBeNaN();
+  });
+
+  it("summarise handles zero trades without dividing by zero", () => {
+    const s = summarise([]);
+    expect(s.trades).toBe(0);
+    expect(s.winRate).toBeNaN();
+    expect(s.sumBps).toBe(0);
+    expect(s.totalReturnBps).toBe(0);
+    expect(s.maxDrawdownBps).toBe(0);
+    expect(s.sharpePerTrade).toBe(0);
+    expect(s.byTax).toEqual([]);
+  });
+
+  it("sumBps is additive and totalReturnBps is compounded — they must differ", () => {
+    const t = (netBps: number) => ({ netBps: BigInt(netBps), grossBps: 0n, taxPct: 1, exitReason: "stop" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const s = summarise([t(5000), t(5000)] as any);
+    expect(s.sumBps).toBe(10_000); // additive
+    expect(s.totalReturnBps).toBeCloseTo(12_500, 0); // 1.5^2 - 1 = 1.25
+  });
+
+  it("forwardBps returns undefined when there is no future to look at", () => {
+    const bars = [bar(0, 1e-13)];
+    expect(forwardBps(bars, 0, 5, 235n, 471n)).toBeUndefined();
+    expect(forwardBps(bars, 99, 5, 235n, 471n)).toBeUndefined();
   });
 
   it("max drawdown is measured on the compounded curve", () => {

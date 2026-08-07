@@ -82,7 +82,52 @@ keeper but not yet used** — that is the next piece of work and it blocks live 
 **Price history is durable too** — same Postgres store, so a redeploy no longer blanks every
 stray's window.
 
-**The strategy has never been backtested.** It is screened, costed and sabotage-tested, and whether
+**THE STRATEGY LOSES MONEY, AND THE BACKTEST SAYS SO.** Measured over **461 tokens, 394,635 real
+on-chain swaps, 28.2 days**, replayed bar-by-bar with no lookahead:
+
+```
+baseline, shipped constants:  -117 bps mean per trade, 1,723 trades, 46.3% win rate
+ALL 15 parameter variants also lose.
+```
+
+**But the signal is not noise, and that distinction is the finding:**
+
+| | gross | net |
+|---|---|---|
+| signal entries (n=1723) | **+125 bps** | −117 bps |
+| random entries, same tokens, same holding period (n=1420) | +46 bps | −294 bps |
+| Welch t | **2.63** | 5.53 |
+
+The entry signal beats a coin flip by ~79bps and its gross mean is 5.17 standard errors above zero.
+**It simply does not predict enough.** Breakeven needs the round trip to cost ≤125bps; it costs 218,
+and **200 of those 218 are the pad's own hook tax**. The signal is real; the toll eats it.
+
+Three things that follow, none of them comfortable:
+
+- **The −235bps stop does not hold.** Stopped trades lose a mean of **−1030bps** — these pools gap
+  straight through the stop between swaps. That is the largest mechanical problem surfaced and it
+  is not a tuning issue.
+- **Widening the stop raises the win rate to 65% while making the mean WORSE.** Win rate is a
+  vanity metric here.
+- **`assessOverfitting` returns `credible === false`** for both baseline and best-of-sweep. At 15
+  trials over 0.077 years a credible Sharpe would need to exceed 8.73. The negative result is
+  robust because it rests on arithmetic (+125 gross vs a 218 toll), not on a marginal statistic —
+  **but the +79bps signal edge is NOT established to that standard** and is a hypothesis, not a
+  measured fact.
+
+Three cost-model omissions are declared incomplete (historical slippage, reverts, own price
+impact) and **all three bias the result in the strategy's favour** — true performance is worse than
+−117bps, not better.
+
+**What would have to be true to win:** cost falling to ≤125bps, which is not reachable on this
+venue. The one untested direction is **selectivity** — p75/p90 of net returns are +655/+1125bps, so
+a profitable subset exists; whether it is identifiable *in advance* is unknown and must be run on
+held-out data. Retuning lookback, stop or drawdown will not work: all three were swept and lose
+across their entire range.
+
+Full report: `packages/backtest/RESULTS.md`.
+
+**(superseded) The strategy has never been backtested.** It is screened, costed and sabotage-tested, and whether
 its entry signal actually predicts forward return is **argued, not measured**. `RESEARCH-STRATEGY.md`
 says so in its own words: the literature on early-buyer effects is discouraging (+16.1% after
 propensity matching), which is why every quality term is a multiplier in [0,1] that can only
