@@ -67,10 +67,13 @@ keeper but not yet used** — that is the next piece of work and it blocks live 
 refills. It fails *safe* (a cold history means hold, never a spurious trade), which is why it is
 tolerable in observe mode and not in live.
 
-**The adoption flow is written but not exercised end-to-end in a browser.** `apps/web/app/adopt.tsx`
-implements the two-click path with EIP-6963 discovery and disabled-not-hidden dead wallets. It
-compiles and the selector is derived from the ABI — after a hardcoded one was found to be wrong, see
-below — but no wallet has been connected to it. **It is not linked from any page yet.**
+**The adoption flow is linked and renders, but no wallet has ever connected to it.**
+`apps/web/app/adopt.tsx` implements the two-click path with EIP-6963 discovery and
+disabled-not-hidden dead wallets, and it is now mounted on `/colony` — verified in a real browser,
+where it correctly renders "Step 1 of 2 — connect a wallet / No wallet detected" because a headless
+browser has no wallet extension. **The signing path is therefore UNTESTED end to end.** It was
+unreachable until this pass, which is the exact shape of the recorded failure where a service built
+to act on a user's token shipped with no input anywhere.
 
 **Four of the six claimed design axes did not ship.** `map`, `dense-instrument`, `idle-world` and
 `pointer-agnostic` were derived at length in `ART-DIRECTION.md` and never rendered. The colony is a
@@ -85,7 +88,7 @@ direction flipped and is not wired.
 
 ---
 
-## Four bugs found that tests alone did not catch
+## FIVE bugs found that tests alone did not catch
 
 Recorded because the *method* that caught each one is the transferable part.
 
@@ -110,6 +113,13 @@ the whole `&&` chain, so a failing `next build` exited 0, Railway reported SUCCE
 served 502. **The first fix (`set -e` on the parent) did not work and only a sabotage revealed
 that** — appending an unresolvable import proved exit 0 before and exit 1 after. Same shape as
 meridian's recorded finding that piping git into `tail` hides its exit code.
+
+**5. The standalone bundle shipped with no stylesheet, and every route returned 200.** The copy of
+`.next/static` was chained inside the same script that produces the directory it copies, so the
+standalone bundle's static dir was empty and every page 404'd its own CSS. The deployed site loaded
+perfectly and rendered as unstyled default-serif HTML. **Caught by opening the page and looking at
+it** — no status code, type checker or test could see it. The fix asserts a `.css` exists in the
+bundle and is proven by sabotage: emptying the source makes the build exit 1.
 
 **And one process failure worth the same weight:** the first screenshot pass shot only the light
 theme, because the headless browser reports `prefers-color-scheme: light`. The phosphor palette this
