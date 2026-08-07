@@ -1,0 +1,250 @@
+/*
+ * STRAYS — the phosphor system.
+ *
+ * Derived in ART-DIRECTION.md §3. The referent is a NIGHT-VISION WILDLIFE CAMERA TRAP, and rule 1
+ * of that referent is the whole reason this palette is monochrome:
+ *
+ *   MONOCHROME IS NOT A STYLE, IT IS A SENSOR LIMIT. An IR sensor has no colour information; the
+ *   green is the phosphor of the DISPLAY, not the colour of the animal. So one hue carries the
+ *   entire page, and any second hue is an EVENT, not decoration.
+ *
+ * ══ THE FAILURE THIS FILE IS SHAPED AGAINST ══
+ *
+ * unitick shipped a page its own client described as "barely reads as [brand] ... it is a black
+ * page", and the cause was a colour rule applied too literally: the rule governed the INSTRUMENT
+ * and had been applied to the whole PAGE, leaving every surface near-black with one coloured word
+ * on it.
+ *
+ * The fix, inherited here verbatim in structure: separate two jobs that were sharing one variable.
+ * The EVENT hues classify what happened. A separate STRUCTURAL tier carries the same hue at low
+ * chroma as "the paper the instrument is bolted to". A structural token can never be mistaken for
+ * an event because its chroma is an order of magnitude lower.
+ *
+ * ══ TWO THEME BUGS RECORDED IN THAT SAME PROJECT, BOTH INVISIBLE TO CONTRAST CHECKERS ══
+ *
+ * 1. A tier left at dark values in the light theme rendered near-black type on a near-black rail.
+ *    "A contrast checker never fails on a surface with no text on it."
+ * 2. A first inversion left every surface within ~4% lightness of the paper, so the rail, the frame
+ *    and the cells all washed into the page. "The TYPE was always legible — it is the SURFACES that
+ *    were indistinguishable from each other."
+ *
+ * So the palette is restated THREE times below — media query, [data-theme=dark], [data-theme=light]
+ * — because an override that sets only half the tokens leaves the rest inherited from the query.
+ */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ── The phosphor ramp. Hue 145 = P1 phosphor green, fixed; L and C walked until each
+     surface pair separates and body text clears 7:1. ── */
+  --soot: oklch(0.14 0.014 145); /* the page. near-black with a green cast, never #000 */
+  --soot-hi: oklch(0.19 0.02 145); /* raised surface */
+  --soot-line: oklch(0.25 0.026 145); /* separator */
+  --phos: oklch(0.9 0.055 145); /* primary type. NEAR-white-green, never #fff */
+  --phos-dim: oklch(0.63 0.045 145); /* secondary type */
+  --phos-ghost: oklch(0.4 0.03 145); /* tertiary — the noise floor */
+
+  /* ── The STRUCTURAL tier. Same hue, low chroma. This is what stops the page reading as
+     a black rectangle, and it can never be confused for an event. ── */
+  --rail: oklch(0.34 0.075 145);
+  --band: oklch(0.24 0.045 145);
+  --wash: oklch(0.19 0.028 145);
+
+  /* ── The ONLY two chromatic hues on the page. One hue means exactly one thing. ── */
+  --fed: oklch(0.78 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
+  --starve: oklch(0.6 0.2 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+
+  /* Green is NOT profit here. Green is the SENSOR. A green number means "measured", not "up".
+     This deliberately kills the green=good/red=bad convention, and it is forced by referent
+     rule 1 rather than chosen as a taste. */
+
+  --px: 2px;
+  --s0: var(--px);
+  --s1: calc(2 * var(--px));
+  --s2: calc(4 * var(--px));
+  --s3: calc(8 * var(--px));
+  --s4: calc(12 * var(--px));
+  --s5: calc(20 * var(--px));
+
+  /* Integer-pinned at both ends. No clamp() interpolation — a mono grid wants whole pixels. */
+  --t-hero: 28px;
+  --t-body: 13px;
+  --t-micro: 11px;
+  --t-figure: 15px;
+  --t-figure-lg: 22px;
+
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+
+@media (min-width: 900px) {
+  :root {
+    --px: 3px;
+    --t-hero: 52px;
+    --t-body: 15px;
+    --t-micro: 12px;
+    --t-figure: 18px;
+    --t-figure-lg: 34px;
+  }
+}
+
+/* The light theme. EVERY token is restated, including both event hues — see the header. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --soot: oklch(0.97 0.01 145);
+    --soot-hi: oklch(0.93 0.014 145);
+    --soot-line: oklch(0.86 0.02 145);
+    --phos: oklch(0.24 0.05 145);
+    --phos-dim: oklch(0.45 0.04 145);
+    --phos-ghost: oklch(0.66 0.03 145);
+    --rail: oklch(0.62 0.13 145);
+    --band: oklch(0.86 0.06 145);
+    --wash: oklch(0.92 0.035 145);
+    --fed: oklch(0.55 0.15 85);
+    --starve: oklch(0.5 0.19 25);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="dark"] {
+  --soot: oklch(0.14 0.014 145);
+  --soot-hi: oklch(0.19 0.02 145);
+  --soot-line: oklch(0.25 0.026 145);
+  --phos: oklch(0.9 0.055 145);
+  --phos-dim: oklch(0.63 0.045 145);
+  --phos-ghost: oklch(0.4 0.03 145);
+  --rail: oklch(0.34 0.075 145);
+  --band: oklch(0.24 0.045 145);
+  --wash: oklch(0.19 0.028 145);
+  --fed: oklch(0.78 0.17 85);
+  --starve: oklch(0.6 0.2 25);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --soot: oklch(0.97 0.01 145);
+  --soot-hi: oklch(0.93 0.014 145);
+  --soot-line: oklch(0.86 0.02 145);
+  --phos: oklch(0.24 0.05 145);
+  --phos-dim: oklch(0.45 0.04 145);
+  --phos-ghost: oklch(0.66 0.03 145);
+  --rail: oklch(0.62 0.13 145);
+  --band: oklch(0.86 0.06 145);
+  --wash: oklch(0.92 0.035 145);
+  --fed: oklch(0.55 0.15 85);
+  --starve: oklch(0.5 0.19 25);
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  /* Banned in ART-DIRECTION §8. A camera trap's OSD has no rounded corners. */
+  border-radius: 0;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--soot);
+  color: var(--phos);
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  line-height: 1.5;
+  /* No anti-aliasing in the world — ART-DIRECTION §8. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+/* Every figure is tabular so columns of money align on the mono grid. */
+.fig {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-figure);
+}
+
+.fig-lg {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-figure-lg);
+}
+
+/*
+ * A figure's PROVENANCE. Referent rule 2: every frame is stamped. A trap that shows an animal
+ * without a timestamp is useless, so no number on this page floats free of when it was measured
+ * and from which block. This is the aesthetic form of the invented-data ban.
+ */
+.stamp {
+  font-size: var(--t-micro);
+  color: var(--phos-ghost);
+  letter-spacing: 0.04em;
+}
+
+.fed {
+  color: var(--fed);
+}
+
+.starve {
+  color: var(--starve);
+}
+
+a {
+  color: var(--phos);
+  text-underline-offset: 3px;
+}
+
+/* Pixel art must never be smoothed. */
+canvas,
+img[data-pixel] {
+  image-rendering: pixelated;
+}
+
+/* Cats idle whether or not anyone is watching — that is the product (motion axis: idle-world).
+   steps(2) so sprites never land on a fractional pixel and blur. transform only, so it
+   composites on the GPU. `will-change` is deliberately ABSENT: it promotes a layer permanently
+   and on a page with this many sprites that costs more memory than the jank it saves. */
+@keyframes cat-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(calc(-1 * var(--px)));
+  }
+}
+
+@keyframes cat-tail {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(var(--px));
+  }
+}
+
+.cat-idle {
+  animation: cat-bob var(--cat-dur, 2.6s) steps(2) infinite;
+}
+
+/* prefers-reduced-motion suppresses the whole idle world and renders it settled. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Focus is visible and square. pointer-agnostic input means keyboard must work everywhere. */
+:focus-visible {
+  outline: var(--px) solid var(--fed);
+  outline-offset: var(--px);
+}

@@ -745,7 +745,25 @@ function earNormal(
      * `side *` on the shear means a positive angle leans BOTH ears inward rather than sliding the
      * whole pair sideways. A pair of ears that slide together read as a hat.
      */
-    const centre = baseCx + side * angle * EAR_SHEAR * t;
+    /*
+     * ══ THE SHEAR IS CAPPED AT ONE COLUMN PER ROW — rule 1 for a sheared triangle ══
+     *
+     * The flood-fill test found 21 cats whose ear TIP was detached from its own BASE. Cause: at a
+     * strong `earAngle` on a short ear, `EAR_SHEAR * t` moves the centre more than one column
+     * between adjacent rows, so the ear staircases diagonally — and two diagonally adjacent pixels
+     * are not orthogonally connected. The outline pass then drew its ring through the notch and
+     * the ear was cut off from the head. It is the identical defect the tail had, in a different
+     * part, found by the same test.
+     *
+     * Capping the TOTAL shear at one column per row of the ear's own height guarantees the centre
+     * moves at most one column per row, so consecutive rows always overlap. A strong angle on a
+     * tall ear still gets its full lean — a 4-row ear may shear 4 columns — while a short ear's
+     * lean is limited to what a short ear can carry without falling apart. That is the correct
+     * relationship anyway: a 2-row ear leaning 3 columns is not a leaning ear, it is a fallen one.
+     */
+    const maxShear = height;
+    const shear = Math.max(-maxShear, Math.min(maxShear, angle * EAR_SHEAR)) * t;
+    const centre = baseCx + side * shear;
     const halfWidth = width * (1 - t) + 0.3;
     const dx = px + 0.5 - centre;
     if (Math.abs(dx) > halfWidth) continue;
@@ -930,6 +948,8 @@ function tailPixels(geom: CatGeometry): Map<number, number> {
 
   /** pixel key -> `t` at the sample that claimed it, so the tip can be shaded lighter. */
   const out = new Map<number, number>();
+  /** The previous stamped cell, so a diagonal step can be bridged. */
+  let last: { x: number; y: number } | null = null;
   for (let i = 0; i <= TAIL_SAMPLES; i++) {
     const t = i / TAIL_SAMPLES;
     /*
@@ -957,13 +977,35 @@ function tailPixels(geom: CatGeometry): Map<number, number> {
     const y = rootY + rise * t * t + 0.45 * t;
     const pxi = Math.round(x - 0.5);
     const pyi = Math.round(y - 0.5);
-    if (pxi < 0 || pxi >= GRID_W || pyi < 0 || pyi >= GRID_H) continue;
-    const key = pyi * GRID_W + pxi;
-    // Keep the SMALLEST `t` that claimed a pixel, so a pixel shared by root and tip shades as
-    // root. The tail thins and lightens toward the tip; a pixel that both pass through belongs to
-    // the thicker part.
-    const prev = out.get(key);
-    if (prev === undefined || t < prev) out.set(key, t);
+
+    /*
+     * ══ THE DIAGONAL BRIDGE — rule 1 for a marched path, and a measured bug ══
+     *
+     * Dense sampling guarantees consecutive stamps are ADJACENT, which the header claimed was
+     * enough for continuity. It is not, and the flood-fill test found 74 cats broken by it: on a
+     * steeply climbing segment the path moves DIAGONALLY between two samples, and two diagonally
+     * adjacent pixels are not orthogonally connected. The outline pass then draws its ring through
+     * the diagonal notch, and the tail is visibly cut into pieces by a dark line.
+     *
+     * This is the same class of error as everywhere else in this file — a rule enforced by a
+     * property (sample density) that does not actually imply it. Orthogonal connectivity has to be
+     * enforced by orthogonal construction, so every diagonal step lays down the intervening
+     * pixel. One is enough; taking the horizontal neighbour keeps the tail's own thickness even,
+     * where taking the vertical one made steep tails read as 2px wide and shallow ones as 1px.
+     */
+    const stamp = (sx: number, sy: number, st: number): void => {
+      if (sx < 0 || sx >= GRID_W || sy < 0 || sy >= GRID_H) return;
+      const k = sy * GRID_W + sx;
+      // Keep the SMALLEST `t` that claimed a pixel, so a pixel shared by root and tip shades as
+      // root. The tail thins and lightens toward the tip; a pixel that both pass through belongs
+      // to the thicker part.
+      const prev = out.get(k);
+      if (prev === undefined || st < prev) out.set(k, st);
+    };
+
+    if (last !== null && pxi !== last.x && pyi !== last.y) stamp(pxi, last.y, t);
+    stamp(pxi, pyi, t);
+    if (pxi >= 0 && pxi < GRID_W && pyi >= 0 && pyi < GRID_H) last = { x: pxi, y: pyi };
   }
   return out;
 }
@@ -1113,14 +1155,30 @@ function isWhisker(px: number, py: number, len: number, headWidth: number): bool
   if (py !== row) return false;
   const a = Math.abs(dx);
   /*
-   * Starts at the CAT'S OWN head half-width, so the first whisker pixel is orthogonally adjacent
-   * to a face pixel on every cat. Rule 1, satisfied by construction.
+   * ══ THE START IS THE HEAD'S REAL EDGE ON THIS ROW, NOT ITS NOMINAL HALF-WIDTH ══
    *
-   * This was the fixed `HEAD_W / 2 - 0.2` and had to follow `headWidth` once the head began to
-   * vary: on a narrow-headed cat a fixed start left a gap (whisker as dust), and on a broad-headed
-   * one it started inside the skull and the whisker vanished under the face entirely.
+   * This read `start = headWidth`, and the flood-fill test found it detaching 238 of 300 cats.
+   * The reason is that `headWidth` is the superellipse's half-width at its WIDEST row, and the
+   * whiskers sit two rows below that, where the superellipse has already tapered in. So the
+   * whisker began one or two columns clear of the face, the outline pass drew its ring in the gap
+   * between them, and the whisker was an isolated pixel separated from the cat by a dark line —
+   * NEEDLE's dust, arriving through a mismatch between two ways of measuring the same head.
+   *
+   * Solving the superellipse for its half-width AT THIS ROW gives the edge the rasteriser actually
+   * produced, so the first whisker pixel is orthogonally adjacent to a face pixel on every cat and
+   * every head width. Rule 1 by construction rather than by a constant that happened to work.
+   *
+   * The general lesson, and the third time this file has learned it: when two pieces of geometry
+   * must meet, DERIVE one from the other. Every gap-in-the-silhouette bug here — the tail root,
+   * the ear inset, and now the whisker — was a hardcoded number that agreed with its neighbour
+   * until the neighbour became a variable.
    */
-  const start = headWidth;
+  const cy = (ROWS.head[0] + ROWS.head[1]) / 2;
+  const ny = (py + 0.5 - cy) / 2.75;
+  const remain = 1 - Math.abs(ny) ** 2.8;
+  // Off the head entirely on this row: there is nothing for a whisker to attach to.
+  if (remain <= 0) return false;
+  const start = headWidth * remain ** (1 / 2.8);
   /*
    * ══ CAPPED AT 1PX PER SIDE — the fix for a STRIKETHROUGH ══
    *
