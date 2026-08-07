@@ -200,7 +200,28 @@ median net   +9,791  +5,838  +4,410    +696    −845  −1,748  −3,302
 Monotone, crossing zero between swap 50 and 100. **Swaps 200 and 500 were never in the search
 space.** A gradient is far harder to produce by chance than a threshold.
 
-**WHERE IT WEAKENS — the one-position constraint, which is the actual product.** A $5 stray holds
+### ROUND 5 — THE ONE-POSITION COLLAPSE WAS A CAPITAL CONSTRAINT, AND $20 REMOVES IT
+
+Ibrahim raised user funding to **$10–20**. At the 0.001 ETH position floor that is 4–8 concurrent
+slots instead of one. Tested on the held-out fold, and this is the result that makes the product
+work:
+
+```
+slots   usd   taken/72   skipped   median bps
+  1     $ 5      17         55      +1,921     <- Welch t 1.16, NOT significant
+  4     $10      48         24      +4,263
+  6     $15      66          6      +4,410
+  8     $20      71          1      +4,410
+```
+
+At 8 slots against matched random, 20 seeds: **Welch t min 2.38, median 2.60, max 2.72 — above 2 on
+20 of 20.** n=71, median +4,410 bps.
+
+**The edge was never the problem. A $5 stray could only hold one token, so it skipped 55 of 72
+opportunities and its sample was too small to distinguish from chance.** More capital does not
+improve the edge per trade — it lets the cat *take* the trades it was already identifying.
+
+### The earlier one-position finding, superseded by the above A $5 stray holds
 ONE token at a time. Simulated as a single slot walking forward through the held-out fold:
 
 ```
