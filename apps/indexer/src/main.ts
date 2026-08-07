@@ -29,9 +29,12 @@
 import {
   DEFAULT_ELIGIBILITY,
   DEFAULT_RISK,
+  type SpendLedger,
+  assertDurableLedger,
   createMemorySpendLedger,
   decide as strategyDecide,
 } from "@strays/hunt";
+import { createStore, type Store } from "./ledger.js";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { fetchCandidates } from "./discovery.js";
@@ -84,9 +87,39 @@ async function main(): Promise<void> {
     ? createWalletClient({ account: privateKeyToAccount(KEEPER_KEY as `0x${string}`), transport: http(RPC_URL), chain })
     : null;
 
-  // In-memory for OBSERVE mode only. See the note on `decide` — going live needs a durable one,
-  // and `assertDurableLedger` from @strays/hunt throws on this to stop it happening by accident.
-  const ledger = createMemorySpendLedger();
+  /*
+   * ══ THE LEDGER, AND THE ONE PLACE LIVE MODE IS ALLOWED TO REFUSE TO BOOT ══
+   *
+   * With DATABASE_URL set, the spend ledger and the price history are Postgres-backed and survive
+   * a restart. Without it, an in-memory ledger is used — which is tolerable ONLY in observe mode,
+   * because it spends nothing.
+   *
+   * If live trading is on and the ledger is not durable, `assertDurableLedger` THROWS and this
+   * process exits. That is deliberate and it is the whole point: meridian's daily cap "only reset
+   * on process restart, so the 'daily' cap was really 'spend since last boot'". On Railway a push
+   * redeploys, so an in-memory cap would have reset several times an hour. A keeper that cannot
+   * enforce its own cap must not trade.
+   */
+  let store: Store | null = null;
+  // Typed as the INTERFACE, not as the memory implementation's wider shape — otherwise the
+  // Postgres ledger cannot be assigned to it (the memory one adds a `snapshot()` for tests).
+  let ledger: SpendLedger = createMemorySpendLedger();
+  const dbUrl = process.env.DATABASE_URL ?? "";
+  if (dbUrl.length > 0) {
+    try {
+      store = await createStore(dbUrl);
+      ledger = store.ledger;
+      console.log("ledger: POSTGRES (durable). Price history and spend caps survive a restart.");
+    } catch (err) {
+      console.error(`ledger: Postgres unreachable — ${String(err)}`);
+      // A failed DB connection must not silently downgrade a LIVE keeper to an in-memory cap.
+      if (live) throw new Error("live trading requires a reachable durable ledger");
+      console.warn("ledger: falling back to IN-MEMORY. Tolerable only because this is observe mode.");
+    }
+  } else {
+    console.warn("ledger: IN-MEMORY (no DATABASE_URL). Caps reset on restart.");
+  }
+  if (live) assertDurableLedger(ledger);
 
   const refuse = (what: string) => async (): Promise<never> => {
     throw new Error(`refusing to ${what}: keeper is in OBSERVE mode`);
@@ -171,6 +204,22 @@ async function main(): Promise<void> {
     quoteExitWei: async () => 0n,
 
     record: async (r: DecisionRecord) => {
+      if (store !== null) {
+        await store
+          .recordDecision({
+            strayId: r.strayId,
+            action: r.action,
+            token: r.token,
+            amountWei: r.amountWei,
+            rationale: r.rationale,
+            outcome: r.outcome.kind,
+            txHash: "txHash" in r.outcome ? r.outcome.txHash : null,
+            block: r.block,
+            atMs: r.at,
+          })
+          // A logging failure must never abort a tick that already moved money.
+          .catch((e) => console.error(`decision not persisted: ${String(e)}`));
+      }
       // Structured so a log aggregator can read it, and so DECIDED is never confused with LANDED.
       console.log(
         JSON.stringify({
@@ -224,7 +273,10 @@ async function main(): Promise<void> {
         // priceEth is a float from the API and is used ONLY to record history, never to size a
         // trade — the trade size comes from the quoter below, in bigint.
         const ethPerTokenWei = BigInt(Math.round(c.priceEth * 1e18));
-        if (ethPerTokenWei > 0n) recordPrice(c.address, ethPerTokenWei, nowSeconds);
+        if (ethPerTokenWei > 0n) {
+          recordPrice(c.address, ethPerTokenWei, nowSeconds);
+          if (store !== null) await store.recordPrice(c.address, ethPerTokenWei, nowSeconds);
+        }
 
         const quotedOut = await quoteBuy({
           client: pub,
@@ -244,7 +296,12 @@ async function main(): Promise<void> {
             ageSeconds: Math.max(0, nowSeconds - Math.floor(c.launchedAt / 1000)),
             tickSpacing: c.tickSpacing,
           },
-          history: historyFor(c.address),
+          // Durable history when Postgres is up, in-memory otherwise. A restart no longer blanks
+          // every stray's window.
+          history:
+            store !== null
+              ? await store.historyFor(c.address, 4 * 60 * 60, nowSeconds)
+              : historyFor(c.address),
           quotedOut,
         });
       }
