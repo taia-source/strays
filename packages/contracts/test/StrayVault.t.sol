@@ -697,3 +697,104 @@ contract GuardProbe {
         }
     }
 }
+
+/**
+ * Edge cases found by re-reading the contract after it was already deployed and green.
+ *
+ * The one that prompted this pass: `withdraw` sets `s.principal = amount > principal ? 0 : principal
+ * - amount`. Is there a sequence where a user withdraws, the keeper trades again, and the SECOND
+ * withdrawal rakes profit that was already raked — or conversely escapes a rake it should pay?
+ */
+contract StrayVaultEdgeTest is Test {
+    StrayVault vault;
+    MockRouter router;
+    MockERC20 token;
+    MockPermit2 permit2;
+    address house = makeAddr("house");
+    address keeper = makeAddr("keeper");
+    address alice = makeAddr("alice");
+    address hook = 0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC;
+    bytes32 constant A = keccak256("edge");
+
+    function setUp() public {
+        token = new MockERC20();
+        router = new MockRouter();
+        permit2 = new MockPermit2();
+        router.setToken(address(token));
+        vault = new StrayVault(house, keeper, address(router), address(permit2), hook, address(router));
+        vm.deal(alice, 100 ether);
+        vm.deal(address(router), 100 ether);
+    }
+
+    /**
+     * A stray that WINS, is withdrawn, then wins AGAIN must not have the first profit raked twice.
+     *
+     * After a full withdrawal `principal` is 0, so every wei of a later gain is profit — which is
+     * correct, because the user took their principal out. The thing that would be WRONG is the
+     * house collecting twice on the SAME gain, and this asserts it does not.
+     */
+    function test_edge_rakeIsNotChargedTwiceOnTheSameProfit() public {
+        vm.prank(alice);
+        vault.adopt{value: 1 ether}(A); // principal 0.8
+
+        vm.prank(keeper);
+        vault.hunt(A, address(token), 0.005 ether, 1, 200);
+        router.setRate(500); // double the ETH back
+        vm.prank(keeper);
+        vault.flee(A, 1);
+
+        uint256 stake1 = vault.stakeOf(A);
+        uint256 profit1 = stake1 - 0.8 ether;
+        uint256 houseBefore = house.balance;
+
+        vm.prank(alice);
+        vault.withdraw(A);
+        uint256 raked1 = house.balance - houseBefore;
+        assertEq(raked1, profit1 / 10, "first rake wrong");
+
+        // Everything is out. A second withdrawal must revert rather than rake anything again.
+        vm.prank(alice);
+        vm.expectRevert(StrayVault.InsufficientStake.selector);
+        vault.withdraw(A);
+        assertEq(house.balance - houseBefore, raked1, "house raked a second time on the same profit");
+    }
+
+    /**
+     * The keeper must not be able to strand a user's money by opening a position and stopping.
+     *
+     * The uncommitted stake stays withdrawable at all times, so a keeper that goes silent mid-trade
+     * costs the user the deployed slice and nothing more — and that slice is bounded by
+     * MAX_POSITION_WEI. This is the honest bound on keeper risk, asserted rather than asserted-in-prose.
+     */
+    function test_edge_silentKeeperCannotStrandTheUncommittedStake() public {
+        vm.prank(alice);
+        vault.adopt{value: 1 ether}(A); // 0.8 stake
+
+        vm.prank(keeper);
+        vault.hunt(A, address(token), 0.01 ether, 1, 200); // the maximum a single trade may take
+
+        // Keeper now does nothing, forever. The user must still get the rest out.
+        uint256 before = alice.balance;
+        vm.prank(alice);
+        vault.withdraw(A);
+
+        assertEq(alice.balance - before, 0.79 ether, "the uncommitted stake was not fully returned");
+        assertLe(0.01 ether, vault.MAX_POSITION_WEI(), "exposure to a silent keeper exceeds the cap");
+    }
+
+    /** A stray id nobody adopted must be inert on every path, not just on hunt. */
+    function test_edge_unknownStrayIsInertEverywhere() public {
+        bytes32 ghost = keccak256("never-adopted");
+        vm.prank(alice);
+        vm.expectRevert(StrayVault.NotOwner.selector);
+        vault.withdraw(ghost);
+
+        vm.prank(keeper);
+        vm.expectRevert(StrayVault.NoSuchStray.selector);
+        vault.flee(ghost, 1);
+
+        (uint256 payout, uint256 rake) = vault.quoteWithdraw(ghost);
+        assertEq(payout, 0);
+        assertEq(rake, 0);
+    }
+}
