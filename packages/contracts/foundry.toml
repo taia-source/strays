@@ -1,0 +1,14 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+# Invariant campaigns that report PASS having tested nothing are the failure @taia/contracts
+# exists to catch. Depth and runs are set so the campaign actually explores state.
+[invariant]
+runs = 256
+depth = 32
+fail_on_revert = false

@@ -1,0 +1,5 @@
+{
+  "extends": "@taia/tsconfig/base.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["vitest/**/*", "vitest.config.ts"]
+}

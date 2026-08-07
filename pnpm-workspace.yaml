@@ -1,0 +1,39 @@
+packages:
+  - "apps/*"
+  - "vendor/*"
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true
+  "@biomejs/biome": true
+  # next's image optimiser. Its native build must be approved or a CI install
+  # fails outright under pnpm 11's strictDepBuilds.
+  sharp: true
+
+catalog:
+  "@types/node": 22.19.1
+  "@types/react": 19.2.17
+  "@types/react-dom": 19.2.3
+  "@vitest/coverage-v8": 4.1.10
+  next: 16.2.12
+  # Motion (formerly Framer Motion), for the DOM layer only — the canvas has its own ticker.
+  #
+  # Chosen over GSAP+ScrollTrigger, which is the stronger tool for PINNED, SCRUBBED narrative
+  # sequences and has no equal there. This page has none: it needs enter-on-view reveals, state
+  # transitions between selections, and list enter/EXIT — and exit animation is the deciding
+  # feature, since `AnimatePresence` has no clean GSAP equivalent in React. GSAP's licence stopped
+  # being the question in 2025 when Webflow made it free including ScrollTrigger; scope did.
+  #
+  # NOT Lenis. Lenis lerps a synthetic scroll position, and anything reading the real one
+  # disagrees with what is on screen. This page has `position: sticky` claim columns AND a WebGL
+  # hero; a third scroll authority next to those is how sticky columns drift.
+  motion: 12.43.0
+  # PixiJS v8, WebGL only. Phaser 4.2.1 is 355.7 KB gzip (2.2x) and ships physics/audio/input
+  # this project has no use for; Konva is Canvas2D-backed and thermally throttles in long
+  # ambient sessions. NOT @pixi/react — v8 pins React 19 only and is a compat landmine.
+  pixi.js: 8.19.0
+  react: 19.2.8
+  react-dom: 19.2.8
+  typescript: 7.0.2
+  viem: 2.55.10
+  vitest: 4.1.10

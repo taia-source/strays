@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "globalDependencies": ["pnpm-lock.yaml", "vendor/tsconfig/base.json"],
+  "globalEnv": ["NODE_ENV", "TAIA_ANVIL_RPC"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "check-types": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "persistent": false
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

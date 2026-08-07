@@ -1,0 +1,33 @@
+{
+  "name": "@taia/gate",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@taia/tsconfig": "workspace:*",
+    "@types/autocannon": "^7.12.7",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "autocannon": "^8.0.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
