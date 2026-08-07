@@ -458,6 +458,48 @@ built continuous Reynolds wander. Reading
 **The transferable point:** "alive" came from a per-entity idle with decorrelated phase AND rate,
 not from movement. Wander is what an entity does when nothing has been designed for it to do.
 
+## 7d. THERE ARE TWO HOOKS. THE VAULT CAN ONLY REACH ONE OF THEM.
+
+**MEASURED 2026-08-07, and this is the most consequential finding in the file.** `RESEARCH §1b`
+records a single fee hook, `0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC`, taken from
+`/api/config`. It is hardcoded as an `immutable` in `StrayVault.sol` and assumed everywhere.
+
+**There is a second one.** Reading the PoolManager's own `Initialize` events for each token's
+`poolId`:
+
+```
+hook                                          tokens   24h volume
+0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC      65      5194 Ξ
+0xEfe669814e5Eec33406Bd50ffa8331618D076aEc      44      1359 Ξ
+```
+
+**40% of the pad, and 1,359Ξ of daily volume, is on a hook the deployed vault physically cannot
+trade** — its `_encodeSwap` builds every PoolKey with the one immutable hook, so a swap against the
+other addresses a pool that does not exist.
+
+**And the second hook holds the best tokens.** LEVCAT, INTERN and Seriouscat — three of the four
+highest-volume names on the pad, the ones Ibrahim pointed at directly — are all on
+`0xEfe6…6aEc`. CASHBIRD is on the known hook, which is why it alone reconstructed correctly and
+masked the problem.
+
+**How it hid for the whole build.** Every PoolKey check ever run started from a token that happened
+to be on the first hook: §2 derived the key from CatDay and matched on the first attempt, the fork
+tests used CatDay, and the live-fire trades used Yourcoin and CASHDOG. A single-sample verification
+of a two-valued field cannot fail. The reconstruction matched *because the sample was homogeneous*,
+not because the derivation was right.
+
+**How it surfaced.** Not from a test. A live sell-simulation probe reported "no buy" for LEVCAT at
+328Ξ of daily volume — a number that cannot be true — and the implausibility of the *number* is what
+prompted unwrapping the revert. `UnexpectedRevertBytes` (`0x6190b2b0`) had been swallowing an empty
+inner revert, which is what an uninitialised pool returns.
+
+**The fix is not a constant.** The hook must be read per token from the `Initialize` event (or from
+a verified pad field), carried through discovery, and passed into `hunt`/`flee` as part of the
+PoolKey — which means `StrayVault`'s immutable `hook` is wrong by design and the contract needs
+redeploying with the hook as a per-trade argument. That is a contract change, and it is the single
+highest-value fix available: it roughly doubles the reachable market and adds the most liquid names
+on the pad.
+
 ## 7c. THE SAME BUG TWICE, IN TWO COMPONENTS — and only a user caught the second one
 
 `sort=newest` was fixed in the KEEPER (§7b's neighbouring finding: the scanner and the strategy were
