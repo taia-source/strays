@@ -14,12 +14,14 @@
 import { describe as group, expect, it } from "vitest";
 import {
   DEFAULT_PARAMS,
+  GAS_PRICE_WEI,
   buyRatioBpsBefore,
   replay,
   replayToken,
   sellableBefore,
   volumeBefore,
 } from "./replay.js";
+import { clearsBar, levelsFor, roundTripCost } from "@strays/hunt";
 import { type Bar, type RawSeries, historyBefore, toBars, toPriceWei } from "./series.js";
 import { decodeSwapLog, ethPerTokenFromSqrtX96, readSigned } from "./collect.js";
 import { describe as stat, quantile, summarise } from "./stats.js";
@@ -591,5 +593,187 @@ group("stats", () => {
     // 1.10 then 0.88 -> peak 1.10, trough 0.88 -> dd = 20%
     expect(s.maxDrawdownBps).toBeCloseTo(2000, 0);
     expect(s.winRate).toBe(0.5);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE SELECTIVITY DIMENSIONS — and the two structural findings they exposed
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+group("selectivity, quality gates, hold horizon and stop mode", () => {
+  /** A ramp steep enough to fire the signal, with alternating buys/sells so a sell is observable. */
+  function ramping(taxPct = 1): RawSeries {
+    const swaps = [];
+    let price = 1e-13;
+    for (let i = 0; i < 60; i++) {
+      price *= 1.02;
+      swaps.push({
+        block: 1000 + i * 100,
+        ts: 1_780_000_000 + i * 300,
+        logIndex: 0,
+        priceEth: price.toExponential(12),
+        amount0: ((i % 2 === 0 ? 1n : -1n) * 10n ** 16n).toString(),
+        amount1: ((i % 2 === 0 ? -1n : 1n) * 10n ** 24n).toString(),
+      });
+    }
+    return {
+      address: "0xsel",
+      symbol: "SEL",
+      poolId: "0xpool",
+      taxPct,
+      launchedAt: (1_780_000_000 - 7_200) * 1000,
+      marketCapEth: 5,
+      swaps,
+    };
+  }
+
+  it("a score threshold above every achievable score refuses every trade", async () => {
+    const token = toBars(ramping());
+    const open = await replayToken(token, DEFAULT_PARAMS);
+    expect(open.length).toBeGreaterThan(0);
+    // The score is bounded by construction (see score.ts: netEdge x depth x momentum, each capped
+    // at 10_000bps), so a threshold far above it must admit nothing. Selectivity is a real gate,
+    // not a no-op — a filter that cannot refuse cannot select.
+    const shut = await replayToken(token, { ...DEFAULT_PARAMS, minScoreBps: 10n ** 12n });
+    expect(shut).toHaveLength(0);
+  });
+
+  it("a volume floor above all observed volume refuses every trade, and it reads only the past", async () => {
+    const token = toBars(ramping());
+    const shut = await replayToken(token, {
+      ...DEFAULT_PARAMS,
+      minVolumeWei: 10n ** 30n,
+    });
+    expect(shut).toHaveLength(0);
+  });
+
+  it("a participation floor above the series length refuses every trade", async () => {
+    const token = toBars(ramping());
+    const shut = await replayToken(token, { ...DEFAULT_PARAMS, minBarsBefore: 10_000 });
+    expect(shut).toHaveLength(0);
+  });
+
+  it("a time exit closes a position that neither stop nor take-profit would have closed", async () => {
+    const token = toBars(ramping());
+    // maxHoldSeconds of 1 forces the time exit on the first bar after the fill, which no other
+    // rule would have produced on a monotone ramp.
+    const timed = await replayToken(token, {
+      ...DEFAULT_PARAMS,
+      maxHoldSeconds: 1,
+      takeProfitBps: 1_000_000n,
+      stopMode: "none",
+    });
+    expect(timed.length).toBeGreaterThan(0);
+    expect(timed.some((t) => t.exitReason === "time-exit")).toBe(true);
+  });
+
+  it("stopMode 'none' suppresses stop exits, and 'level' keeps them — the default is 'level'", async () => {
+    // A series that ramps up (to fire the entry) then collapses through the stop.
+    const swaps = [];
+    let price = 1e-13;
+    for (let i = 0; i < 30; i++) {
+      price *= 1.02;
+      swaps.push({ i, price });
+    }
+    for (let i = 0; i < 30; i++) {
+      price *= 0.95;
+      swaps.push({ i: 30 + i, price });
+    }
+    const series: RawSeries = {
+      address: "0xcrash",
+      symbol: "CRASH",
+      poolId: "0xpool",
+      taxPct: 1,
+      launchedAt: (1_780_000_000 - 7_200) * 1000,
+      marketCapEth: 5,
+      swaps: swaps.map((s) => ({
+        block: 1000 + s.i * 100,
+        ts: 1_780_000_000 + s.i * 300,
+        logIndex: 0,
+        priceEth: s.price.toExponential(12),
+        amount0: ((s.i % 2 === 0 ? 1n : -1n) * 10n ** 16n).toString(),
+        amount1: ((s.i % 2 === 0 ? -1n : 1n) * 10n ** 24n).toString(),
+      })),
+    };
+    const token = toBars(series);
+    const withStop = await replayToken(token, DEFAULT_PARAMS);
+    expect(withStop.some((t) => t.exitReason === "stop")).toBe(true);
+    const noStop = await replayToken(token, { ...DEFAULT_PARAMS, stopMode: "none" });
+    expect(noStop.some((t) => t.exitReason === "stop")).toBe(false);
+  });
+
+  it("records decision-time context on every trade, and it is genuinely from BEFORE the entry", async () => {
+    const token = toBars(ramping());
+    const trades = await replayToken(token, DEFAULT_PARAMS);
+    expect(trades.length).toBeGreaterThan(0);
+    for (const t of trades) {
+      // `barsBefore` counts swaps strictly before the DECISION bar, which precedes the fill bar.
+      // It can therefore never reach the full series length.
+      expect(t.barsBefore).toBeLessThan(token.bars.length);
+      expect(t.volumeBeforeWei).toBeGreaterThanOrEqual(0n);
+      expect(t.heldSeconds).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════════════════════
+     THE FINDING: `EDGE_MULTIPLE` CANNOT REFUSE ANYTHING. It is a tautology, not a bar.
+     ══════════════════════════════════════════════════════════════════════════════════════ */
+
+  it("EDGE_MULTIPLE cannot refuse an ENTRY — the cost bar compares a number against itself", async () => {
+    // `levelsFor` floors the take-profit at `cost x multiple / position`, and `evaluateEntry`
+    // defines `expectedGain = position x takeProfitBps`. So the gain the bar tests IS the
+    // requirement the bar tests it against, and `clearsBar` cannot return false for a long signal.
+    //
+    // The multiple therefore moves the EXIT TARGET but never the ENTRY DECISION. It is not a
+    // selectivity control at all, which is what RESULTS.md believed it was. Raising it does not
+    // make the strategy pickier; it only makes each trade aim further.
+    //
+    // This is pinned as an ENTRY-COUNT invariant rather than a byte-equality one, because an
+    // earlier draft of this test asserted byte-equality, failed, and the failure is the finding:
+    // the trades differ in their exits while the entries do not differ at all.
+    const token = toBars(ramping());
+    const entryTimes = await Promise.all(
+      [1n, 2n, 4n, 8n, 64n].map(async (edgeMultiple) => {
+        const trades = await replayToken(token, { ...DEFAULT_PARAMS, edgeMultiple });
+        return trades.map((t) => t.entryTs);
+      }),
+    );
+    // Every multiple takes its FIRST entry at the same bar: the bar cannot decline it.
+    const firstEntries = entryTimes.map((ts) => ts[0]);
+    for (const e of firstEntries) expect(e).toBe(firstEntries[0]);
+    expect(firstEntries[0]).toBeDefined();
+  });
+
+  it("the cost bar refuses no long signal at any tax tier, size or multiple", () => {
+    // The direct form of the same finding, stated against `@strays/hunt` rather than the replay.
+    // If this ever fails, the bar has become a real filter and the sweep in `explore.ts` §5 is
+    // worth re-running.
+    let refusals = 0;
+    let total = 0;
+    for (const taxPct of [1, 3, 5, 10]) {
+      for (const positionWei of [10n ** 15n, 5n * 10n ** 15n, 10n ** 16n]) {
+        for (const multiple of [1n, 2n, 3n, 4n, 8n, 64n]) {
+          const cost = roundTripCost({
+            positionWei,
+            taxPct,
+            gasPriceWei: GAS_PRICE_WEI,
+            approvalsNeeded: false,
+          });
+          const levels = levelsFor({
+            positionWei,
+            roundTripCostWei: cost.totalWei,
+            edgeMultiple: multiple,
+          });
+          // Exactly what `evaluateEntry` computes for a breakout.
+          const expectedGainWei = (positionWei * levels.takeProfitBps) / 10_000n;
+          total += 1;
+          if (!clearsBar({ expectedGainWei, costWei: cost.totalWei, multiple }).clears) {
+            refusals += 1;
+          }
+        }
+      }
+    }
+    expect(total).toBe(72);
+    expect(refusals).toBe(0);
   });
 });

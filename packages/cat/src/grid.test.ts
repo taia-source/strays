@@ -365,115 +365,162 @@ describe("silhouette rule 2 — the head must separate from the body", () => {
    * an amoeba. There is now a shaded neck line between them, which is what makes a quadruped read
    * as having a head at all."
    *
-   * ══ IN PROFILE THE NECK IS A SHAPE, AND THESE ASSERTIONS CHANGED WITH THE POSE ══
+   * ══ THESE ASSERTIONS CHANGED TWICE, WITH THE POSE, AND THIS IS THE THIRD SET ══
    *
-   * Head-on, the head sat directly on top of the body and the ONLY thing that could separate them
-   * was a forced value break — the body's first row clamped two ramp steps below the head above it.
-   * That clamp had three distinct bugs over its life, every one of them the same shape: the break
-   * being computed somewhere the final value was not yet known.
+   * HEAD-ON (v2) the head sat directly on the body and the ONLY thing that could separate them was
+   * a forced value break — the body's first row clamped two ramp steps below the head above it. That
+   * clamp had three distinct bugs, every one the same shape: the break computed somewhere the final
+   * value was not yet known.
    *
-   * In profile the skull sits ABOVE and FORWARD of the barrel, joined by a neck the silhouette
-   * implies. The separation is carried by the OUTLINE running into the notch between the skull's
-   * back edge and the withers — geometry, not tone — so the value clamp is gone and with it all
-   * three of its bugs. What is asserted now is the property the clamp was a proxy for: that a
-   * viewer can tell where the head ends and the body begins.
+   * IN PROFILE (v3) the skull sat above and forward of the barrel and the separation was a NOTCH in
+   * the outline. The assertions became "the head is forward of the body" and "the muzzle is in front
+   * of the eye" — both of which are statements about a side view, and the second was explicitly
+   * described as "the one test in the file that a head-on sprite cannot pass".
+   *
+   * FRONT-ON (v4) neither applies. "In front of" is meaningless when the animal is facing you, and a
+   * muzzle between two eyes — which v3's test was written to forbid as an OWL — is now the correct
+   * and intended drawing. Those tests are deleted rather than adapted, because they were pinning a
+   * POSE DECISION that has been reversed on the record.
+   *
+   * What replaces them is the property all three versions were proxies for, stated in the terms this
+   * pose actually offers: the head must WIN, on height and on width, and there must be a visible
+   * waist where the two masses meet. That is bloodhorn's own neoteny cue — "a small body is a
+   * neoteny cue in its own right... this makes it win on width too" — and unlike the previous two
+   * sets it is a statement about CUTENESS rather than about camera angle, so it should survive.
    */
 
-  it("puts the skull clear of the barrel, so the silhouette has a neck notch", () => {
+  it("makes the head WIDER than the body, so the silhouette has a waist", () => {
     /*
-     * The concrete form: on the row where the skull is widest there must be a column between the
-     * skull's rear edge and the body's front edge that belongs to NEITHER — the notch. Without it
-     * the two masses are fused and the animal is unitick's amoeba.
-     *
-     * Measured on the head's own rows only. Lower down they legitimately merge at the chest, which
-     * is where a neck actually joins a body.
+     * The concrete form of the neck, front-on. bloodhorn's recorded failure when this does not hold:
+     * "the two merged into a single vertical mass with no waist — a cute head on a lump. There was
+     * no neck because there was no width difference for a neck to be."
+     */
+    for (const id of IDS) {
+      for (const state of STATES) {
+        const grid = catGrid(id, { state });
+        const heads = grid.filter((p) => p.part === "head");
+        const bodies = grid.filter((p) => p.part === "body");
+        expect(heads.length, `id ${id}/${state}: no head at all`).toBeGreaterThan(40);
+        expect(bodies.length, `id ${id}/${state}: no body at all`).toBeGreaterThan(15);
+        const headW = Math.max(...heads.map((p) => p.x)) - Math.min(...heads.map((p) => p.x)) + 1;
+        const bodyW = Math.max(...bodies.map((p) => p.x)) - Math.min(...bodies.map((p) => p.x)) + 1;
+        expect(
+          headW,
+          `id ${id}/${state}: head ${headW} wide on a body of ${bodyW} — no waist`,
+        ).toBeGreaterThan(bodyW);
+      }
+    }
+  });
+
+  it("keeps the head ABOVE the body, and the head is the larger mass", () => {
+    /*
+     * The head is the SUBJECT of a cute sprite. bloodhorn spends ten of twenty-four rows on it and
+     * calls that "the biggest single span, by design"; this spends eleven. Asserting it in PIXELS
+     * rather than in row constants is what stops a part quietly overflowing its budget — which is
+     * exactly what the body did during this rewrite, rasterising into eight rows on a six-row budget
+     * and swallowing the legs, with every ROWS-derived ratio still reporting correct.
      */
     for (const id of IDS) {
       const grid = catGrid(id, { state: "fed" });
       const heads = grid.filter((p) => p.part === "head" || p.part === "muzzle");
-      expect(heads.length, `id ${id}: no head at all`).toBeGreaterThan(6);
       const bodies = grid.filter((p) => p.part === "body");
-      expect(bodies.length, `id ${id}: no body at all`).toBeGreaterThan(20);
-      // The head must sit FORWARD of the body's centre of mass — that is what "profile" means, and
-      // a head-on sprite would fail it outright.
-      const headX = heads.reduce((a, p) => a + p.x, 0) / heads.length;
-      const bodyX = bodies.reduce((a, p) => a + p.x, 0) / bodies.length;
-      expect(headX, `id ${id}: the head is not in front of the body`).toBeLessThan(bodyX);
-    }
-  });
-
-  it("keeps the head ABOVE the barrel's back line, so a neck exists at all", () => {
-    // In profile the skull's centre sits above the spine. If it did not, the head would be inside
-    // the barrel and the two would fuse — which is exactly what the first profile draft did.
-    for (const id of IDS) {
-      const grid = catGrid(id, { state: "fed" });
-      const heads = grid.filter((p) => p.part === "head");
-      const bodies = grid.filter((p) => p.part === "body");
-      if (heads.length === 0 || bodies.length === 0) continue;
       const headY = heads.reduce((a, p) => a + p.y, 0) / heads.length;
       const bodyY = bodies.reduce((a, p) => a + p.y, 0) / bodies.length;
-      expect(headY, `id ${id}: the head is not above the barrel`).toBeLessThan(bodyY);
+      expect(headY, `id ${id}: the head is not above the body`).toBeLessThan(bodyY);
+      expect(
+        heads.length,
+        `id ${id}: head ${heads.length} cells vs body ${bodies.length} — the body is winning`,
+      ).toBeGreaterThan(bodies.length);
     }
   });
 
-  it("draws the muzzle IN FRONT of the eye — the single strongest cat cue", () => {
+  it("draws the muzzle BETWEEN and BELOW the two eyes — a front-facing face", () => {
     /*
-     * ══ THE ASSERTION THAT WOULD HAVE CAUGHT THE HEAD-ON POSE ══
+     * ══ THE ASSERTION THAT PINS THE POSE, AND IT IS THE EXACT INVERSE OF v3's ══
      *
-     * A face with the muzzle below and between two eyes is an OWL, and that is what the head-on
-     * sprite read as no matter how its cheeks and nose were tuned. A face with the muzzle protruding
-     * in FRONT of a single eye is a cat, and it is a property of the pose rather than of any tuning.
+     * v3 asserted the muzzle sits in FRONT of the eye, and called it "the one test in the file that
+     * a head-on sprite cannot pass". That was true and the sprite it was protecting has been
+     * deliberately replaced, so the assertion is inverted rather than dropped: the muzzle must sit
+     * BETWEEN the two eyes horizontally and BELOW both of them vertically.
      *
-     * This is the one test in the file that a head-on sprite cannot pass, which is precisely why it
-     * is worth having: it pins the decision rather than the parameters.
+     * Keeping a test here at all — rather than deleting the concept — matters, because a face is the
+     * whole sprite now and "the muzzle drifted off the centreline" is the kind of defect that looks
+     * like a style choice at 24px. It is also the honest record: the previous test was not wrong, it
+     * was guarding a decision that was reversed, and the file should say which.
      */
     for (const id of IDS) {
       const grid = catGrid(id, { state: "fed" });
       const muzzle = grid.filter((p) => p.part === "muzzle" || p.part === "nose");
       const eyes = grid.filter((p) => p.part === "eye");
       expect(muzzle.length, `id ${id}: no muzzle`).toBeGreaterThan(0);
-      expect(eyes.length, `id ${id}: no eye`).toBeGreaterThan(0);
-      const muzzleFront = Math.min(...muzzle.map((p) => p.x));
-      const eyeFront = Math.min(...eyes.map((p) => p.x));
-      expect(muzzleFront, `id ${id}: the muzzle is not in front of the eye`).toBeLessThan(eyeFront);
+      expect(eyes.length, `id ${id}: no eyes`).toBeGreaterThan(0);
+      const muzzleX = muzzle.reduce((a, p) => a + p.x, 0) / muzzle.length;
+      const muzzleY = Math.min(...muzzle.map((p) => p.y));
+      const eyeBottom = Math.max(...eyes.map((p) => p.y));
+      // Between the eyes: within a pixel of the grid's own centreline.
+      expect(Math.abs(muzzleX - (GRID_W - 1) / 2), `id ${id}: the muzzle is off-centre`).toBeLessThan(
+        1.5,
+      );
+      // Below them: the muzzle's top row is at or under the eyes' bottom row.
+      expect(muzzleY, `id ${id}: the muzzle is not below the eyes`).toBeGreaterThanOrEqual(
+        eyeBottom - 1,
+      );
     }
   });
 
-  it("gives every cat a back line that spans most of its length", () => {
+  it("draws TWO eyes, one each side of the centreline", () => {
     /*
-     * The back line is the top edge of the barrel and is the profile silhouette's defining feature —
-     * it is what a viewer reads as "quadruped" before any detail resolves. A body whose topmost row
-     * is only a few columns wide is a lump rather than a back.
+     * ══ THE ASSERTION THAT WOULD HAVE CAUGHT THE ONE-EARED CAT, APPLIED TO THE EYES TOO ══
+     *
+     * v3 asserted "exactly ONE eye, because this is a profile". Front-on there must be two, and they
+     * must be BALANCED — an early `return` inside the loop over a symmetric feature's two halves
+     * silently drew every cat in this colony with a single EAR, and it survived a full render pass
+     * because a one-eared cat still looks like a cat. The same bug in `eyeStepAt` would be even
+     * harder to spot.
+     *
+     * So the count is asserted per SIDE rather than in total: a total count cannot distinguish two
+     * eyes from one eye drawn twice as large.
      */
     for (const id of IDS) {
       const grid = catGrid(id, { state: "fed" });
-      const bodies = grid.filter((p) => p.part === "body");
-      if (bodies.length === 0) continue;
-      /*
-       * ══ THE TOPLINE IS SAMPLED PER COLUMN, BECAUSE A CAT'S BACK IS NOT LEVEL ══
-       *
-       * This measured the width of the body's TOPMOST ROW, which was right while the topline was
-       * flat. Once the croup was raised above the withers — the correction that stopped these
-       * reading as dogs — only the rear few columns occupy the topmost row, so the test reported a
-       * 6-column back on a 14-column body and failed a cat whose silhouette had just been improved.
-       *
-       * A test that fails when the thing it guards gets better is measuring the wrong quantity. What
-       * "has a back line" means is that the body's top edge is CONTINUOUS across its length — every
-       * column from chest to croup has a topmost body cell — which is what a viewer reads as a back,
-       * whether or not that edge is level.
-       */
-      const byCol = new Map<number, number>();
-      for (const p of bodies) {
-        const cur = byCol.get(p.x);
-        if (cur === undefined || p.y < cur) byCol.set(p.x, p.y);
+      const eyes = grid.filter((p) => p.part === "eye");
+      const left = eyes.filter((p) => p.x < GRID_W / 2).length;
+      const right = eyes.filter((p) => p.x >= GRID_W / 2).length;
+      expect(left, `id ${id}: no left eye`).toBeGreaterThan(4);
+      expect(right, `id ${id}: no right eye`).toBeGreaterThan(4);
+      // Balanced within a pixel or two — the light bias may knock a corner off one side.
+      expect(Math.abs(left - right), `id ${id}: eyes are lopsided (${left} vs ${right})`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("draws TWO ears, one each side, both clearing the skull", () => {
+    /*
+     * The bug this exists for, in full, because it is the most instructive one in the rewrite:
+     * `earNormal` looped over `[-1, 1]` and `return null`ed on a miss instead of `continue`ing. The
+     * left ear was tested first, so any pixel that missed it returned immediately and the right ear
+     * was never evaluated. EVERY cat rendered with one ear, and it passed a visual review because a
+     * one-eared cat reads as a stylistic choice rather than as a defect.
+     *
+     * An early return inside a loop over the two halves of a symmetric feature is the single most
+     * dangerous shape of bug in this file, and a test that asserts "ears exist" cannot see it.
+     */
+    for (const id of IDS) {
+      for (const state of STATES) {
+        const grid = catGrid(id, { state });
+        const ears = grid.filter((p) => p.part === "ear" || p.part === "earInner");
+        const left = ears.filter((p) => p.x < GRID_W / 2).length;
+        const right = ears.filter((p) => p.x >= GRID_W / 2).length;
+        expect(left, `id ${id}/${state}: no left ear`).toBeGreaterThan(2);
+        expect(right, `id ${id}/${state}: no right ear`).toBeGreaterThan(2);
+        // And they must CLEAR the head — an ear buried in the crown is not a silhouette feature.
+        const heads = grid.filter((p) => p.part === "head");
+        const crown = Math.min(...heads.map((p) => p.y));
+        const earTop = Math.min(...ears.map((p) => p.y));
+        expect(
+          crown - earTop,
+          `id ${id}/${state}: the ears clear the skull by only ${crown - earTop} rows`,
+        ).toBeGreaterThanOrEqual(2);
       }
-      const cols = [...byCol.keys()].sort((a, b) => a - b);
-      const span = cols.length;
-      expect(span, `id ${id}: the back line is only ${span} columns`).toBeGreaterThanOrEqual(9);
-      // And it must be unbroken: no column between the chest and the croup may be missing.
-      const first = cols[0] ?? 0;
-      const last = cols[cols.length - 1] ?? 0;
-      expect(last - first + 1, `id ${id}: the back line has a gap in it`).toBe(span);
     }
   });
 });
@@ -642,86 +689,121 @@ describe("the state tints AT MOST TWO PIXELS", () => {
     }
   });
 
-  it("draws a starving cat THINNER than a fed one", () => {
+  it("draws a starving cat THINNER than a fed one — measured on the BODY", () => {
     /*
-     * The specific form of the above, and the one the brief names. Total silhouette AREA, because a
-     * viewer reads "thin" as less of the animal being there rather than as any one measurement.
+     * ══ MEASURED ON THE BODY, NOT ON THE WHOLE SILHOUETTE ══
+     *
+     * This compared TOTAL coat area and it failed front-on, for a reason that is about the pose
+     * rather than about the state: a starving cat's ears DROOP, and a drooped ear is sheared
+     * sideways so it covers MORE columns than a pricked one. The body genuinely narrowed and the
+     * ears more than made up for it, so the total area went up while the animal got thinner.
+     *
+     * That is a measurement picking up a change it was not asking about. "Thin" is a statement about
+     * the animal's BULK, so the body is what to measure — and measuring it directly also stops the
+     * test passing for the wrong reason if some future state shrinks the head instead.
      */
     for (const id of IDS) {
-      const area = (state: CatState) => coat(catGrid(id, { state })).length;
-      expect(area("starving"), `id ${id}: starving is not thinner than fed`).toBeLessThan(
-        area("fed"),
+      const bodyArea = (state: CatState) =>
+        catGrid(id, { state }).filter((p) => p.part === "body").length;
+      expect(bodyArea("starving"), `id ${id}: starving is not thinner than fed`).toBeLessThan(
+        bodyArea("fed"),
       );
     }
   });
 
-  it("pricks a hunting cat's ears forward and drops it into a crouch", () => {
-    let loweredByHunting = 0;
-    let eligible = 0;
+  it("droops a starving cat's ears and half-closes its eyes — the CUTE register", () => {
     /*
-     * `hunting` is alertness, and alertness has to read on EVERY cat regardless of what its own hash
-     * gave it — a bias a hash could cancel is not a state. Both halves are forced in
-     * `stateGeometry` and both are asserted here rather than trusted.
+     * ══ WHAT REPLACED "drops it into a crouch", AND WHY ══
+     *
+     * v3 asserted that `hunting` lowers the back line — a POSTURE change, which was the largest
+     * silhouette axis in the profile pose. Front-on the four postures differ by about one row of leg
+     * and the axis was removed entirely, so there is no back line to lower and the test cannot be
+     * adapted; it is replaced by the cues this pose actually carries.
+     *
+     * `ART-DIRECTION.md` §8 requires "a starving cat is drawn starving", and the brief asks for that
+     * in a cute register — "droopy-eared and dim-eyed rather than anatomically gaunt". Both are
+     * asserted rather than trusted, because both are FORCED overrides and a forced override that
+     * silently stops firing is this package's most-recorded class of bug.
+     *
+     * The ear droop is measured as WIDTH: a drooping ear is sheared outward and folds, so it spans
+     * more columns than a pricked one. That is a property of the silhouette at 32px, which is where
+     * the state has to read.
      */
     for (const id of IDS) {
-      const hunting = catGrid(id, { state: "hunting" });
-      const ears = hunting.filter((p) => p.part === "ear" || p.part === "earInner");
-      expect(ears.length, `id ${id}: a hunting cat has no ears`).toBeGreaterThan(0);
-      /*
-       * ══ A CROUCH IS LOW, NOT WIDE — and in profile that is measurable directly ══
-       *
-       * This compared the body's WIDTH in `hunting` against its width in `starving`, which was the
-       * best proxy available head-on, where a crouch could only express itself as spread. It is a
-       * poor test in profile and it was failing for the right reason: `starving` also narrows the
-       * barrel, so the comparison was between a posture and a state and could go either way
-       * depending on which moved more.
-       *
-       * In profile a crouch means the back line is LOWER — closer to the ground — which is what a
-       * stalking cat actually does and is exactly what `postureRows` encodes. Comparing the hunting
-       * back line against the same cat's `fed` back line measures the posture change itself, with no
-       * state confound, and it is the property a viewer reads.
-       */
-      const backRowOf = (state: CatState) => {
-        const ys = coat(catGrid(id, { state }))
-          .filter((p) => p.part === "body")
-          .map((p) => p.y);
-        return ys.length === 0 ? 0 : Math.min(...ys);
+      const earSpan = (state: CatState) => {
+        const ears = catGrid(id, { state }).filter(
+          (p) => p.part === "ear" || p.part === "earInner",
+        );
+        return Math.max(...ears.map((p) => p.x)) - Math.min(...ears.map((p) => p.x)) + 1;
       };
-      /*
-       * `toBeGreaterThanOrEqual`, because a cat whose own hash already gave it `crouch` is ALREADY
-       * as low as the state would put it — `stray-2` is one — and forcing a strict inequality would
-       * demand that `hunting` lower a cat that is on the ground. What the state guarantees is that
-       * no cat is HIGHER when hunting than when fed, which is the honest statement of "hunting
-       * crouches" over a colony where some cats crouch anyway.
-       */
-      expect(backRowOf("hunting"), `id ${id}: hunting is not a crouch`).toBeGreaterThanOrEqual(
-        backRowOf("fed"),
+      expect(
+        earSpan("starving"),
+        `id ${id}: a starving cat's ears are not drooping`,
+      ).toBeGreaterThanOrEqual(earSpan("fed"));
+      // And the eyes are half-lidded: fewer eye cells than the wide-open fed state.
+      const eyeArea = (state: CatState) =>
+        catGrid(id, { state }).filter((p) => p.part === "eye").length;
+      expect(eyeArea("starving"), `id ${id}: a starving cat's eyes are not lidded`).toBeLessThan(
+        eyeArea("fed"),
       );
-      /*
-       * Counted on cats that are NOT already crouched or sitting by their own hash. `hunting` forces
-       * the crouch posture, so a cat that crouches anyway cannot be lowered by it, and a sitting cat
-       * is lowered in the rump rather than the shoulder — neither is evidence about whether the
-       * state works. Including them made the count depend on the posture hash's distribution rather
-       * than on the state, which is what dropped it below the threshold when `sit` gained its own
-       * topline.
-       */
-      const own = geometryFor(id).posture;
-      if (own !== "crouch" && own !== "sit") {
-        loweredByHunting += backRowOf("hunting") > backRowOf("fed") ? 1 : 0;
-        eligible += 1;
-      }
+    }
+  });
+
+  it("pricks a hunting cat's ears FORWARD, and the axis MOVES CELLS", () => {
+    /*
+     * `hunting` is alertness, and alertness has to read on EVERY cat regardless of what its own hash
+     * gave it — a bias a hash could cancel is not a state. `stateGeometry` CLAMPS `earAngle` rather
+     * than adding to it for exactly that reason.
+     *
+     * ══ MEASURED IN RENDERED CELLS, AND THAT IS THE ONLY MEASUREMENT THAT WORKS ══
+     *
+     * This test found a genuine dead axis on its first run: the ear's lean term swept the tip by
+     * under two cells across `earAngle`'s entire −1..1 range, so the forced `hunting` clamp moved the
+     * ears by ZERO cells on every cat in the set. The state existed in the source, was forced rather
+     * than nudged, was reviewed in a render, and did nothing.
+     *
+     * That is the SIXTH instance of the same defect in this package (see `earNormal`'s note for the
+     * list), and every one of them was invisible in the source and visible only in a cell count. So
+     * the assertion counts CELLS — the ear's horizontal centre of mass, which is what actually moves
+     * — rather than reading a geometry value and trusting it to rasterise.
+     *
+     * The centre of mass rather than the tip GAP, because the tips are clipped by the grid's top row
+     * on the taller ears: a clipped tip reports the same column at every angle, so a tip measurement
+     * silently stops responding on exactly the cats where the ear is most prominent.
+     */
+    const earCentre = (id: string, state: CatState): number => {
+      const ears = catGrid(id, { state }).filter((p) => p.part === "ear" || p.part === "earInner");
+      // Distance from the centreline, averaged. Pricked ears lean IN, so this falls.
+      return ears.reduce((a, p) => a + Math.abs(p.x + 0.5 - GRID_W / 2), 0) / ears.length;
+    };
+    let pricked = 0;
+    for (const id of IDS) {
+      const ears = catGrid(id, { state: "hunting" }).filter((p) => p.part === "ear");
+      expect(ears.length, `id ${id}: a hunting cat has no ears`).toBeGreaterThan(4);
+      // Hunting may never splay a cat's ears OUTWARD — that is the droop, and it is the wrong state.
+      expect(
+        earCentre(id, "hunting"),
+        `id ${id}: hunting splayed the ears instead of pricking them`,
+      ).toBeLessThanOrEqual(earCentre(id, "fed") + 0.01);
+      if (earCentre(id, "hunting") < earCentre(id, "fed") - 0.01) pricked += 1;
     }
     /*
-     * ══ AND THE STATE MUST ACTUALLY MOVE MOST OF THE COLONY ══
+     * ══ THE AGGREGATE IS WHAT CLOSES THE DEAD-AXIS HOLE ══
      *
-     * The per-cat assertion above is deliberately weak (a cat that already crouches cannot crouch
-     * further), and a weak assertion alone would pass a `hunting` state that did NOTHING — which is
-     * exactly the dead-axis failure this package has recorded five times. The aggregate is what
-     * closes that hole: most of the set must be visibly lowered, so the posture override cannot
-     * quietly become a no-op.
+     * The per-cat assertion has to be weak, because a cat whose own `earAngle` already exceeds the
+     * clamp cannot be moved by it — that is what a clamp means. A weak assertion ALONE would pass a
+     * `hunting` state that did nothing at all, which is the exact failure this test was written
+     * after. Requiring that the state visibly move a real share of the colony is what stops the
+     * override quietly becoming a no-op again.
+     *
+     * A third rather than a half: `earAngle` is uniform over −1..1 and the clamp is at 0.55, so
+     * roughly 78% of cats are eligible to move — but the rasterisation quantum means the ones only
+     * just below the clamp move by less than a cell. A third of the whole set is comfortably more
+     * than noise and comfortably under the eligible share.
      */
-    expect(eligible, "no cat in the set can show the crouch").toBeGreaterThan(0);
-    expect(loweredByHunting, "hunting lowers almost no cats").toBeGreaterThan(eligible / 2);
+    expect(pricked, "hunting pricks almost no cats' ears — the axis is dead").toBeGreaterThan(
+      IDS.length / 3,
+    );
   });
 
   it("dims the coat monotonically from fed to dead", () => {
@@ -753,9 +835,29 @@ describe("the state tints AT MOST TWO PIXELS", () => {
        * The mean is the exposure, independent of how much animal there is, which is what the state
        * gain actually changes.
        */
+      /*
+       * ══ THE ORDERING IS OVER THE THREE LIVING STATES; `dead` IS NOT ON THIS LADDER ══
+       *
+       * v1 through v3 asserted `starving >= dead`, on the model that a dead cat is the dimmest thing
+       * in the colony. That was true while `dead` was a gain like the others, and it stayed true by
+       * coincidence while `DEAD_STEP` happened to sit below the starving mean — which is exactly the
+       * crossing this file's own note predicts: "a state defined by an ABSOLUTE value and a state
+       * defined by a GAIN will cross each other the moment either is retuned, and nothing in either
+       * definition mentions the other."
+       *
+       * It has now been retuned, deliberately. `DEAD_STEP` was RAISED to a mid value when the base
+       * ramp went violet, because at the old step the dead cats were nearly invisible against the
+       * page — the "reads as a rendering failure rather than a state" defect that `dead` being flat
+       * exists to prevent, reintroduced through a palette change in a different file.
+       *
+       * So the ladder is asserted where it is meaningful — the three states that are lit by the same
+       * model, in order — and `dead` gets the assertion it actually needs: that it is FLAT (below)
+       * and that it is clear of the ground (below). Keeping it on this ladder would be asserting a
+       * relationship the design does not claim, and it would forbid the fix that made a dead cat
+       * visible.
+       */
       expect(lum("fed")).toBeGreaterThan(lum("hunting"));
       expect(lum("hunting")).toBeGreaterThan(lum("starving"));
-      expect(lum("starving")).toBeGreaterThanOrEqual(lum("dead"));
     }
   });
 
@@ -787,8 +889,13 @@ describe("the state tints AT MOST TWO PIXELS", () => {
      * mass. Listing the paw as modelled was this test's own bug — it asserted a flat coat and then
      * included a part the source deliberately darkens, which is a test disagreeing with a decision
      * rather than checking one.
+     *
+     * The NOSE and the WHISKERS left the set for the same reason when the cute pose gave the face
+     * marks of its own: `applyState` darkens both a step below the flat coat, so a dead cat keeps a
+     * readable face rather than a blank oval. They are marks, like the eyes and the inner ear, and a
+     * mark is precisely what the flat fill is designed to preserve.
      */
-    const MODELLED = new Set(["head", "body", "muzzle", "tail", "ear", "nose", "whisker"]);
+    const MODELLED = new Set(["head", "body", "muzzle", "tail", "ear"]);
     for (const id of IDS) {
       const grid = catGrid(id, { state: "dead" });
       const surfaces = coat(grid).filter((p) => MODELLED.has(p.part));
@@ -800,6 +907,26 @@ describe("the state tints AT MOST TWO PIXELS", () => {
       for (const p of coat(grid).filter((q) => !MODELLED.has(q.part))) {
         expect(p.step, `id ${id}: ${p.part} is not darker than the flat coat`).toBeLessThan(only);
       }
+      /*
+       * ══ AND IT MUST BE VISIBLE — the assertion that replaces `starving >= dead` ══
+       *
+       * A dead cat left the dim ladder when `DEAD_STEP` was raised, so the property that ladder was
+       * (partly) protecting needs stating directly: a dead cat must sit clear of the PAGE, not merely
+       * clear of its own outline.
+       *
+       * This is the defect the raise fixed. `DEAD_STEP` was 2, chosen against a phosphor-green ramp
+       * where step 2 was a mid-dark green on a near-black ground. When the base ramp went violet,
+       * step 2 became `#45304f` against a page of `#1a1220` — and every dead cat rendered as a barely
+       * visible smudge. That is "reads as a rendering failure rather than a state", reintroduced by a
+       * change to a different file, with nothing failing.
+       *
+       * Asserting a floor in RAMP STEPS rather than the constant's value is what makes the next
+       * palette change fail here instead of shipping an invisible corpse. Step 3 of 8 is the lowest
+       * value that stays legible against the ground on both the light and the dark theme.
+       */
+      expect(only, `id ${id}: a dead cat is too dark to see against the page`).toBeGreaterThanOrEqual(
+        3,
+      );
     }
   });
 
@@ -816,73 +943,178 @@ describe("the state tints AT MOST TWO PIXELS", () => {
   });
 });
 
-describe("proportions", () => {
-  it("keeps the head a legible fraction of the animal without making it an infant", () => {
-    // Below ~0.25 the face has no room for two eyes and a muzzle at 16px. At or above 0.5 the
-    // sprite is neotenous, which §8 forbids: "a cute cat used to soften a loss".
-    expect(PROPORTIONS.headToBody).toBeGreaterThan(0.25);
-    expect(PROPORTIONS.headToBody).toBeLessThan(0.5);
-  });
+describe("proportions — THE NEOTENY BUDGET, and it is the point of the sprite", () => {
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * ══ THIS BLOCK ASSERTED THE OPPOSITE OF WHAT IT NOW ASSERTS, AND THAT IS THE RECORD ══
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * v2 and v3 asserted `headToBody < 0.5`, with the comment: "At or above 0.5 the sprite is
+   * neotenous, which §8 forbids: 'a cute cat used to soften a loss'." The head was deliberately held
+   * BELOW the infant proportion, and every version of this package passed that assertion while being
+   * reviewed as not cute.
+   *
+   * That reading of §8 was wrong, and it is worth saying exactly how, because it is the reason three
+   * rewrites went the wrong way. §8 bans cuteness used to HIDE a loss — a sprite that softens what
+   * the mechanic did to the animal. It does not ban the animal being appealing. A cute cat that is
+   * visibly starving is MORE affecting than an accurate one, not less: the whole force of the state
+   * comes from the gap between what the creature looks like and what has happened to it.
+   *
+   * So the band is inverted. bloodhorn states the rule these assertions now encode and it is worth
+   * quoting because it is the thing that was missed: "A unicorn that is merely SMALL is not cute; it
+   * is a small horse. Cuteness is NEOTENY, and neoteny is a set of ratios, not a vibe."
+   *
+   * Each ratio below is derived in `cute.ts` from the geometry that actually draws, never typed
+   * beside it — so a constant cannot report a cute ratio on a head that is not that wide.
+   */
 
-  it("keeps the eye near openhood's measured cute band without exceeding it", () => {
-    expect(PROPORTIONS.eyeToHead).toBeGreaterThan(0.15);
+  it("gives the head HALF the animal or more — the strongest cue there is", () => {
     /*
-     * The ceiling is inclusive at 0.3. `EYE_W / HEAD_W` is exactly 3/10 on the current geometry, and
-     * openhood's measured band tops out at "1:3.5, which crosses from cute into unsettling" — 0.3 is
-     * 1:3.33 and sits just inside a band whose upper edge was itself approximate. An exclusive
-     * comparison against a value the geometry hits exactly is asserting a rounding accident.
-     */
-    expect(PROPORTIONS.eyeToHead).toBeLessThanOrEqual(0.3);
-  });
-
-  it("leaves a nose bridge between the eyes", () => {
-    // Eyes that touch read as a visor — measured at 96px and fixed with the dark bridge. The gap
-    // must be at least one eye's own width for the pair to read as two.
-    /*
-     * ══ THE BAR IS 0.6 EYE-WIDTHS, NOT 1.0, AND THE REASON IS THE PIXELS NOT THE RATIO ══
+     * bloodhorn's own table puts a realistic horse at ~0.14 and its unicorn at 0.50, and calls it
+     * "the single strongest cue. An infant skull is half the body."
      *
-     * v1 required a gap of one full eye width. That was measured on a 2px eye, where "one eye width"
-     * is two columns — the smallest gap that cannot be mistaken for a dither dropout. At 3px per eye
-     * the same ratio would demand a three-column bridge on a ten-column head, which would leave the
-     * eyes hard against the skull's edges and clip their outer columns on the narrowest faces.
-     *
-     * What the rule is actually protecting is that the two eyes do not read as ONE mark — the visor
-     * failure recorded in `catGrid`. That is a question of absolute pixels: two columns of dark
-     * bridge is enough at any eye size, and the nose-bridge darkening reinforces it. So the ratio
-     * floor is relaxed and an ABSOLUTE floor is asserted alongside it, which is the thing that
-     * actually holds the read.
+     * The floor is 0.45 rather than 0.5 so the budget has a little room to move without a test
+     * change; the CEILING is what stops the sprite becoming a head on a stick, which is its own
+     * failure — bloodhorn rejected a head-only portrait because it "gives the map nothing to read as
+     * a standing creature".
      */
-    expect(PROPORTIONS.eyeGapInEyes).toBeGreaterThanOrEqual(0.6);
-    expect(EYE_R_X - (EYE_L_X + EYE_W), "the nose bridge is under 2px").toBeGreaterThanOrEqual(2);
+    expect(PROPORTIONS.headToBody).toBeGreaterThanOrEqual(0.45);
+    expect(PROPORTIONS.headToBody).toBeLessThan(0.7);
   });
 
-  it("gives the ears a fifth of the animal's height", () => {
-    // Ears are the identifying feature; too small and the sprite is a cub, too large and it is a
-    // rabbit.
-    expect(PROPORTIONS.earToAnimal).toBeGreaterThan(0.12);
-    expect(PROPORTIONS.earToAnimal).toBeLessThan(0.3);
-  });
-
-  it("draws exactly ONE eye, because this is a profile", () => {
+  it("gives the head a BIGGER SPAN than the body, in rendered cells", () => {
     /*
-     * Measured: an eye shape that dropped a pixel read as a one-eyed cat, not as a squint. Every
-     * shape keeps both eyes at full width; only the VALUE varies.
+     * ══ ASSERTED IN CELLS, BECAUSE ROWS LIED ══
+     *
+     * `PROPORTIONS.headToBody` is computed from `ROWS`, and during this rewrite the BODY rasterised
+     * into eight rows on a six-row budget — its centre offset and radius bonus pushed it past its
+     * span — while every ROWS-derived ratio still reported correct. The head "won" on paper and the
+     * sprite was a lumpy mass with a face on it.
+     *
+     * A budget assertion that reads the budget cannot catch a part overflowing the budget. This one
+     * counts what was drawn.
      */
     for (const id of IDS) {
-      const eyes = catGrid(id).filter((p) => p.part === "eye");
-      /*
-       * ══ ONE EYE, 2x2 — the count halving is the pose change, not a regression ══
-       *
-       * Head-on the cat had two 3x2 eyes flanking a nose bridge, twelve cells of face. In profile a
-       * cat has one visible side and therefore ONE eye, and NEEDLE — which reads as an animal at
-       * 20x16 — uses a SINGLE PIXEL for its eye, recording why: "in profile an animal reads as alive
-       * from posture alone, so the face can be almost absent".
-       *
-       * 2x2 is more than NEEDLE spends and is what 24x24 affords: a dark pupil with a bright rim,
-       * which reads as a wet eye rather than as a lit dot. The face is no longer carrying the animal
-       * — the back line, the barrel and the legs are — so it does not need to.
-       */
-      expect(eyes.length, `id ${id}: ${eyes.length} eye pixels`).toBe(4);
+      for (const state of STATES) {
+        const grid = catGrid(id, { state });
+        const rowsOf = (part: string) => {
+          const ys = grid.filter((p) => p.part === part).map((p) => p.y);
+          return ys.length === 0 ? 0 : Math.max(...ys) - Math.min(...ys) + 1;
+        };
+        const head = rowsOf("head");
+        const body = rowsOf("body");
+        expect(
+          head,
+          `id ${id}/${state}: head spans ${head} rows, body spans ${body} — the body is winning`,
+        ).toBeGreaterThan(body);
+      }
+    }
+  });
+
+  it("gives the eye at least bloodhorn's 3px diameter, and a catchlight", () => {
+    /*
+     * bloodhorn: 3x3 is "the smallest square that carries a catchlight and still reads round". This
+     * cat runs 4x4, because a cat's eye is proportionally the largest of any common mammal and
+     * because the extra ring is what separates the sprite from bloodhorn's unicorn with triangles
+     * glued on.
+     *
+     * The CATCHLIGHT is asserted separately and it is not decoration: it is the only genuinely bright
+     * part of an eye, it is what makes the eye read as wet rather than as a hole, and it is the pixel
+     * the state accent lands on. An eye without one is a dark blob.
+     */
+    expect(EYE_W).toBeGreaterThanOrEqual(3);
+    expect(EYE_H).toBeGreaterThanOrEqual(3);
+    expect(PROPORTIONS.eyeToHead).toBeGreaterThan(0.2);
+    for (const id of IDS) {
+      const eyes = catGrid(id, { state: "fed" }).filter((p) => p.part === "eye");
+      const brightest = Math.max(...eyes.map((p) => p.step));
+      expect(brightest, `id ${id}: no catchlight in the eye`).toBe(RAMP_STEPS - 1);
+      // Exactly one catchlight per eye, so the accent count stays at two. Asserted here as well as
+      // in the accent test because it is a property of the MASKS, not of the accent logic.
+      const lights = eyes.filter((p) => p.step === RAMP_STEPS - 1);
+      expect(lights.length, `id ${id}: ${lights.length} catchlights`).toBe(2);
+    }
+  });
+
+  it("sets the eye centre BELOW the head's midline — the cue most often missed", () => {
+    /*
+     * bloodhorn: "infant eyes sit low in the skull. This is the cue most often missed, and the one
+     * that most reliably fixes a face that 'looks wrong' but cute-adjacent. A realistic ungulate is
+     * negative here."
+     *
+     * POSITIVE is the cute direction. This was measured at row 7 during the rewrite, where the value
+     * was negative, and the faces read as watchful rather than sweet — precisely the failure the
+     * comment describes. Moving the eyes one row down fixed it and is the single largest improvement
+     * in `cute.ts`.
+     */
+    expect(PROPORTIONS.eyeBelowMidline).toBeGreaterThan(0);
+  });
+
+  it("keeps the legs STUBBY — no more than three rows", () => {
+    /*
+     * bloodhorn spends three of twenty-four rows on legs and states the reason: "Long legs read as
+     * elegant, which is the opposite register." Its ratio is 1:7.7 against a realistic horse's 1:2.
+     *
+     * This is also the assertion that inverts v3's most carefully-derived one. v3 asserted a correct
+     * LEG-TO-BARREL ratio for a real cat — under 0.75, "a cat is LOW: its belly sits close to the
+     * ground and its legs are roughly HALF its barrel's depth, where a dog's are equal to it" — and
+     * it was a well-derived assertion about the wrong animal. Front-on, in the cute register, the
+     * only thing legs have to be is SHORT.
+     */
+    expect(ROWS.legs[1] - ROWS.legs[0]).toBeLessThanOrEqual(3);
+    expect(PROPORTIONS.legToCreature).toBeLessThan(0.2);
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const legs = grid.filter((p) => p.part === "leg");
+      expect(legs.length, `id ${id}: no legs at all`).toBeGreaterThan(4);
+      const span = Math.max(...legs.map((p) => p.y)) - Math.min(...legs.map((p) => p.y)) + 1;
+      expect(span, `id ${id}: legs span ${span} rows — not stubby`).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("makes the head win on WIDTH as well as on height", () => {
+    /*
+     * bloodhorn's small body, and its stated purpose: "Small body is also a neoteny cue in its own
+     * right: `PROPORTIONS.headToBody` asserts the head wins on height, and this makes it win on width
+     * too." Its own ratio is 7 : 5.2 = 1.35.
+     *
+     * This is the same property "silhouette rule 2" asserts in rendered cells; asserted here as a
+     * RATIO as well, because the two catch different failures — the cell test catches a body that
+     * overflows at run time, and this catches a base constant edited past the head's.
+     */
+    expect(PROPORTIONS.headToBodyWidth).toBeGreaterThan(1.2);
+  });
+
+  it("leaves a nose bridge between the eyes, so they read as TWO eyes", () => {
+    /*
+     * Two eyes only read as two if something separates them. The gap is asserted in eye-widths so it
+     * scales with the eye rather than being a pixel count that goes stale when the eye grows.
+     */
+    expect(PROPORTIONS.eyeGapInEyes).toBeGreaterThan(0.4);
+    for (const id of IDS) {
+      const eyes = catGrid(id, { state: "fed" }).filter((p) => p.part === "eye");
+      const left = eyes.filter((p) => p.x < GRID_W / 2);
+      const right = eyes.filter((p) => p.x >= GRID_W / 2);
+      const gap = Math.min(...right.map((p) => p.x)) - Math.max(...left.map((p) => p.x)) - 1;
+      expect(gap, `id ${id}: the eyes have no bridge between them`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("gives the ears real height above the skull — the cat marker", () => {
+    /*
+     * The ears replace bloodhorn's horn as the identifying silhouette, and a horn that does not clear
+     * the head is a bump. `earToAnimal` was v3's ratio and it is gone with the row budget it was
+     * computed from; what matters is the rendered CLEARANCE, which is what a viewer reads as "ear" —
+     * the part inside the skull is not an ear, it is a root.
+     */
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const ears = grid.filter((p) => p.part === "ear" || p.part === "earInner");
+      const heads = grid.filter((p) => p.part === "head");
+      const clear = Math.min(...heads.map((p) => p.y)) - Math.min(...ears.map((p) => p.y));
+      expect(clear, `id ${id}: the ears clear the skull by only ${clear} rows`).toBeGreaterThanOrEqual(
+        2,
+      );
     }
   });
 });
@@ -1439,25 +1671,49 @@ describe("cat proportions — not a dog, not a deer", () => {
     }
   });
 
-  it("keeps the skull SHORT — a long muzzle is a dog", () => {
+  it("keeps the skull WIDER than the body — the head IS the sprite", () => {
     /*
-     * The review named the head "too large and too long". Only the second half was doing the damage:
-     * a round skull reads as a cat at any reasonable size, and what made these canid was the MUZZLE
-     * projecting three columns past it.
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     * ══ THIS TEST ASSERTED THE EXACT OPPOSITE, AND THE INVERSION IS THE POINT OF THE REWRITE ══
+     * ══════════════════════════════════════════════════════════════════════════════════════════
      *
-     * Asserted as the head's total length against the barrel's, which is the ratio a viewer reads.
-     * Shrinking the skull itself twice made the sprite worse and the `no head at all` assertion
-     * caught it — so this bounds the head from ABOVE only, and `rule 2` bounds it from below.
+     * It read `headLen / bodyLen < 0.62` — the head must be well UNDER two-thirds of the body's
+     * length — under the heading "keeps the skull SHORT, a long muzzle is a dog". That was correct
+     * for a side-on quadruped, where the head is a small mass on the end of a long barrel and a head
+     * approaching the barrel's length genuinely is a snout.
+     *
+     * Front-on, in the cute register, it is precisely backwards. bloodhorn's unicorn head is WIDER
+     * than its body by design — its own note: "Small body is also a neoteny cue in its own right...
+     * this makes it win on width too" — and the assertion as written forbade every proportion the
+     * brief asked for. A sprite that passed it could not be cute.
+     *
+     * That is the most useful single thing this rewrite recorded: v3's assertions were not sloppy,
+     * they were rigorous statements about an animal nobody wanted, and they would have blocked the
+     * fix indefinitely if they had been treated as ground truth rather than as a record of a
+     * decision. A test encodes an OBJECTIVE, and when the objective is reversed on the record the
+     * test is reversed with it — and says so, so the next reader knows which way it has been.
      */
     for (const id of IDS) {
-      const { head, body } = anatomy(id);
-      if (head.length === 0 || body.length === 0) continue;
-      const headLen = Math.max(...head.map((p) => p.x)) - Math.min(...head.map((p) => p.x)) + 1;
-      const bodyLen = Math.max(...body.map((p) => p.x)) - Math.min(...body.map((p) => p.x)) + 1;
-      expect(
-        headLen / bodyLen,
-        `id ${id}: head ${headLen} on a body of ${bodyLen} — that is a snout`,
-      ).toBeLessThan(0.62);
+      for (const state of STATES) {
+        const { head, body } = anatomy(id, state);
+        if (head.length === 0 || body.length === 0) continue;
+        const headW = Math.max(...head.map((p) => p.x)) - Math.min(...head.map((p) => p.x)) + 1;
+        const bodyW = Math.max(...body.map((p) => p.x)) - Math.min(...body.map((p) => p.x)) + 1;
+        expect(
+          headW / bodyW,
+          `id ${id}/${state}: head ${headW} on a body of ${bodyW} — the head is not the subject`,
+        ).toBeGreaterThan(1.1);
+        /*
+         * And it is bounded from ABOVE too. bloodhorn rejected a head-only portrait because it
+         * "gives the map nothing to read as a standing creature", and a head more than twice the
+         * body's width is that portrait with a stub attached. Both bounds matter: the sprite has to
+         * be a creature, not a face.
+         */
+        expect(
+          headW / bodyW,
+          `id ${id}/${state}: head ${headW} on a body of ${bodyW} — that is a balloon on a stick`,
+        ).toBeLessThan(2.2);
+      }
     }
   });
 

@@ -177,7 +177,7 @@
     "find": "  const elapsedSeconds = last.atSeconds - first.atSeconds;",
     "replace": "  const elapsedSeconds = (n - 1) * 3600;",
     "caught": true,
-    "failCount": 22
+    "failCount": 26
   },
   {
     "id": "S21",
@@ -204,7 +204,7 @@
     "find": "  const takeProfitBps = TAKE_PROFIT_BPS > costFloorBps ? TAKE_PROFIT_BPS : costFloorBps;",
     "replace": "  const takeProfitBps = TAKE_PROFIT_BPS;",
     "caught": true,
-    "failCount": 3
+    "failCount": 5
   },
   {
     "id": "S24",
@@ -474,6 +474,24 @@
     "find": "  const costFloorBps =\n    numerator / args.positionWei + (numerator % args.positionWei > 0n ? 1n : 0n);",
     "replace": "  const costFloorBps = numerator / args.positionWei;",
     "caught": true,
-    "failCount": 2
+    "failCount": 4
+  },
+  {
+    "id": "S54",
+    "file": "src/decide.ts",
+    "what": "IGNORE the configured edgeMultiple and silently fall back to the module constant, so a caller that raises its cost bar gets the default bar and never learns.",
+    "find": "  const edgeMultiple = cfg.edgeMultiple ?? EDGE_MULTIPLE;",
+    "replace": "  const edgeMultiple = EDGE_MULTIPLE;",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S55",
+    "file": "src/decide.ts",
+    "what": "Let the ENTRY BAR and the TAKE-PROFIT FLOOR disagree: the bar uses the configured multiple while the target keeps the default, so a trade may fire against a target that cannot pay for it.",
+    "find": "      multiple: edgeMultiple,",
+    "replace": "      multiple: 1n,",
+    "caught": true,
+    "failCount": 3
   }
 ]

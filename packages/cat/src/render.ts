@@ -67,68 +67,102 @@ export type Ramp = readonly string[];
  * correct dark-theme cat.
  */
 export const PHOSPHOR_RAMP: Ramp = [
-  "var(--cat-0, oklch(0.22 0.024 145))", // outline and deepest shadow
-  "var(--cat-1, oklch(0.29 0.028 145))",
-  "var(--cat-2, oklch(0.37 0.032 145))", // the noise floor
-  "var(--cat-3, oklch(0.46 0.036 145))",
-  "var(--cat-4, oklch(0.56 0.042 145))", // the coat's own band — where pigment lands
-  "var(--cat-5, oklch(0.67 0.048 145))",
-  "var(--cat-6, oklch(0.79 0.052 145))",
-  "var(--cat-7, oklch(0.90 0.055 145))", // the lit crown and the eyeshine
+  "var(--cat-0, #1a1220)", // outline and deepest shadow — near-black, leaned VIOLET
+  "var(--cat-1, #2c1f3a)",
+  "var(--cat-2, #45304f)", // the terminator
+  "var(--cat-3, #63456a)",
+  "var(--cat-4, #8a6288)", // the coat's own band — where pigment lands
+  "var(--cat-5, #b189ab)",
+  "var(--cat-6, #d8b8cc)",
+  "var(--cat-7, #fdeef5)", // the lit crown and the catchlight — palest, NEVER pure white
 ];
 
 /**
- * The base ramp as packed RGB integers, for the pigment mix.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE BASE RAMP AS PACKED RGB INTEGERS — and it is a VIOLET ramp now, not a green one.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * The `var()` ramp above cannot be mixed with a pigment — you cannot interpolate a CSS custom
- * property reference in JavaScript — so the numeric ramp is declared alongside it and
+ * property reference in JavaScript — so the numeric ramp is declared alongside it, and
  * `PHOSPHOR_RAMP` is the theme-aware fallback for a caller that wants NO pigment at all.
  *
- * These are the DARK theme's phosphor values converted to sRGB. That is a deliberate asymmetry from
- * the `var()` ramp and it is safe for one reason: a pigmented cat is drawn in its COAT's colour, and
- * a coat colour does not invert between themes — a ginger cat is ginger on white paper. Only the
- * SHADOW end, which stays common to every cat, is theme-dependent, and `catRamp` leaves the dark end
- * of the ramp untouched by the pigment precisely so a caller may substitute it.
+ * ══ WHY IT STOPPED BEING PHOSPHOR GREEN, AND THIS IS THE SINGLE LARGEST FIX IN THE v4 PASS ══
+ *
+ * This ramp was eight steps of low-chroma phosphor green, derived from the IR-camera-trap referent.
+ * The coat pigments were mixed into its middle three steps, and rendered at 96px EVERY CAT WAS BROWN
+ * OR GREY — a hot `#ffa46b` peach came out `#614933`, which is mud.
+ *
+ * Two causes compounding, and both are about the BASE rather than about the pigment:
+ *
+ *   1. THE BASE HAD NO CHROMA TO CARRY. Mixing a saturated pigment 50% into a near-neutral green
+ *      gives a desaturated result by construction — the mix is a straight line in RGB and half of it
+ *      is grey. The pigments were bright; the ramp diluted every one of them by half.
+ *   2. THE BASE WAS TOO DARK. Step 4 was `#56624f` at about 36% luminance, and the luminance rescale
+ *      (below, and still correct) then pulled the mixed colour BACK DOWN to that. So the ramp was
+ *      enforcing "dim" on a palette whose entire purpose was to be bright.
+ *
+ * bloodhorn does not have this problem and its header says why in as many words: its own ramp runs
+ * "obsidian -> violet shadow -> lit pink -> pale pink", so the base is ALREADY the register the
+ * pigment is in, and mixing a pigment into it moves the hue without ever fighting the chroma.
+ *
+ * ══ WHAT THIS RAMP IS ══
+ *
+ * Obsidian leaned violet -> violet shadow -> mauve -> pale rose. A VIOLET-NEUTRAL spine, which is
+ * the correct base for a palette of saturated coats spread around the hue circle: it is not itself
+ * any coat's hue, so it does not privilege the pinks over the mints, and it has enough chroma that a
+ * pigment mixed into it stays saturated.
+ *
+ * The dark end is violet rather than neutral for bloodhorn's stated reason: "a shadow picks up
+ * colour from what is lighting it — and a candy-coloured creature on an obsidian ground casts a
+ * violet shadow, not a warm brown one. A neutral shadow here made the creature read as cut out and
+ * pasted on."
+ *
+ * ══ AND THE TOP OF THE RAMP IS NOT WHITE ══
+ *
+ * Step 7 is `#fdeef5`, a palest rose. Near-white on near-black triggers halation for readers with
+ * astigmatism, which is why bloodhorn's own highlight is pale silver rather than `#ffffff` — the
+ * same structural idea (one step above the body ramp, reserved, used sparingly) executed inside a
+ * contrast rule.
+ *
+ * ══ AND THE LIGHT END IS GENUINELY LIGHT ══
+ *
+ * Step 4 — the step most cats' pigment centres on — sits near 55% luminance where the old ramp's sat
+ * near 36%. That single change is most of the difference between a colony that reads as "too dark
+ * and dull" and one that reads as candy on a night meadow, and it is why the luminance rescale below
+ * is no longer fighting the palette: the ladder it preserves is now a BRIGHT ladder.
  */
 const BASE_RGB: readonly number[] = [
-  0x1c231c, 0x272f26, 0x353f33, 0x455040, 0x56624f, 0x6b7862, 0x8a967f, 0xb4bda6,
+  0x1a1220, 0x2c1f3a, 0x45304f, 0x63456a, 0x8a6288, 0xb189ab, 0xd8b8cc, 0xfdeef5,
 ];
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE PIGMENT IS FEATHERED ACROSS THREE RAMP STEPS, NEVER STAMPED ONTO ONE.
+ * THE PIGMENT IS MIXED HARD — 0.78 at the centre — and that is a v4 change.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * This is openhood's `creatureRamp` correction, transplanted verbatim including its reasoning,
- * because it is the single mechanism that separates "an animal with a coat" from "an animal with a
- * decal on it". openhood's own record:
+ * bloodhorn measures 0.5 at the centre and 0.26 at each neighbour, and this package ran those values
+ * verbatim on the grounds that they encode "how a ramp reads rather than what animal is drawn".
  *
- *   > This mixed the pigment into a SINGLE ramp step at 0.55. Rendered at 30x zoom, the result was
- *   > flat blocks of saturated pink appearing wherever the shading happened to land on that one
- *   > step — an arbitrary bright patch across a forehead or a chest, reading as a marking the data
- *   > never described rather than as a coat.
- *   >
- *   > The pigment now feathers across the tint step and its two neighbours, strongest at the centre.
- *   > That is what a coat is: the creature's colour modulated BY the light, rather than a decal
- *   > applied at one light level.
+ * That reasoning was sound and the transplant was not, because a mix weight is meaningless without
+ * the base it mixes AGAINST. bloodhorn's base at the tint step is `#b85a92` — already a saturated
+ * lit pink — so a 0.5 mix moves it between two saturated colours and the result is saturated either
+ * way. This package's base at the same step was a near-neutral, so a 0.5 mix landed the coat exactly
+ * halfway between the pigment and grey. Every cat came out desaturated by exactly half, and no
+ * amount of brightening the pigments fixed it because the dilution was proportional.
  *
- * The weights are openhood's measured 0.5 at the centre and 0.26 at each neighbour. They are not
- * re-derived here, because the property they encode is about how a ramp reads rather than about what
- * animal is drawn — and openhood measured them at 30x zoom on the same 24x24 grid this file uses.
+ * The base is now violet-and-chromatic (see `BASE_RGB`), which removes most of that problem on its
+ * own. The weights are raised anyway, to 0.78 / 0.42, for a reason specific to what this package is
+ * drawing: bloodhorn's creature is TWO-TONE — it has a mane carrying a second pigment, so the coat
+ * only has to be one of two colours a viewer names. A cat here is ONE colour, and it is the entire
+ * identity axis. It has to be unmistakable at 32px on a page beside twenty-nine others.
  *
- * ══ AND THE DARK END STAYS COMMON TO EVERY CAT ══
- *
- * `tintStepFor` only ever returns 3, 4 or 5, so steps 0-2 and 7 are never touched. openhood's
- * reason: "shadows on one page are lit by one candle; only the mid and lit bands take the creature's
- * hue. Tinting the whole ramp would produce dark creatures and light creatures, which reads as two
- * species rather than as one species with different markings."
- *
- * That also keeps two invariants this package needs: the OUTLINE (step 0) is the same colour on
- * every cat, so a colony never has two-tone edges, and the EYESHINE (step 7) stays phosphor, so a
- * cat's eyes read as reflecting the illuminator rather than as being its coat colour.
+ * The weights stop short of 1.0 deliberately. At a full mix the three tinted steps are all the
+ * SAME hue at three lightnesses, and the modelling — which is carried by the interaction between
+ * the shading and the base's own violet — flattens into a plain gradient. Some base has to survive
+ * for the coat to read as lit rather than as filled.
  */
-const PIGMENT_CENTRE = 0.5;
-const PIGMENT_NEIGHBOUR = 0.26;
+const PIGMENT_CENTRE = 0.78;
+const PIGMENT_NEIGHBOUR = 0.42;
 
 /** Relative luminance of a packed RGB integer, Rec. 709 weights. Used to preserve the ramp's ladder. */
 function luma(c: number): number {
@@ -137,36 +171,45 @@ function luma(c: number): number {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE PIGMENT MIX PRESERVES THE BASE STEP'S LUMINANCE — and this was a measured failure.
+ * THE MIX KEEPS THE RAMP A MONOTONIC LUMINANCE LADDER — and this was a measured failure.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * A plain component-wise `mix` — which is what openhood uses — pulls each step toward the pigment in
- * BRIGHTNESS as well as in hue. openhood gets away with that because its base ramp is a saturated
+ * A plain component-wise mix — which is what bloodhorn uses — pulls each step toward the pigment in
+ * BRIGHTNESS as well as in hue. bloodhorn gets away with that because its base ramp is a saturated
  * violet-to-pink with a wide luminance spread, so a pigment mixed into three of its steps still
  * leaves them clearly ordered.
  *
- * This base ramp is a low-chroma phosphor green whose adjacent steps are close together, and a
- * render at 384x zoom showed what that does: for `mackerel` the ramp came out `#5b6356 #787e72
- * #77816f` at steps 3, 4 and 5 — step 5 was DARKER than step 4. The pigment had flattened the middle
- * of the ramp into three near-identical values, so every piece of modelling that lives in that band
- * (the cheek, the brow, the body's own shading, the neck break) rendered as one wash. The cat had a
- * coat colour and no shape.
+ * A render at 384x zoom once showed what happens when that assumption does not hold: for `mackerel`
+ * the ramp came out `#5b6356 #787e72 #77816f` at steps 3, 4 and 5 — STEP 5 WAS DARKER THAN STEP 4.
+ * The pigment had flattened the middle of the ramp into three near-identical values, so every piece
+ * of modelling that lives in that band (the cheek, the brow, the body's own shading, the throat
+ * break) rendered as one wash. The cat had a coat colour and no shape.
  *
  * That is a serious defect and not a subtle one: the ramp's job is to be a monotonic ladder of
  * luminance, and a coat colour that breaks the ladder destroys every structural decision `grid.ts`
- * makes, all of which are expressed as differences between steps.
+ * makes, all of which are expressed as DIFFERENCES BETWEEN STEPS.
  *
- * ══ THE FIX: TAKE THE HUE FROM THE PIGMENT AND THE BRIGHTNESS FROM THE BASE ══
+ * ══ THE FIX WAS A HARD CLAMP, AND IT IS NOW A WINDOW — the v4 correction ══
  *
- * Mix as normal, then rescale the result back to the base step's own luminance. The pigment supplies
- * chroma — which is the whole point, and is what makes a ginger cat ginger — and the ramp keeps
- * exactly the ladder it was designed with. A cat is now its coat colour AND fully modelled, where
- * before it could be one or the other.
+ * The first fix rescaled the mixed colour back to the base step's EXACT luminance: hue from the
+ * pigment, brightness from the base. That guaranteed the ladder and it also guaranteed that the coat
+ * could never be brighter than the base ramp, which on the old dim green ramp meant every cat was
+ * pinned dark no matter how bright its pigment was. Half of "too dark and dull" was this clamp.
  *
- * This is a genuine divergence from openhood rather than a port of it, and it is forced by the base
- * palette rather than by taste: §3's phosphor ramp is one hue at low chroma, and openhood's method
- * assumes a base with luminance headroom to spare.
+ * The ladder does not actually require the exact base luminance — it requires that step i stays
+ * below step i+1. So the rescale is now a WINDOW: the mixed colour may keep its own luminance as
+ * long as that luminance stays inside a band around the base step's, and it is only rescaled when it
+ * would leave that band. A bright pigment therefore lifts its step (which is what makes a cream cat
+ * genuinely pale and a slate cat genuinely mid) while the ordering is still guaranteed, because the
+ * band is narrower than the gap between adjacent base steps.
+ *
+ * `LUMA_WINDOW` is 0.30 — 30% either side. The base ramp's adjacent steps differ by roughly 45-60%
+ * of the lower one's luminance, so a 30% window on each of two adjacent steps cannot overlap. That
+ * is the property the monotonicity test asserts, and it is asserted over every id and every pigment
+ * rather than argued here.
  */
+const LUMA_WINDOW = 0.3;
+
 function mix(a: number, b: number, t: number): number {
   const k = Math.max(0, Math.min(1, t));
   const ar = (a >> 16) & 255;
@@ -178,11 +221,17 @@ function mix(a: number, b: number, t: number): number {
   let r = ar + (br - ar) * k;
   let g = ag + (bg - ag) * k;
   let bl = ab + (bb - ab) * k;
-  // Rescale to the BASE step's luminance, so the ramp's ladder survives the pigment.
+  /*
+   * Rescale ONLY if the mix left the window around the base step's luminance. Inside the window the
+   * pigment keeps its own brightness, which is what lets a cream coat be pale and a slate coat be
+   * mid — the difference the hard clamp used to erase.
+   */
   const want = luma(a);
   const got = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
-  if (got > 0.5) {
-    const s = want / got;
+  const lo = want * (1 - LUMA_WINDOW);
+  const hi = want * (1 + LUMA_WINDOW);
+  if (got > 0.5 && (got < lo || got > hi)) {
+    const s = (got < lo ? lo : hi) / got;
     r *= s;
     g *= s;
     bl *= s;

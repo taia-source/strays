@@ -1,0 +1,11 @@
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const p = await b.newPage({viewport:{width:1440,height:900}});
+const errs=[];
+p.on("console",m=>{ if(m.type()==="error") errs.push(m.text().slice(0,300)); });
+p.on("pageerror",e=>errs.push("PAGEERROR: "+String(e).slice(0,300)));
+await p.goto("http://127.0.0.1:3200/",{waitUntil:"domcontentloaded"});
+await p.waitForTimeout(2500);
+console.log("data-route:", await p.evaluate(()=>document.body.dataset.route));
+console.log("errors:", errs.length?errs:"none");
+await b.close();

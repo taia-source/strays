@@ -30,7 +30,16 @@
  * every phone, which is why it is enforced here rather than trusted.
  */
 
-import { catGrid, drawCat as drawCatRaw, type Ctx2D, type CatState, GRID_H, GRID_W } from "@strays/cat";
+import {
+  catGrid,
+  catRamp,
+  drawCat as drawCatRaw,
+  type Ctx2D,
+  type CatState,
+  GRID_H,
+  GRID_W,
+  RAMP_STEPS,
+} from "@strays/cat";
 import { fnv1a, valueNoise } from "@taia/ui/mechanisms";
 import { useEffect, useRef } from "react";
 import {
@@ -52,21 +61,34 @@ import {
 } from "./sim";
 
 /**
- * The ramp, resolved from the live CSS custom properties ONCE per theme change.
+ * The SHADOW END of the ramp, resolved from the live CSS custom properties once per theme change.
  *
- * `drawCat` accepts `var(--cat-N)` strings and canvas `fillStyle` does NOT resolve custom
- * properties — it silently ignores an unparseable value and keeps the previous fill, so a cat drawn
- * with the raw var strings comes out as a solid block in whatever colour was last set. unitick
- * shipped the mirror-image bug (canvas fallbacks hardcoded to the DARK theme's hex, drawn on light
- * paper). Resolving through `getComputedStyle` is what makes the sprite follow the theme without
- * either failure.
+ * ══ WHY THIS NO LONGER BUILDS THE WHOLE RAMP ══
+ *
+ * `@strays/cat` grew a COAT system: `catRamp(id, state)` derives a per-cat pigmented ramp so the
+ * colony reads as individual animals — ginger, lilac, mint — rather than as N copies of one sprite.
+ * This module was passing an explicit `ramp` override into `drawCat`, and `rampFor` in that package
+ * treats an explicit ramp as authoritative, so **every coat was being suppressed and every cat came
+ * out phosphor green.** The bug is invisible from inside this file: the render is correct, it is
+ * merely uniform, and uniform is what the world looked like before coats existed.
+ *
+ * So the cat's own `id` is passed instead and the package resolves the ramp. What is still read
+ * from CSS is the DARK END, which is theme-dependent in a way a coat is not: a ginger cat is ginger
+ * on white paper (the package's own note), but the shadow it is modelled with has to invert or the
+ * animal becomes a flat blob on the light theme — the exact defect that file records being caught by
+ * screenshotting both themes.
+ *
+ * `RAMP_STEPS` rather than a literal 6. It went 6 → 8 when the grid went 24x24, and a hardcoded
+ * length here silently dropped the two brightest steps.
  */
 function resolveRamp(el: HTMLElement): readonly string[] {
   const cs = getComputedStyle(el);
-  const ramp = [0, 1, 2, 3, 4, 5].map((i) => cs.getPropertyValue(`--cat-${i}`).trim());
-  // A missing variable would paint the previous fillStyle. Fall back to a legible mid-ramp rather
-  // than to nothing — an invisible cat is the worst failure mode for a fallback.
-  return ramp.map((c, i) => (c === "" ? `oklch(${0.25 + i * 0.12} 0.03 145)` : c));
+  return Array.from({ length: RAMP_STEPS }, (_, i) => {
+    const v = cs.getPropertyValue(`--cat-${i}`).trim();
+    // A missing variable would paint the previous fillStyle — an invisible cat is the worst
+    // failure mode for a fallback, so this falls back to a legible ramp rather than to nothing.
+    return v === "" ? `oklch(${0.22 + i * 0.098} 0.03 145)` : v;
+  });
 }
 
 function readVar(el: HTMLElement, name: string, fallback: string): string {
@@ -160,9 +182,6 @@ export function WorldCanvas({
     const host = canvas.parentElement ?? canvas;
     let ramp = resolveRamp(host);
     let palette = readPalette(host);
-    // Re-derived wherever the palette is, so an OS toggle or a [data-theme] flip changes the
-    // glow's blend mode in the same breath as it changes the colours.
-    let light = isLightGround(palette.soot);
 
     /*
      * DPR is capped RESOLUTION-AWARE (§5a): `cssWidth < 700 ? 1.5 : 2`.
@@ -193,7 +212,6 @@ export function WorldCanvas({
       else resizeSim(simRef.current, width, height);
       ramp = resolveRamp(host);
       palette = readPalette(host);
-      light = isLightGround(palette.soot);
     };
 
     resize();
@@ -205,7 +223,8 @@ export function WorldCanvas({
     const onScheme = (): void => {
       ramp = resolveRamp(host);
       palette = readPalette(host);
-      light = isLightGround(palette.soot);
+      // Invalidate the blended coats: they carry the OLD theme's shadow end until re-derived.
+      rampGeneration++;
     };
     scheme.addEventListener("change", onScheme);
 
@@ -476,7 +495,6 @@ export function WorldCanvas({
         takeBox,
         now,
         reduced: reducedRef.current,
-        light,
       });
 
       // Hover test after the draw, against the interpolated positions the user actually sees.
@@ -533,34 +551,12 @@ type Palette = {
   readonly fed: string;
   readonly starve: string;
   readonly sootLine: string;
+  /* The DECORATIVE tier — see `globals.css`. These carry NO state and never will; they exist so
+     the field can have colour without a second hue acquiring a meaning. */
+  readonly iris: string;
+  readonly bloom: string;
+  readonly cyan: string;
 };
-
-/**
- * Is the RESOLVED palette the light one?
- *
- * Measured from the ground colour that is actually in effect rather than from
- * `matchMedia("(prefers-color-scheme: dark)")`, because the two can disagree: the site supports an
- * explicit `[data-theme]` override, and a user on a dark OS who has chosen the light theme would
- * otherwise get the dark theme's additive glow painted onto a near-white field.
- *
- * The test is the ground's own luminance, which is the thing the blend mode actually has to be
- * correct against. `--soot` is L 0.14 dark / L 0.97 light, so any sane threshold separates them;
- * the colour is parsed by letting the browser resolve it through a canvas fill, which handles
- * `oklch()` without this module needing a colour parser.
- */
-function isLightGround(soot: string): boolean {
-  if (typeof document === "undefined") return false;
-  const c = document.createElement("canvas");
-  c.width = 1;
-  c.height = 1;
-  const cx = c.getContext("2d", { willReadFrequently: true });
-  if (cx === null) return false;
-  cx.fillStyle = soot;
-  cx.fillRect(0, 0, 1, 1);
-  const [r = 0, g = 0, b = 0] = cx.getImageData(0, 0, 1, 1).data;
-  // Rec. 601 luma is plenty for a two-way test and needs no gamma handling.
-  return (r * 0.299 + g * 0.587 + b * 0.114) / 255 > 0.5;
-}
 
 function readPalette(el: HTMLElement): Palette {
   return {
@@ -573,7 +569,10 @@ function readPalette(el: HTMLElement): Palette {
     phosGhost: readVar(el, "--phos-ghost", "oklch(0.58 0.038 145)"),
     fed: readVar(el, "--fed", "oklch(0.78 0.17 85)"),
     starve: readVar(el, "--starve", "oklch(0.6 0.2 25)"),
-    sootLine: readVar(el, "--soot-line", "oklch(0.25 0.026 145)"),
+    sootLine: readVar(el, "--soot-line", "oklch(0.32 0.06 288)"),
+    iris: readVar(el, "--iris", "oklch(0.72 0.17 300)"),
+    bloom: readVar(el, "--bloom", "oklch(0.74 0.17 350)"),
+    cyan: readVar(el, "--cyan", "oklch(0.78 0.12 195)"),
   };
 }
 
@@ -590,8 +589,6 @@ type DrawCtx = {
   takeBox: (i: number) => { x: number; y: number; w: number; h: number };
   now: number;
   reduced: boolean;
-  /** True when the resolved palette is the LIGHT theme. Decides the glow's blend mode. */
-  light: boolean;
 };
 
 /** Grid cell size in CSS px. A camera-trap frame has a graticule; this is it. */
@@ -924,8 +921,11 @@ function drawAtmosphere(ctx: CanvasRenderingContext2D, d: DrawCtx): void {
       const n =
         valueNoise(cx * 0.17, cy * 0.17) * 0.7 + valueNoise(cx * 0.53 + 11.3, cy * 0.53 + 7.1) * 0.3;
       if (n < 0.42) continue;
-      ctx.fillStyle = palette.sootHi;
-      ctx.globalAlpha = (n - 0.42) * 0.09;
+      // A faint iris cast on the raised patches, so the ground has hue variation and not merely
+      // lightness variation. At this alpha no individual cell is visible as a cell — which is the
+      // whole test for atmosphere versus pattern.
+      ctx.fillStyle = n > 0.62 ? palette.iris : palette.sootHi;
+      ctx.globalAlpha = (n - 0.42) * (n > 0.62 ? 0.05 : 0.09);
       ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
     }
   }
@@ -1013,7 +1013,19 @@ function drawAtmosphere(ctx: CanvasRenderingContext2D, d: DrawCtx): void {
      */
     const tw = 0.55 + Math.sin(t * (0.5 + valueNoise(i * 2.7, 4.4) * 0.7) + i) * 0.45;
     ctx.globalAlpha = (0.08 + valueNoise(i * 4.7, 0.3) * 0.16) * tw;
-    ctx.fillStyle = palette.phosGhost;
+    /*
+     * The motes are TINTED, and it is the cheapest colour on the field.
+     *
+     * A single-hue dust field is what made the world read as one flat green wash. Three decorative
+     * hues, chosen per-mote by a noise lookup (never `Math.random`, so the field is identical on
+     * every reload and screenshots stay comparable), give the air depth without any mote being
+     * large or bright enough to read as an entity.
+     *
+     * Deliberately drawn from the DECORATIVE tier only. A mote in `--fed` amber would be a speck of
+     * dust claiming a trade was won.
+     */
+    const hue = valueNoise(i * 5.3, 2.1);
+    ctx.fillStyle = hue < 0.38 ? palette.iris : hue < 0.68 ? palette.cyan : palette.bloom;
     ctx.fillRect(x, y, PX, PX);
   }
   ctx.globalAlpha = 1;
@@ -1046,167 +1058,6 @@ function drawAtmosphere(ctx: CanvasRenderingContext2D, d: DrawCtx): void {
   ctx.fillRect(0, 0, width, height);
 }
 
-/**
- * ══ THE GLOW — a lit thing is TWO sprites, never one ══
- *
- * Bloodhorn's `glow.ts` states the recipe as data: a wide faint AURA (alpha ~0.09, scale ~4.4)
- * under a tight bright HALO (alpha ~0.28, scale ~1.35), because *"one sprite at a middling alpha
- * cannot be both the wide atmospheric bleed and the concentrated source, so it ends up being
- * neither and reads as fog."*
- *
- * ══ AND THE GRADIENT STOP IS THE ACTUAL CRAFT ══
- *
- * The stops are `0 → 0.35 (0.42) → 1`, NOT a linear ramp. A linear gradient renders as a flat disc
- * with a visible edge — its alpha is still ~0.5 halfway out, so the eye reads a CIRCLE. Dropping to
- * 0.42 alpha by 35% of the radius makes the falloff early and steep, which is how real light
- * behaves, and the sprite reads as a light source rather than a dot. Bloodhorn's header calls this
- * one number "the difference between glow and grey circle with soft edges", and it is right.
- *
- * Canvas has no additive blend mode as cheap as Pixi's, but `lighter` is exactly it, and it is what
- * keeps two overlapping glows brightening rather than compositing into a flat wash.
- */
-function drawGlow(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  radius: number,
-  colour: string,
-  strength: number,
-  light: boolean,
-): void {
-  if (radius <= 0 || strength <= 0) return;
-  ctx.save();
-  /*
-   * ══ ADDITIVE ON A DARK GROUND, MULTIPLY-ISH ON A LIGHT ONE ══
-   *
-   * `lighter` is the right blend for the dark theme and exactly the wrong one for the light theme.
-   * Adding light to a near-white ground can only push it toward pure white, so on the light theme
-   * the cats' auras rendered as pale, desaturated PATCHES — the amber and ember state colours
-   * washed out to nearly the same off-white, which destroys the one thing the glow is carrying.
-   *
-   * On a light ground, light is not perceived as "more luminance" — it is perceived as SATURATION.
-   * `multiply` darkens toward the glow's own hue, so a fed cat sits in a warm amber pool and a
-   * starving one in an ember pool, and the two stay as distinguishable as they are in the dark.
-   *
-   * This is the same reasoning the palette itself uses — the light theme is not the dark theme with
-   * the lightness flipped, it is a separate set of decisions about what carries meaning.
-   */
-  ctx.globalCompositeOperation = light ? "multiply" : "lighter";
-  const prev = ctx.globalAlpha;
-  /*
-   * ══ THE AMPLITUDES ARE **NOT** BLOODHORN'S 0.09 / 0.28, AND THE REASON IS THE MEDIUM ══
-   *
-   * This was written with bloodhorn's numbers first and the glow was INVISIBLE on the rendered
-   * field — measured by zooming a screenshot to the cat and finding no light around it at all. The
-   * cause is a real difference between the two renderers, not a tuning miss, and it is the kind of
-   * thing that silently wastes an afternoon:
-   *
-   * Pixi tints a WHITE glow texture. Its 0.09 is 9% of full white, which is a bright value on a
-   * near-black ground. Here the gradient is built from the PALETTE colour itself — a dim phosphor
-   * green or amber — and the alpha is applied TWICE: once by `globalAlpha` and again by the
-   * gradient's own stops (0.42 at the mid stop). So bloodhorn's 0.09 arrives on screen as roughly
-   * 0.09 × 0.42 ≈ 0.04 of an already-dark colour against a dark field: mathematically present,
-   * optically nothing.
-   *
-   * The generalisable lesson: an alpha constant is only meaningful together with the COLOUR it
-   * multiplies and the number of times it is applied. Copying it across renderers copies the
-   * number and not the brightness.
-   *
-   * 0.5 / 0.85 restores the intended ratio (a wide faint bleed well under a tight bright core)
-   * at a brightness that is actually visible on this ground. The RATIO is what carries the
-   * two-sprite reading; the absolute values belong to the medium.
-   */
-  ctx.globalAlpha = prev * strength * 0.62;
-  ctx.fillStyle = radial(ctx, x, y, radius, colour);
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
-  ctx.fill();
-  /*
-   * ══ THE CORE IS WIDE AND MODERATE, NOT TIGHT AND BRIGHT ══
-   *
-   * At `radius * 0.36` and 0.85 alpha the halo rendered as a small, saturated amber BLOB sitting on
-   * the cat — a lamp behind the animal rather than the animal being lit. Zooming the screenshot made
-   * it obvious: the brightest thing in the frame was a disc of light with a cat next to it.
-   *
-   * The failure is that a core much smaller than the body reads as a separate object, because it has
-   * its own visible edge. Widening it to 0.62 of the aura and dropping the alpha makes the two
-   * passes overlap enough to read as ONE falloff, so the light belongs to the cat.
-   */
-  ctx.globalAlpha = prev * strength * 0.55;
-  ctx.fillStyle = radial(ctx, x, y, radius * 0.62, colour);
-  ctx.beginPath();
-  ctx.arc(x, y, radius * 0.62, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-/**
- * A radial fill whose alpha falls off early and steeply.
- *
- * The stops encode the non-linear falloff described above: full at the centre, already down to 42%
- * by a third of the way out, gone at the rim. `color-mix` is used to attach an alpha to a palette
- * colour that arrives as an `oklch()` string — the one portable way to do that without parsing the
- * colour ourselves, and supported everywhere `oklch()` itself is.
- */
-function radial(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  r: number,
-  colour: string,
-): CanvasGradient {
-  const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(0.01, r));
-  /*
-   * ══ MANY STOPS, AND THE COLOUR IS RE-STATED AT EVERY ONE ══
-   *
-   * This function first had three stops using `color-mix(… 0%, transparent)` for the rim, which is
-   * the obvious way to write "this colour, faded out". It produced a hard-edged bright WEDGE rather
-   * than a glow, and the reason took a measurement to find. Sampling the rendered gradient's pixels
-   * along its radius:
-   *
-   *   r0  a252 rgb(232,172,0)     r50 a82 rgb(159,118,0)
-   *   r40 a98  rgb(206,151,0)     r80 a32 rgb( 40, 24,0)   ← the HUE is draining, not just alpha
-   *
-   * `transparent` is transparent BLACK, so interpolating toward it drags the colour toward black at
-   * the same time as the alpha falls. Under `lighter` blending a darkening colour contributes less
-   * and less light, so the falloff collapses much faster than the alpha curve suggests — leaving a
-   * bright, hard-edged core with almost nothing around it.
-   *
-   * Re-stating the SAME colour at every stop and varying only the alpha channel keeps the hue
-   * constant across the whole radius, so the light fades out instead of blackening out. The extra
-   * stops trace the inverse-square-ish curve that makes a sprite read as a light source rather than
-   * as a disc — bloodhorn's `glow.ts` gets the same shape from its `0 → 0.35 (0.42) → 1` bake, and
-   * calls that one number "the difference between glow and grey circle with soft edges".
-   */
-  g.addColorStop(0, alphaOf(colour, 1));
-  g.addColorStop(0.18, alphaOf(colour, 0.62));
-  g.addColorStop(0.35, alphaOf(colour, 0.34));
-  g.addColorStop(0.55, alphaOf(colour, 0.15));
-  g.addColorStop(0.78, alphaOf(colour, 0.05));
-  g.addColorStop(1, alphaOf(colour, 0));
-  return g;
-}
-
-/**
- * Attach an alpha to a palette colour that arrives as an `oklch(...)` string.
- *
- * CSS Color 4 relative-alpha syntax — `oklch(L C H / A)` — is the one way to do this without
- * parsing the colour ourselves, and it is supported everywhere `oklch()` itself is (which the
- * palette already requires). The `/ A` is spliced in before the closing paren.
- *
- * Falls back to wrapping the colour in a `color-mix` against a fully transparent copy of ITSELF for
- * any other colour syntax, which preserves the hue for the same reason the caller needs it to:
- * mixing toward bare `transparent` would drag the colour toward black.
- */
-function alphaOf(colour: string, a: number): string {
-  const c = colour.trim();
-  if (c.endsWith(")") && (c.startsWith("oklch(") || c.startsWith("oklab("))) {
-    // Already carries an alpha? Replace it rather than appending a second one.
-    const body = c.slice(c.indexOf("(") + 1, -1).split("/")[0]?.trim() ?? "";
-    return `${c.slice(0, c.indexOf("("))}(${body} / ${a})`;
-  }
-  return `color-mix(in srgb, ${c} ${Math.round(a * 100)}%, rgba(0,0,0,0))`;
-}
 
 /**
  * THE DEN — where a cat brings back what it kills.
@@ -1218,7 +1069,7 @@ function drawDen(ctx: CanvasRenderingContext2D, sim: Sim, palette: Palette, now:
   const { x, y } = sim.den;
   const cx = Math.round(x);
   const cy = Math.round(y);
-  ctx.strokeStyle = palette.rail;
+  ctx.strokeStyle = palette.iris;
   ctx.lineWidth = 1;
   ctx.globalAlpha = 0.7;
   ctx.strokeRect(cx - 22.5, cy - 14.5, 45, 29);
@@ -1292,7 +1143,44 @@ const OUTLINE_OFFSETS: readonly (readonly [number, number])[] = [
  * Not pure `#000`: the ground is `--soot`, a near-black with a green cast, and a pure-black
  * outline on it reads as a hole punched in the field rather than as the animal's own edge.
  */
-const DARK_RAMP: readonly string[] = Array.from({ length: 6 }, () => "oklch(0.09 0.012 145)");
+const DARK_RAMP: readonly string[] = Array.from({ length: RAMP_STEPS }, () => "oklch(0.09 0.012 145)");
+
+/**
+ * ══ THE COAT, WITH THE THEME'S SHADOW END PUT BACK ══
+ *
+ * `catRamp(id, state)` returns eight sRGB hex values: the cat's pigment feathered across the middle
+ * of a fixed base ramp. Its own header explains the asymmetry it deliberately ships with — the
+ * pigment is theme-INDEPENDENT on purpose ("a ginger cat is ginger on white paper"), while the dark
+ * end is the DARK theme's values, and it "leaves the dark end of the ramp untouched by the pigment
+ * precisely so a caller may substitute it."
+ *
+ * This is that caller doing that substitution. On the light theme the two lowest steps are the
+ * cat's contact shadows and its outline, and the dark theme's near-black there is what turns the
+ * animal into a hole punched in pale paper — the flat-silhouette failure both packages record being
+ * caught only by opening the page in both themes.
+ *
+ * Only steps 0 and 1 are swapped. Reaching further up would start overwriting the pigment band
+ * itself (step 4 is where the coat lands), which would undo the coats this exists to preserve.
+ *
+ * Memoised on (id, state, theme-generation): `catRamp` mixes eight colours per call and the world
+ * calls it once per cat per frame.
+ */
+let rampGeneration = 0;
+const coatCache = new Map<string, readonly string[]>();
+
+function coatRamp(id: string, state: CatState, themeRamp: readonly string[]): readonly string[] {
+  const key = `${rampGeneration}:${id}:${state}`;
+  const hit = coatCache.get(key);
+  if (hit !== undefined) return hit;
+  const base = catRamp(id, state);
+  const merged = base.map((c, i) => (i < 2 ? (themeRamp[i] ?? c) : c));
+  if (coatCache.size > 400) {
+    const oldest = coatCache.keys().next().value;
+    if (oldest !== undefined) coatCache.delete(oldest);
+  }
+  coatCache.set(key, merged);
+  return merged;
+}
 
 const gridCache = new Map<string, ReturnType<typeof catGrid>>();
 function cachedGrid(id: string, state: CatState): ReturnType<typeof catGrid> {
@@ -1410,17 +1298,35 @@ function drawStray(
   const facing = twitching ? (body.facing === 1 ? -1 : 1) : body.facing;
 
   /*
-   * ══ THE THREE-PART BODY ══
+   * ══ THE THREE-PART BODY — AND WHY THE MIDDLE PART IS GONE ══
    *
-   * Bloodhorn's `agents.ts` builds every agent as SHADOW → AURA+HALO → SPRITE, drawn in that order,
-   * and states why the order is not negotiable: *"Additive glow with no dark backing produces mush
-   * — the glow washes over the body and the silhouette disappears."* The sprite goes LAST so it
-   * sits on top of its own light.
+   * Ibrahim: *"why are the cats glowing in app route?"*
    *
-   *   1. SHADOW — a dark ellipse on the ground. Without it the cat FLOATS. This is the single
-   *               cheapest cue that a thing is standing on a surface rather than pasted over one.
-   *   2. GLOW   — aura and halo at DECORRELATED rates, so their sum never repeats exactly.
-   *   3. SPRITE — the cat, on top.
+   * This was SHADOW → AURA+HALO → SPRITE, inherited wholesale from bloodhorn's `agents.ts`. The
+   * structure was copied correctly and the REFERENT was not: bloodhorn's agents are MACHINES, lit
+   * from within, so a halo is a statement about what they are. A cat is an ANIMAL. Animals are lit
+   * BY the world, not from inside it, and a glowing one reads as an artifact — a sprite with a
+   * rendering bug — rather than as a creature. No amount of tuning the falloff fixes that, because
+   * the defect is the premise and not the numbers.
+   *
+   * What survives, and why each survives:
+   *
+   *   1. SHADOW — KEPT. Bloodhorn's own comment is right and applies to a cat exactly as it does to
+   *               a machine: *"without it the machine floats"*. A contact shadow is the cheapest
+   *               cue that a thing stands ON a surface rather than being pasted over one, and it is
+   *               an ABSENCE of light, which is something animals genuinely cast.
+   *   2. GROUND RING + STATE PIP — REPLACING the glow. The glow was carrying real information (a
+   *               fed cat amber, a starving cat ember) and simply deleting it would have cost the
+   *               world its at-a-glance state read. So the state is now said by two marks that are
+   *               not light: a thin ring scribed on the GROUND at the cat's feet, and a small
+   *               square pip. Both are opaque, hard-edged and quantised to the pixel grid — the
+   *               same vocabulary as everything else on the field — so they read as notation about
+   *               the animal instead of as emission from it.
+   *   3. SPRITE — the cat, on top, and now the brightest thing in its own footprint.
+   *
+   * `drawGlow` and `radial` are DELETED rather than left unused. A dormant glow helper is an
+   * invitation to reintroduce exactly this bug, and the git history is the correct place for code
+   * that is no longer wanted.
    */
 
   // ── 1. SHADOW ────────────────────────────────────────────────────────────────────────
@@ -1459,49 +1365,71 @@ function drawStray(
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  // ── 2. AURA + HALO ───────────────────────────────────────────────────────────────────
+  // ── 2. THE STATE RING, SCRIBED ON THE GROUND ─────────────────────────────────────────
   /*
-   * The cat's own light, and it CARRIES STATE rather than being decoration — which is the only
-   * reason a glow is allowed on a field whose art direction is otherwise ink, not neon.
+   * The state hue, unchanged from what the glow carried — the SEMANTICS were never the problem.
    *
-   * A cat that is fed glows amber; a starving cat glows ember and DIMMER, because losing your light
-   * is the visible cost of neglect (bloodhorn drains its dormant agents to grey for the same
-   * reason). A hunting cat carries the field's own phosphor. Nothing about a loss is dressed up.
-   *
-   * The two oscillators run at 0.8 and 1.7 — non-harmonic, so they drift in and out of alignment
-   * and the combined brightness never repeats. Driving both from one oscillator collapses it into a
-   * single throb, which is what looks mechanical.
+   * `--fed` amber = this cat ate, `--starve` ember = this cat is losing. One hue, one meaning, and
+   * the rule survives the change of instrument intact. A hunting cat gets the field's own phosphor,
+   * which is a statement that nothing has happened yet rather than a third meaning.
    */
-  /*
-   * `--phos-dim` for a hunting cat, NOT `--rail`.
-   *
-   * `--rail` is a border colour: it sits at L 0.34, barely above the `--soot` ground, so a light
-   * built from it is a light you cannot see — which is what the first version of this shipped. A
-   * light has to be LIGHTER than the thing it falls on or it is not a light. `--phos-dim` (L 0.63)
-   * is the dimmest token in the ramp that still reads as emitted rather than as a surface.
-   */
-  const glowColour =
+  const mark =
     state === "starving" ? palette.starve : state === "fed" ? palette.fed : palette.phosDim;
-  const glowStrength = state === "starving" ? 0.5 : state === "fed" ? 1 : 0.62;
+
   /*
-   * The light is centred on the BODY, not on the sprite cell.
+   * ══ A RING ON THE GROUND IS NOT A GLOW, AND THE DIFFERENCE IS NOT COSMETIC ══
    *
-   * Same correction as the shadow's, from the same measurement: the occupied rows are 4-18 of 24,
-   * so the animal's mass sits slightly ABOVE the cell's centre once the empty rows under the paws
-   * are accounted for. Lighting the cell centre put the halo's bright core on the cat's back, which
-   * read as a lamp behind it rather than as the animal being lit.
+   * A glow is EMITTED: it has no edge, it sits between the viewer and the animal, and it says "this
+   * thing produces light". A ring is INSCRIBED: it lies flat on the ground plane at the cat's feet,
+   * it has a hard edge, and it says "this is where the thing stands" — the vocabulary of a survey
+   * marker, which is precisely the referent this world already uses for its graticule.
+   *
+   * Flattened to 0.34 of its width so it reads as a circle lying ON the ground in perspective
+   * rather than as a hoop standing upright around the cat. That single ratio is what makes it
+   * ground furniture instead of a halo seen edge-on.
+   *
+   * Drawn at the FEET (the same `FEET_Y` correction the shadow uses, and for the same measured
+   * reason) rather than at the sprite cell's centre, so it stays welded to the contact point as the
+   * cat bobs. The shadow and the ring therefore share one anchor and cannot drift apart.
    */
-  const glowY = cy + bob - scale;
-  if (!d.reduced) {
-    const auraScale = 1 + Math.sin(ts * rate * 0.8 + phase) * 0.06;
-    const haloScale = 1 + Math.sin(ts * rate * 1.7 + phase * 1.3) * 0.045;
-    drawGlow(ctx, cx, glowY, w * 0.95 * auraScale, glowColour, glowStrength * (0.85 + breath * 0.3), d.light);
-    drawGlow(ctx, cx, glowY, w * 0.34 * haloScale, glowColour, glowStrength * (0.8 + breath * 0.4), d.light);
-  } else {
-    // Settled: the light is present but perfectly steady. A reduced-motion user gets the same
-    // world, not a different one — the only thing removed is the movement.
-    drawGlow(ctx, cx, glowY, w * 0.95, glowColour, glowStrength * 0.9, d.light);
-    drawGlow(ctx, cx, glowY, w * 0.34, glowColour, glowStrength, d.light);
+  const footY = cy + FEET_Y * scale;
+  const ringPulse = d.reduced ? 0.5 : (Math.sin(ts * rate * 0.9 + phase) + 1) / 2;
+  ctx.save();
+  ctx.strokeStyle = mark;
+  ctx.lineWidth = 1;
+  // Fed reads strongest, starving next, hunting faintest — the ring's PRESENCE is proportional to
+  // how much there is to report, so an ordinary hunting cat is not shouting.
+  const ringAlpha = state === "fed" ? 0.5 : state === "starving" ? 0.42 : 0.2;
+  ctx.globalAlpha = ringAlpha * (0.82 + ringPulse * 0.18);
+  ctx.beginPath();
+  ctx.ellipse(cx, footY, w * 0.42, Math.max(2, w * 0.42 * 0.34), 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  /*
+   * ══ THE STATE PIP — one square, above the shoulder ══
+   *
+   * The ring is ambient and low-contrast by design; on a busy field, at 320px, it is not enough on
+   * its own to answer "which cat is starving" at a glance. The pip is the sharp version of the same
+   * fact: a single hard-edged square at full alpha, on the pixel quantum, with a dark backing plate
+   * so it never dissolves into whatever it happens to be drawn over.
+   *
+   * It is deliberately a SQUARE and not a dot — the field's only round marks are the ring and the
+   * token sweep, and a small bright circle beside a cat would read as another token.
+   *
+   * A HUNTING cat gets no pip at all. "Nothing has happened yet" is the default state of every cat
+   * in the colony and giving it a badge would put a mark on every animal on the field, which is the
+   * fastest way to make the two marks that MATTER invisible.
+   */
+  if (state === "fed" || state === "starving") {
+    const pip = Math.max(2, scale);
+    const px = cx + Math.round(w * 0.30);
+    const py = cy + bob - Math.round(h * 0.30);
+    ctx.fillStyle = "oklch(0.09 0.012 145)";
+    ctx.fillRect(px - pip, py - pip, pip * 3, pip * 3);
+    ctx.fillStyle = mark;
+    ctx.fillRect(px, py, pip * 2, pip * 2);
   }
 
   /*
@@ -1563,7 +1491,16 @@ function drawStray(
     });
   }
 
-  drawCat(ctx, grid, -w / 2, -h / 2 - stretch, scale, { ramp, state });
+  /*
+   * ══ THE CAT IS DRAWN IN ITS OWN COAT ══
+   *
+   * `coatRamp` is `@strays/cat`'s `catRamp(id, state)` with the theme's shadow end spliced back in
+   * (see `blendCoat`). Passing the flat `ramp` here instead — which is what this line used to do —
+   * overrode the package's pigment and painted every cat phosphor green, so a colony of individually
+   * coloured animals rendered as N identical sprites. The bug is invisible locally: the render is
+   * correct, just uniform.
+   */
+  drawCat(ctx, grid, -w / 2, -h / 2 - stretch, scale, { ramp: coatRamp(body.id, state, ramp), state });
   ctx.restore();
 
   /*

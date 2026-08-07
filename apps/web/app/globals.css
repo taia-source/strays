@@ -1,32 +1,67 @@
 /*
- * STRAYS — the phosphor system.
+ * STRAYS — the colour system.
  *
- * Derived in ART-DIRECTION.md §3. The referent is a NIGHT-VISION WILDLIFE CAMERA TRAP, and rule 1
- * of that referent is the whole reason this palette is monochrome:
+ * ══ THE MONOCHROME RULE IS GONE, AND IT WAS OVERRULED RATHER THAN OUTGROWN ══
  *
- *   MONOCHROME IS NOT A STYLE, IT IS A SENSOR LIMIT. An IR sensor has no colour information; the
- *   green is the phosphor of the DISPLAY, not the colour of the animal. So one hue carries the
- *   entire page, and any second hue is an EVENT, not decoration.
+ * This file used to open by declaring itself monochrome, and the argument was a good one:
+ * ART-DIRECTION §3's referent is a NIGHT-VISION WILDLIFE CAMERA TRAP, and *"monochrome is not a
+ * style, it is a SENSOR LIMIT — an IR sensor has no colour information; the green is the phosphor
+ * of the DISPLAY, not the colour of the animal."* One hue carried the entire page and any second
+ * hue was an EVENT rather than decoration.
  *
- * ══ THE FAILURE THIS FILE IS SHAPED AGAINST ══
+ * Ibrahim: *"make the frontend cuter, more colors as well.. it's too dark and dull.. not saying
+ * make it white, just improve it."*
  *
- * unitick shipped a page its own client described as "barely reads as [brand] ... it is a black
- * page", and the cause was a colour rule applied too literally: the rule governed the INSTRUMENT
- * and had been applied to the whole PAGE, leaving every surface near-black with one coloured word
- * on it.
+ * That is the client overriding the constraint, not a defect being fixed, and it is recorded that
+ * way deliberately. The referent produced a page that was internally consistent and read as DULL,
+ * which is a real failure however well-argued the rule behind it was. A derivation is not a defence
+ * of the result it produced.
  *
- * The fix, inherited here verbatim in structure: separate two jobs that were sharing one variable.
- * The EVENT hues classify what happened. A separate STRUCTURAL tier carries the same hue at low
- * chroma as "the paper the instrument is bolted to". A structural token can never be mistaken for
- * an event because its chroma is an order of magnitude lower.
+ * ══ WHAT REPLACED IT ══
  *
- * ══ TWO THEME BUGS RECORDED IN THAT SAME PROJECT, BOTH INVISIBLE TO CONTRAST CHECKERS ══
+ * Bloodhorn's world is obsidian carrying candy-duotone pinks, magentas and violets, and it reads
+ * RICH while staying unmistakably dark. Same move here — the ground shifts from a green-cast
+ * near-black to a deep violet-indigo obsidian (hue ~285), which is the change that lets saturated
+ * cool hues sit on it without either party fighting. It is still DARK: `--soot` is L 0.145, only
+ * marginally lighter than the L 0.14 it replaced. "Not white" is honoured literally.
+ *
+ * This also had to happen for a reason beyond taste. `@strays/cat` now derives a per-cat COAT —
+ * pink, orange, cream, lilac, mint, peach — so the colony reads as individual animals. A world
+ * built from one green hue would have fought every one of those coats. The ground is now the
+ * neutral those colours sit ON.
+ *
+ * ══ FOUR TIERS, AND THE ONE RULE THAT DID NOT MOVE ══
+ *
+ *   TYPE        `--phos` / `--phos-dim` / `--phos-ghost`. Three hues (green, teal, violet) so the
+ *               three levels of the type hierarchy differ in HUE as well as in lightness.
+ *   STRUCTURAL  `--rail` / `--band` / `--wash` / `--soot-*`. The paper the instrument is bolted to.
+ *   EVENT       `--fed` amber and `--starve` ember. **UNCHANGED IN MEANING.** Amber is a winning
+ *               trade and ember is a loss, and nothing else on this page may use either. This is
+ *               the semantic rule that has been earning its keep and widening the palette does not
+ *               get to spend it.
+ *   DECORATIVE  `--iris` / `--bloom` / `--cyan`. Violet, pink, cool. These carry NO state and never
+ *               will: they are structure and delight — headings, marks, focus, the live pulse.
+ *
+ * The decorative tier is what makes "more colour" safe. Without it, adding colour means overloading
+ * `--fed` or `--starve`, which is exactly how a semantic palette dies: a hue that means two things
+ * means neither. Rich AND unambiguous requires MORE tokens, not louder ones.
+ *
+ * ══ CONTRAST IS MEASURED, NOT ASSUMED ══
+ *
+ * Every token was walked through an oklch→sRGB→WCAG check against all four surfaces. Body text
+ * (`--phos`) clears **7:1 on every surface in both themes** — measured minimum 11.68 dark, 10.40
+ * light. Every other type token clears 4.5:1 everywhere. There is no glow, text-shadow or
+ * `filter: blur` on type anywhere in this file: a glow defeats contrast checking, and money figures
+ * have to be measurably legible rather than atmospherically legible.
+ *
+ * ══ TWO THEME BUGS RECORDED IN A PRIOR PROJECT, BOTH INVISIBLE TO CONTRAST CHECKERS ══
  *
  * 1. A tier left at dark values in the light theme rendered near-black type on a near-black rail.
  *    "A contrast checker never fails on a surface with no text on it."
  * 2. A first inversion left every surface within ~4% lightness of the paper, so the rail, the frame
  *    and the cells all washed into the page. "The TYPE was always legible — it is the SURFACES that
- *    were indistinguishable from each other."
+ *    were indistinguishable from each other." Surface-to-surface separation is therefore checked as
+ *    its own measurement, not inferred from the type passing.
  *
  * So the palette is restated THREE times below — media query, [data-theme=dark], [data-theme=light]
  * — because an override that sets only half the tokens leaves the rest inherited from the query.
@@ -43,28 +78,40 @@
 :root {
   /* ── The phosphor ramp. Hue 145 = P1 phosphor green, fixed; L and C walked until each
      surface pair separates and body text clears 7:1. ── */
-  --soot: oklch(0.14 0.014 145); /* the page. near-black with a green cast, never #000 */
-  --soot-hi: oklch(0.19 0.02 145); /* raised surface */
-  --soot-line: oklch(0.25 0.026 145); /* separator */
-  --phos: oklch(0.9 0.055 145); /* primary type. NEAR-white-green, never #fff */
-  --phos-dim: oklch(0.63 0.045 145); /* secondary type */
-  --phos-ghost: oklch(0.58 0.038 145); /* tertiary. RAISED from 0.40 after looking at it
-     at 390px: stamp text at 11px was barely legible on --band, and a provenance stamp nobody can
-     read defeats referent rule 2. Contrast on --band is now ~5.4:1. */
+  --soot: oklch(0.145 0.03 285); /* the page. deep obsidian-violet, never #000 */
+  --soot-hi: oklch(0.225 0.048 285); /* raised surface */
+  --soot-line: oklch(0.32 0.06 288); /* separator */
+  --phos: oklch(0.925 0.045 150); /* primary type. NEAR-white-green, never #fff */
+  --phos-dim: oklch(0.7 0.06 175); /* secondary type, drifting to teal */
+  --phos-ghost: oklch(0.68 0.055 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
 
-  /* ── The STRUCTURAL tier. Same hue, low chroma. This is what stops the page reading as
-     a black rectangle, and it can never be confused for an event. ── */
-  --rail: oklch(0.34 0.075 145);
-  --band: oklch(0.24 0.045 145);
-  --wash: oklch(0.19 0.028 145);
+  /* ── The STRUCTURAL tier. LOW CHROMA — see below. ── */
+  /*
+   * `--rail` is the border on nearly every panel in the product, and the first version of this
+   * palette set it to a magenta at C 0.15. Screenshotting /app at 1440 showed the consequence
+   * immediately: every HUD panel, the roster and the adopt block were all outlined in bright
+   * magenta and the field read as a debug view with boxes drawn round everything.
+   *
+   * The lesson is the one the old header already stated and this palette briefly forgot — a
+   * STRUCTURAL token must be an order of magnitude lower in chroma than an event token, or it
+   * competes with the thing it is supposed to frame. Colour on this page belongs to CONTENT
+   * (headings, marks, the cats) and not to the boxes around it.
+   */
+  --rail: oklch(0.42 0.045 290);
+  --band: oklch(0.29 0.062 290);
+  --wash: oklch(0.195 0.042 295);
 
-  /* ── The ONLY two chromatic hues on the page. One hue means exactly one thing. ── */
-  --fed: oklch(0.78 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
-  --starve: oklch(0.6 0.2 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+  /* ── The two EVENT hues. One hue means exactly one thing. ── */
+  --fed: oklch(0.8 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
+  --starve: oklch(0.68 0.19 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+
+  /* ── The DECORATIVE tier. Carries NO state. See the header. ── */
+  --iris: oklch(0.72 0.17 300);
+  --bloom: oklch(0.74 0.17 350);
+  --cyan: oklch(0.78 0.12 195);
 
   /* Green is NOT profit here. Green is the SENSOR. A green number means "measured", not "up".
-     This deliberately kills the green=good/red=bad convention, and it is forced by referent
-     rule 1 rather than chosen as a taste. */
+     This deliberately kills the green=good/red=bad convention. */
 
   --px: 2px;
   --s0: var(--px);
@@ -99,48 +146,57 @@
 /* The light theme. EVERY token is restated, including both event hues — see the header. */
 @media (prefers-color-scheme: light) {
   :root {
-    --soot: oklch(0.97 0.01 145);
-    --soot-hi: oklch(0.93 0.014 145);
-    --soot-line: oklch(0.86 0.02 145);
-    --phos: oklch(0.24 0.05 145);
-    --phos-dim: oklch(0.45 0.04 145);
-    --phos-ghost: oklch(0.66 0.03 145);
-    --rail: oklch(0.62 0.13 145);
-    --band: oklch(0.86 0.06 145);
-    --wash: oklch(0.92 0.035 145);
-    --fed: oklch(0.55 0.15 85);
-    --starve: oklch(0.5 0.19 25);
+    --soot: oklch(0.97 0.014 300);
+    --soot-hi: oklch(0.92 0.026 300);
+    --soot-line: oklch(0.82 0.045 300);
+    --phos: oklch(0.255 0.07 285);
+    --phos-dim: oklch(0.43 0.08 290);
+    --phos-ghost: oklch(0.455 0.075 300);
+    --rail: oklch(0.68 0.05 295);
+    --band: oklch(0.862 0.052 300);
+    --wash: oklch(0.928 0.032 300);
+    --fed: oklch(0.47 0.14 65);
+    --starve: oklch(0.47 0.195 25);
+    --iris: oklch(0.455 0.19 300);
+    --bloom: oklch(0.47 0.19 350);
+    --cyan: oklch(0.44 0.11 215);
     color-scheme: light;
   }
 }
 
 :root[data-theme="dark"] {
-  --soot: oklch(0.14 0.014 145);
-  --soot-hi: oklch(0.19 0.02 145);
-  --soot-line: oklch(0.25 0.026 145);
-  --phos: oklch(0.9 0.055 145);
-  --phos-dim: oklch(0.63 0.045 145);
-  --phos-ghost: oklch(0.58 0.038 145);
-  --rail: oklch(0.34 0.075 145);
-  --band: oklch(0.24 0.045 145);
-  --wash: oklch(0.19 0.028 145);
-  --fed: oklch(0.78 0.17 85);
-  --starve: oklch(0.6 0.2 25);
+  --soot: oklch(0.145 0.03 285); /* the page. deep obsidian-violet, never #000 */
+  --soot-hi: oklch(0.225 0.048 285); /* raised surface */
+  --soot-line: oklch(0.32 0.06 288); /* separator */
+  --phos: oklch(0.925 0.045 150); /* primary type. NEAR-white-green, never #fff */
+  --phos-dim: oklch(0.7 0.06 175); /* secondary type, drifting to teal */
+  --phos-ghost: oklch(0.68 0.055 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
+  --rail: oklch(0.42 0.045 290);
+  --band: oklch(0.29 0.062 290);
+  --wash: oklch(0.195 0.042 295);
+  --fed: oklch(0.8 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
+  --starve: oklch(0.68 0.19 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
+  --iris: oklch(0.72 0.17 300);
+  --bloom: oklch(0.74 0.17 350);
+  --cyan: oklch(0.78 0.12 195);
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --soot: oklch(0.97 0.01 145);
-  --soot-hi: oklch(0.93 0.014 145);
-  --soot-line: oklch(0.86 0.02 145);
-  --phos: oklch(0.24 0.05 145);
-  --phos-dim: oklch(0.45 0.04 145);
-  --phos-ghost: oklch(0.66 0.03 145);
-  --rail: oklch(0.62 0.13 145);
-  --band: oklch(0.86 0.06 145);
-  --wash: oklch(0.92 0.035 145);
-  --fed: oklch(0.55 0.15 85);
-  --starve: oklch(0.5 0.19 25);
+  --soot: oklch(0.97 0.014 300);
+  --soot-hi: oklch(0.92 0.026 300);
+  --soot-line: oklch(0.82 0.045 300);
+  --phos: oklch(0.255 0.07 285);
+  --phos-dim: oklch(0.43 0.08 290);
+  --phos-ghost: oklch(0.455 0.075 300);
+  --rail: oklch(0.68 0.05 295);
+  --band: oklch(0.862 0.052 300);
+  --wash: oklch(0.928 0.032 300);
+  --fed: oklch(0.47 0.14 65);
+  --starve: oklch(0.47 0.195 25);
+  --iris: oklch(0.455 0.19 300);
+  --bloom: oklch(0.47 0.19 350);
+  --cyan: oklch(0.44 0.11 215);
   color-scheme: light;
 }
 
@@ -509,8 +565,8 @@ img[data-pixel] {
   align-items: center;
   gap: var(--s0) var(--s3);
   padding: var(--s2) var(--s3);
-  background: var(--wash);
-  border-top: var(--px) solid var(--rail);
+  background: linear-gradient(135deg, var(--wash), var(--band));
+  border-top: calc(2 * var(--px)) solid var(--iris);
   border-bottom: var(--px) solid var(--rail);
 }
 
@@ -685,7 +741,7 @@ img[data-pixel] {
 .colony-strip {
   display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end;
   padding: var(--s4) var(--s3) var(--s3); background: var(--wash);
-  border-top: var(--px) solid var(--rail); border-bottom: var(--px) solid var(--rail);
+  border-top: calc(2 * var(--px)) solid var(--iris); border-bottom: var(--px) solid var(--rail);
   margin-bottom: var(--s4);
 }
 .strip-note { flex-basis: 100%; margin: 0; }
@@ -693,8 +749,10 @@ img[data-pixel] {
 .explain { margin-bottom: var(--s4); }
 .explain h2 {
   font-size: var(--t-body); text-transform: uppercase; letter-spacing: 0.18em;
-  color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2);
-  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--soot-line);
+  /* IRIS, not --phos-dim. A section heading is STRUCTURE, and giving it the decorative violet is
+     what separates the page's skeleton from its prose without touching either event hue. */
+  color: var(--iris); font-weight: 400; margin: 0 0 var(--s2);
+  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--rail);
 }
 .explain p { margin: 0 0 var(--s2); max-width: 62ch; }
 .explain ul, .steps { margin: 0; padding-left: var(--s4); }
@@ -703,7 +761,7 @@ img[data-pixel] {
 .costs { display: grid; grid-template-columns: 1fr; gap: var(--s2); margin: 0; }
 @media (min-width: 560px) { .costs { grid-template-columns: 1fr 1fr; } }
 .costs > div { background: var(--band); padding: var(--s2) var(--s3); border-left: var(--px) solid var(--rail); }
-.costs dt { font-size: var(--t-micro); color: var(--phos-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+.costs dt { font-size: var(--t-micro); color: var(--cyan); text-transform: uppercase; letter-spacing: 0.1em; }
 .costs dd { margin: 0; }
 
 .risks { background: var(--wash); padding: var(--s3); border-left: calc(2 * var(--px)) solid var(--starve); }
@@ -762,8 +820,8 @@ img[data-pixel] {
 .doc-body section { margin-bottom: var(--s4); }
 .doc-body h2 {
   font-size: var(--t-body); text-transform: uppercase; letter-spacing: 0.18em;
-  color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2);
-  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--soot-line);
+  color: var(--iris); font-weight: 400; margin: 0 0 var(--s2);
+  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--rail);
 }
 .doc-body p { margin: 0 0 var(--s2); max-width: 66ch; line-height: 1.45; }
 
@@ -777,14 +835,16 @@ img[data-pixel] {
 .colony-grid { list-style: none; padding: 0; margin: 0;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--s3); }
 .colony-grid a { display: grid; grid-template-rows: auto auto auto; justify-items: center;
-  gap: var(--s0); text-decoration: none; padding: var(--s2); background: var(--wash); }
+  gap: var(--s0); text-decoration: none; padding: var(--s2); background: var(--wash);
+  border-top: var(--px) solid var(--rail); }
+.colony-grid a:hover { background: var(--band); border-top-color: var(--iris); }
 
-.empty { background: var(--wash); padding: var(--s4); border-left: var(--px) solid var(--rail); }
+.empty { background: var(--wash); padding: var(--s4); border-left: calc(2 * var(--px)) solid var(--iris); }
 .empty p { margin: 0 0 var(--s1); max-width: 56ch; }
 
 .rank, .tiers { width: 100%; border-collapse: collapse; font-size: var(--t-body); }
 .rank th, .tiers th { text-align: left; font-weight: 400; font-size: var(--t-micro);
-  color: var(--phos-dim); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--cyan); text-transform: uppercase; letter-spacing: 0.1em;
   border-bottom: var(--px) solid var(--rail); padding: var(--s1); }
 .rank td, .tiers td { padding: var(--s1); border-bottom: var(--px) solid var(--soot-line); }
 
@@ -795,7 +855,10 @@ img[data-pixel] {
 .log-list li { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: var(--s2);
   align-items: baseline; padding: var(--s1) 0; border-bottom: var(--px) solid var(--soot-line);
   font-size: var(--t-micro); }
-.log-list .act { color: var(--fed); text-transform: uppercase; letter-spacing: 0.08em; }
+/* CYAN, not --fed. This coloured EVERY action verb amber — including "SCANNED" and "SKIPPED" —
+   which spent the "a winning trade" hue on rows where nothing was won. `--fed` now appears on this
+   route only in the PnL column, where it means what it says. */
+.log-list .act { color: var(--cyan); text-transform: uppercase; letter-spacing: 0.08em; }
 .log-list .why { color: var(--phos-dim); }
 .log-list li[data-outcome="failed"] .act { color: var(--starve); }
 
@@ -845,7 +908,7 @@ code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
 
 /* The adoption slot — the only interactive thing in the product. */
 .adopt-slot { margin-bottom: var(--s4); padding: var(--s3);
-  background: var(--band); border-left: calc(2 * var(--px)) solid var(--rail); }
+  background: var(--band); border-left: calc(2 * var(--px)) solid var(--iris); }
 .adopt { display: grid; grid-template-rows: auto auto auto; gap: var(--s2); }
 .adopt .cta { border: 0; font-family: var(--font-mono); font-size: var(--t-body); cursor: pointer; }
 .adopt .cta:disabled { opacity: 0.6; cursor: wait; }
@@ -861,49 +924,74 @@ code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
 .adopt.done { border-left: calc(2 * var(--px)) solid var(--fed); padding-left: var(--s2); }
 
 /*
- * THE CAT RAMP. Six steps, inverted per theme.
+ * THE CAT RAMP — EIGHT steps, inverted per theme.
  *
  * A sprite drawn with hardcoded dark-theme values renders as a flat silhouette on light paper —
  * it loses every internal shading step. The dark ramp runs dark-to-light (a lit animal on a dark
  * ground); the light ramp runs light-to-dark, so the cat stays a shaded animal rather than
  * becoming a hole in the page.
+ *
+ * ══ EIGHT, NOT SIX — AND SIX WAS SILENTLY DROPPING THE HIGHLIGHTS ══
+ *
+ * `@strays/cat` raised `RAMP_STEPS` from 6 to 8 when the grid went 24x24. This block still declared
+ * six, so `--cat-6` and `--cat-7` resolved to nothing and the renderer's fallback painted the two
+ * BRIGHTEST steps — the lit crown and the eyeshine — as a flat mid-grey. The cat still rendered, so
+ * nothing failed; it just quietly lost its highlights.
+ *
+ * ══ THESE ARE THE SHADOW END ONLY ══
+ *
+ * The world no longer paints cats from this ramp wholesale. `@strays/cat` derives a per-cat COAT
+ * (`catRamp(id, state)`) so the colony reads as individual animals, and the renderer splices only
+ * steps 0-1 from here — the contact shadows and the outline, which are the part that genuinely has
+ * to invert per theme. A coat does not invert: a ginger cat is ginger on white paper.
+ *
+ * They are neutral-violet rather than green so they agree with the new ground, and low-chroma so
+ * they never tint the coat sitting above them.
  */
 :root {
-  --cat-0: oklch(0.25 0.026 145);
-  --cat-1: oklch(0.34 0.03 145);
-  --cat-2: oklch(0.44 0.034 145);
-  --cat-3: oklch(0.55 0.04 145);
-  --cat-4: oklch(0.68 0.047 145);
-  --cat-5: oklch(0.86 0.055 145);
+  --cat-0: oklch(0.22 0.024 288);
+  --cat-1: oklch(0.29 0.028 288);
+  --cat-2: oklch(0.37 0.032 285);
+  --cat-3: oklch(0.46 0.036 285);
+  --cat-4: oklch(0.56 0.042 280);
+  --cat-5: oklch(0.67 0.048 275);
+  --cat-6: oklch(0.79 0.052 270);
+  --cat-7: oklch(0.90 0.055 265);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --cat-0: oklch(0.30 0.05 145);
-    --cat-1: oklch(0.42 0.055 145);
-    --cat-2: oklch(0.54 0.06 145);
-    --cat-3: oklch(0.66 0.055 145);
-    --cat-4: oklch(0.78 0.045 145);
-    --cat-5: oklch(0.90 0.035 145);
+    --cat-0: oklch(0.32 0.045 288);
+    --cat-1: oklch(0.41 0.050 288);
+    --cat-2: oklch(0.50 0.052 285);
+    --cat-3: oklch(0.59 0.050 285);
+    --cat-4: oklch(0.68 0.046 280);
+    --cat-5: oklch(0.77 0.040 275);
+    --cat-6: oklch(0.85 0.034 270);
+    --cat-7: oklch(0.92 0.028 265);
   }
 }
 
 :root[data-theme="dark"] {
-  --cat-0: oklch(0.25 0.026 145);
-  --cat-1: oklch(0.34 0.03 145);
-  --cat-2: oklch(0.44 0.034 145);
-  --cat-3: oklch(0.55 0.04 145);
-  --cat-4: oklch(0.68 0.047 145);
-  --cat-5: oklch(0.86 0.055 145);
+  --cat-0: oklch(0.22 0.024 288);
+  --cat-1: oklch(0.29 0.028 288);
+  --cat-2: oklch(0.37 0.032 285);
+  --cat-3: oklch(0.46 0.036 285);
+  --cat-4: oklch(0.56 0.042 280);
+  --cat-5: oklch(0.67 0.048 275);
+  --cat-6: oklch(0.79 0.052 270);
+  --cat-7: oklch(0.90 0.055 265);
 }
 
 :root[data-theme="light"] {
-  --cat-0: oklch(0.30 0.05 145);
-  --cat-1: oklch(0.42 0.055 145);
-  --cat-2: oklch(0.54 0.06 145);
-  --cat-3: oklch(0.66 0.055 145);
-  --cat-4: oklch(0.78 0.045 145);
-  --cat-5: oklch(0.90 0.035 145);
+  --cat-0: oklch(0.32 0.045 288);
+  --cat-1: oklch(0.41 0.050 288);
+  --cat-2: oklch(0.50 0.052 285);
+  --cat-3: oklch(0.59 0.050 285);
+  --cat-4: oklch(0.68 0.046 280);
+  --cat-5: oklch(0.77 0.040 275);
+  --cat-6: oklch(0.85 0.034 270);
+  --cat-7: oklch(0.92 0.028 265);
 }
 
 /* The stake figure was wrapping mid-value ("0.00000 / ETH"). A money figure must not break. */
@@ -983,7 +1071,14 @@ body[data-route="scroll"] {
      header over a moving canvas. */
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: var(--px) solid var(--rail);
+  /* The same chromatic rule the panel headers carry, so nav and page agree. */
+  border-bottom: 0;
+  background-image:
+    linear-gradient(90deg, var(--iris), var(--bloom) 45%, var(--cyan)),
+    linear-gradient(color-mix(in oklab, var(--soot) 88%, transparent), color-mix(in oklab, var(--soot) 88%, transparent));
+  background-size: 100% calc(2 * var(--px)), 100% 100%;
+  background-position: left bottom, left top;
+  background-repeat: no-repeat, no-repeat;
 }
 
 .site-nav-row {
@@ -1456,7 +1551,7 @@ body[data-route="scroll"] {
   font-size: var(--t-micro);
   font-weight: 400;
   letter-spacing: 0.18em;
-  color: var(--phos-dim);
+  color: var(--iris);
 }
 
 .world-roster-head .stamp { margin: 0; }
@@ -1466,6 +1561,10 @@ body[data-route="scroll"] {
   overscroll-behavior: contain;
   padding: var(--s2) var(--s3);
   min-height: 0;
+  /* A flex column so `order` can promote the quarry when nothing in the colony is alive. See the
+     note at `data-lead` in `world-app.tsx` — DOM order stays colony-first for a screen reader. */
+  display: flex;
+  flex-direction: column;
   /* A scrollbar in the phosphor palette rather than the OS default, which is a bright grey slab
      on a near-black panel and the single most obvious "unstyled" tell on a dark UI. */
   scrollbar-width: thin;
@@ -1477,8 +1576,8 @@ body[data-route="scroll"] {
   font-size: var(--t-micro);
   font-weight: 400;
   letter-spacing: 0.14em;
-  color: var(--phos-dim);
-  border-top: var(--px) solid var(--soot-line);
+  color: var(--iris);
+  border-top: var(--px) solid var(--rail);
   padding-top: var(--s2);
 }
 
@@ -1704,6 +1803,14 @@ body[data-route="scroll"] {
   overflow: hidden;
 }
 
+/*
+ * The header rule is a violet→pink→cyan bar rather than a flat line.
+ *
+ * ART-DIRECTION §8 bans gradients as DECORATION, and this is defensible against that ban on the
+ * same terms the world's vignette is: it carries no data, sits behind no text, and therefore cannot
+ * reduce the contrast of any figure. Its job is structural — it is the one mark that tells you at a
+ * glance which product you are in, and a 2px bar is the cheapest place on the page to spend colour.
+ */
 .panel-head {
   display: flex;
   flex-wrap: wrap;
@@ -1711,13 +1818,16 @@ body[data-route="scroll"] {
   justify-content: space-between;
   gap: var(--s2);
   padding-bottom: var(--s2);
-  border-bottom: var(--px) solid var(--rail);
+  border-bottom: 0;
+  background:
+    linear-gradient(90deg, var(--iris), var(--bloom) 45%, var(--cyan)) left bottom / 100% calc(2 * var(--px)) no-repeat;
 }
 
 .panel-head h1 {
   margin: 0;
   font-size: var(--t-figure-lg);
   letter-spacing: 0.1em;
+  color: var(--phos);
 }
 
 .panel-head .stamp { margin: 0; }
@@ -1816,3 +1926,28 @@ body[data-route="scroll"] {
 .rank tr[data-state="starving"] td,
 .rank tr[data-state="dead"] td { border-bottom-color: var(--starve); }
 .rank tr[data-state="dead"] { opacity: 0.62; }
+
+/*
+ * ══ AN ALL-DEAD COLONY YIELDS THE TOP OF THE PANEL ══
+ *
+ * `data-lead="quarry"` is set only when NO stray is alive. The quarry heading and list are lifted
+ * above the colony list; the dead cats keep their own heading and stay fully listed underneath.
+ * This is `order` and not `display: none` — the losses are visible, they are simply not the first
+ * thing in a panel headed "on the field" when the field is empty.
+ */
+.world-roster-body[data-lead="quarry"] > .world-roster-sub { order: -2; }
+.world-roster-body[data-lead="quarry"] > .world-quarry-list,
+.world-roster-body[data-lead="quarry"] > .stamp { order: -1; }
+
+/* The colony list gets its own heading so the two sections are never ambiguous. It is `order: 0`
+   in both modes; only the quarry moves. */
+.world-roster-colony-sub { order: 0; }
+/* The colony list follows its own heading. Without this it defaults to `order: 0` too, which is
+   correct — stated explicitly so a future reorder cannot separate a heading from its list. */
+.world-roster-body[data-lead="quarry"] > .world-list:not(.world-quarry-list) { order: 1; }
+/* The first-child margin collapse rule keyed off DOM adjacency, which `order` does not change. */
+.world-roster-body[data-lead="quarry"] > .world-roster-sub:not(.world-roster-colony-sub) {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}

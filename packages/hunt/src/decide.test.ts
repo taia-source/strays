@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EDGE_MULTIPLE } from "./bar.js";
 import { type Candidate, decide, type DecideConfig, type Market } from "./decide.js";
 import { DEFAULT_ELIGIBILITY } from "./eligible.js";
 import { DEFAULT_SCREEN } from "./screen.js";
@@ -761,5 +762,50 @@ describe("decide — refusal paths that must stay reachable", () => {
     expect(d.reason).toContain("0xSeed");
     expect(d.reason).toContain("0xTrap");
     expect(d.reason).toContain("0xFlat");
+  });
+});
+
+describe("edgeMultiple is CONFIG, and the bar and the target must read the SAME one", () => {
+  it("defaults to EDGE_MULTIPLE when the caller does not set it", async () => {
+    const withDefault = await decide(state(), market(), cfg());
+    const withExplicit = await decide(state(), market(), cfg({ edgeMultiple: EDGE_MULTIPLE }));
+    expect(withDefault.kind).toBe("enter");
+    if (withDefault.kind !== "enter" || withExplicit.kind !== "enter") {
+      throw new Error("expected both to enter");
+    }
+    // Passing the default explicitly must be indistinguishable from omitting it, or the option
+    // has quietly changed behaviour for every existing caller.
+    expect(withExplicit.bar.multiple).toBe(withDefault.bar.multiple);
+    expect(withExplicit.bar.requiredWei).toBe(withDefault.bar.requiredWei);
+  });
+
+  it("THE CONFIGURED MULTIPLE REACHES THE BAR — it is not silently replaced by the constant", async () => {
+    // The sabotage this pins (S54) is `const edgeMultiple = EDGE_MULTIPLE`, which ignores config
+    // and hands every caller the default bar while appearing to accept the option.
+    const d = await decide(state(), market(), cfg({ edgeMultiple: 5n }));
+    if (d.kind !== "enter") throw new Error("expected an entry");
+    expect(d.bar.multiple).toBe(5n);
+    expect(d.bar.requiredWei).toBe(d.cost.totalWei * 5n);
+  });
+
+  it("THE BAR AND THE TAKE-PROFIT FLOOR AGREE — a fired trade always aims past its own bar", async () => {
+    // The sabotage this pins (S55) sets the bar's multiple to 1 while the take-profit floor keeps
+    // the configured one. That combination lets a trade fire against a target that does not cover
+    // `multiple x cost`, which is the exact condition the bar exists to prevent.
+    for (const edgeMultiple of [1n, 2n, 3n, 5n]) {
+      const d = await decide(state(), market(), cfg({ edgeMultiple }));
+      if (d.kind !== "enter") throw new Error(`expected an entry at multiple ${edgeMultiple}`);
+      expect(d.bar.multiple).toBe(edgeMultiple);
+      // The expected gain is derived from the take-profit target, and the bar requires
+      // `multiple x cost`. If the two multiples ever diverge, this equality breaks.
+      expect(d.bar.requiredWei).toBe(d.cost.totalWei * edgeMultiple);
+      expect(d.signal.expectedGainWei).toBeGreaterThanOrEqual(d.bar.requiredWei);
+    }
+  });
+
+  it("refuses a multiple below 1 — a bar beneath the cost it exists to clear", async () => {
+    await expect(decide(state(), market(), cfg({ edgeMultiple: 0n }))).rejects.toThrow(
+      /refusing an edge multiple/,
+    );
   });
 });

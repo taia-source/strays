@@ -23,7 +23,7 @@
 import type { Metadata } from "next";
 import { listStrays } from "../lib/chain";
 import { fetchQuarry } from "../lib/quarry";
-import type { WorldPayload } from "../api/world/route";
+import { projectQuarry, type WorldPayload } from "../api/world/route";
 import { WorldApp } from "../world/world-app";
 import { Adopt } from "../adopt";
 
@@ -69,29 +69,18 @@ export default async function AppWorld() {
                 ? colonyResult.reason.message
                 : String(colonyResult.reason),
           },
-    /* Explicit branches, not a nested ternary — see the note in `api/world/route.ts` for why the
-       ternary form cannot narrow the else arm. */
-    quarry: ((): WorldPayload["quarry"] => {
-      if (quarryResult.status === "rejected") {
-        const err = quarryResult.reason;
-        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
-      }
-      const read = quarryResult.value;
-      if (!read.ok) return { ok: false, reason: read.reason };
-      return {
-        ok: true,
-        tokens: read.tokens.map((t) => ({
-          address: t.address,
-          symbol: t.symbol,
-          name: t.name,
-          marketCapEth: t.marketCapEth,
-          change24hPct: t.change24hPct,
-          taxPct: t.taxPct,
-          huntable: t.huntable,
-        })),
-        scanned: read.scanned,
-      };
-    })(),
+    /* `projectQuarry` is SHARED with `/api/world` so the server-rendered first frame and every
+       subsequent poll cannot describe the quarry differently. See its header. */
+    quarry:
+      quarryResult.status === "rejected"
+        ? {
+            ok: false,
+            reason:
+              quarryResult.reason instanceof Error
+                ? quarryResult.reason.message
+                : String(quarryResult.reason),
+          }
+        : projectQuarry(quarryResult.value),
     at: Date.now(),
   };
 

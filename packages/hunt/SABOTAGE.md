@@ -17,10 +17,11 @@ restores the file. Machine-readable output lands in `sabotage-results.json`.
 
 ## Result
 
-**53 / 53 caught** after three fixes. Three sabotages escaped on a first run; all three are recorded
+**55 / 55 caught** after five fixes. Five sabotages escaped on a first run; all five are recorded
 in full below, with what was wrong and what changed.
 
-S1–S37 are the original suite (two escapes, S5 and S12). **S38–S53 were added by the REBUILD** —
+S1–S37 are the original suite (two escapes, S5 and S12). **S54–S55 were added when `edgeMultiple`
+became configuration** — see the note under the table. **S38–S53 were added by the REBUILD** —
 the sell simulation, the concentration screen, the scoring model, and the two real bugs the rebuild
 uncovered. One of those escaped (S47) and the check it exposed as decoration was fixed.
 
@@ -88,7 +89,9 @@ target the checks that replaced it. A sabotage whose pattern no longer matches r
 | S50 | `decide.ts` | Enter the FIRST survivor, not the best-ranked | CAUGHT (2) | CAUGHT (2) |
 | S51 | `decide.ts` | Buy the least-bad token when none has a positive edge | CAUGHT (5) | CAUGHT (5) |
 | S52 | `decide.ts` | **REGRESSION:** cost the exit against config, not the position's tier | CAUGHT (1) | CAUGHT (1) |
-| S53 | `signal.ts` | **REGRESSION:** re-truncate the take-profit cost floor downward | CAUGHT (2) | CAUGHT (2) |
+| S53 | `signal.ts` | **REGRESSION:** re-truncate the take-profit cost floor downward | CAUGHT (2) | CAUGHT (4) |
+| S54 | `decide.ts` | Ignore the configured `edgeMultiple`, fall back to the constant | **ESCAPED** | **CAUGHT (3)** |
+| S55 | `decide.ts` | Let the entry BAR and the take-profit FLOOR read different multiples | **ESCAPED** | **CAUGHT (3)** |
 
 `(n)` is the number of tests that went red.
 
@@ -317,3 +320,37 @@ Honesty about scope:
   in this package.** The design limits the exposure — a breakout only requires volatility
   clustering, not directional momentum, and the cost bar refuses anything that cannot pay — but the
   honest statement is that it is argued, not measured.
+
+
+---
+
+## S54 and S55 — added when `EDGE_MULTIPLE` became configuration, and both escaped
+
+`@strays/backtest` reported that `EDGE_MULTIPLE` could not be swept: `decide()` read the
+module-level constant directly rather than taking it from `DecideConfig`, so a backtest had no way
+to vary it without editing this package. It is now `DecideConfig.edgeMultiple`, optional and
+defaulting to the derived `EDGE_MULTIPLE` so every existing caller is unchanged.
+
+A new option needs new checks, and **the first run proved there were none**: both sabotages
+escaped a suite that was otherwise catching 53 of 53.
+
+- **S54** replaces `cfg.edgeMultiple ?? EDGE_MULTIPLE` with the bare constant. The option is still
+  accepted by the type system and silently ignored. Nothing failed, because no test had ever set
+  it to a non-default value and then asserted on the result.
+- **S55** is the subtler one. `decide()` uses the multiple TWICE — once for the entry bar
+  (`clearsBar`) and once for the take-profit floor (`levelsFor`). S55 lets them disagree. The
+  result is a trade that fires against a target which does not cover `multiple × cost`, which is
+  precisely the condition the bar exists to prevent, and it is invisible unless a test asserts the
+  two are the same number.
+
+Four tests in `decide.test.ts` now pin this: the default is unchanged when the option is omitted,
+the configured value reaches `bar.multiple` and `bar.requiredWei`, the bar and the target agree at
+every multiple tested (`expectedGainWei >= requiredWei`), and a multiple below 1 is refused.
+
+**The finding this exposed is worth more than the fix.** With the option threaded and sweepable,
+`@strays/backtest` swept it and every row was still identical — because `levelsFor` floors the
+take-profit at `cost × multiple / position` while `evaluateEntry` defines
+`expectedGain = position × takeProfitBps`. The gain the bar tests IS the requirement it tests
+against, so **the cost bar cannot refuse a long signal at any tax tier, position size or
+multiple** — 0 refusals in 72 combinations, pinned by test in `replay.test.ts`. `EDGE_MULTIPLE`
+moves the exit target; it is not, and never was, a selectivity control.

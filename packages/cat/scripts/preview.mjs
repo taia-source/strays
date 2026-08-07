@@ -119,7 +119,7 @@ function cellFor(id, state, frame) {
     id,
     state,
     frame,
-    posture: geometryFor(id).posture,
+    coat: geometryFor(id).coat,
     ramp,
     accent: accent === undefined ? null : oklchToRgb(accent),
     px: catGrid(id, { state, frame }).map((p) => [p.x, p.y, p.step, p.accent === true ? 1 : 0]),
@@ -147,22 +147,27 @@ for (const state of STATES) {
 /**
  * SHEET 2 — the axes that only exist ACROSS renders.
  *
- * A posture axis and a frame axis are both invisible on a single-frame sheet by construction: you
- * cannot see that a tail flicked by looking at one picture of a tail. The ids here are chosen — one
- * per posture — rather than taken from the head of `IDS`, because the whole point is coverage of the
- * axis, and a hash-ordered sample of twelve ids happened to contain no `stretch` at all.
+ * An IDLE FRAME axis is invisible on a single-frame sheet by construction: you cannot see that a
+ * tail flicked by looking at one picture of a tail. The ids here are chosen — one per COAT PATTERN —
+ * rather than taken from the head of `IDS`, because the whole point is coverage of the axis, and a
+ * hash-ordered sample of twelve ids can easily contain no `tortie` at all.
+ *
+ * The POSTURE axis this sheet used to cover no longer exists. Front-on, a sitting cat and a standing
+ * cat differ by about one row of leg, so the four postures were four nearly-identical sprites; the
+ * budget they were spending went to head width, cheek fluff and three more pigments. Coat pattern is
+ * what replaced them as the axis that most needs deliberate coverage.
  */
-const POSTURE_IDS = (() => {
-  const want = ["sit", "stand", "crouch", "stretch"];
+const COAT_IDS = (() => {
+  const want = ["solid", "tabby", "patched", "tortie"];
   const found = new Map();
-  // A deterministic scan over a wide id space, so the sheet covers every posture without any id
-  // being hand-picked to flatter the render.
+  // A deterministic scan over a wide id space, so the sheet covers every coat without any id being
+  // hand-picked to flatter the render.
   for (let i = 0; i < 4000 && found.size < want.length; i++) {
     const id = `stray-${i}`;
-    const p = geometryFor(id).posture;
-    if (want.includes(p) && !found.has(p)) found.set(p, id);
+    const c = geometryFor(id).coat;
+    if (want.includes(c) && !found.has(c)) found.set(c, id);
   }
-  return want.map((p) => found.get(p) ?? "stray-1");
+  return want.map((c) => found.get(c) ?? "stray-1");
 })();
 
 const poses = {
@@ -170,14 +175,14 @@ const poses = {
   gridH: GRID_H,
   soot: SOOT,
   rows: Array.from({ length: CAT_FRAMES }, (_, f) => `frame ${f}`),
-  cols: POSTURE_IDS.map((id) => `${geometryFor(id).posture}`),
-  scales: [[5, "120px (5x) — postures across idle frames"]],
+  cols: COAT_IDS.map((id) => `${geometryFor(id).coat}`),
+  scales: [[5, "120px (5x) — coat patterns across idle frames"]],
   cells: [],
 };
 for (let frame = 0; frame < CAT_FRAMES; frame++) {
-  // `fed` rather than `hunting`: the hunting state FORCES every cat to crouch (see `stateGeometry`),
-  // so a posture sheet drawn in `hunting` shows four crouches and proves nothing about the axis.
-  for (const id of POSTURE_IDS) poses.cells.push(cellFor(id, "fed", frame));
+  // `fed` rather than `hunting`: the states override the ear angle, and a sheet meant to show the
+  // frame axis should not have a state fighting it.
+  for (const id of COAT_IDS) poses.cells.push(cellFor(id, "fed", frame));
 }
 
 const PY = `

@@ -391,7 +391,15 @@ export async function replayToken(
 
     const decision = await decide(state, market, cfg);
 
-    if (decision.kind === "enter") {
+    if (decision.kind === "enter" && decision.score.totalBps >= params.minScoreBps) {
+      // SELECTIVITY. The real `decide()` produced this score from decision-time inputs only; the
+      // threshold refuses the entry below it. A refused entry is NOT recorded to the ledger and
+      // costs nothing — declining is free, which is the whole point of trading fewer, better.
+      entryContext = {
+        scoreBps: decision.score.totalBps,
+        volumeWei: cumulativeVolumeWei,
+        barsBefore: barsSeen,
+      };
       // Do NOT fill here. Record the intent; the next bar fills it.
       pendingEntry = { sizeWei: decision.sizeWei, decidedAtBar: i };
       await ledger.record({
@@ -400,11 +408,57 @@ export async function replayToken(
         amountWei: decision.sizeWei,
         atSeconds: bar.ts,
       });
-    } else if (decision.kind === "exit" && state.position !== undefined) {
+    } else if (state.position !== undefined) {
       const position = state.position;
+      // ── WHY THE EXIT IS RE-DERIVED HERE RATHER THAN TAKEN FROM `decision` ALONE.
+      //
+      // `decide()` owns the stop and the take-profit and this replay does not second-guess it.
+      // What it adds is two things `decide()` has no concept of:
+      //
+      //  1. `stopMode: "none"` — SUPPRESSING the stop, to measure whether a stop that gaps
+      //     through its level by 800bps is subtracting value. `decide()` still fires the exit;
+      //     the replay declines to act on a stop-reasoned exit in this mode. It NEVER suppresses
+      //     a take-profit, and it never suppresses an exit in `"level"` mode, so the shipped
+      //     safety property — getting out is always allowed — is preserved by default and the
+      //     suppression is a labelled experimental arm, not a silent relaxation.
+      //
+      //  2. A TIME EXIT. A hold horizon is a backtest question about amortising a fixed toll, not
+      //     a risk control, so it lives here rather than in the strategy.
+      //
+      //  3. A TAKE-PROFIT OVERRIDE. A longer hold needs a larger target or it exits on noise
+      //     before the horizon is reached, which would make every hold arm report the same thing.
+      //     The override REPLACES `decide()`'s derived target; it never removes the stop.
+      const isStop = decision.kind === "exit" && decision.reason.startsWith("STOP");
+      const isTakeProfit = decision.kind === "exit" && !isStop;
+      const heldSeconds = bar.ts - position.openedAtSeconds;
+      const timeExpired = heldSeconds >= params.maxHoldSeconds;
+      const stopAllowed = params.stopMode === "level";
+
+      // The mark is the LAST OBSERVED price, bar i-1 — the same one `decide()` was handed. Using
+      // bar `i`'s price here would be the lookahead the whole harness exists to exclude.
+      const markPriceWei = bars[i - 1]?.priceWei;
+      const overrideTp = params.takeProfitBps;
+      const moveBps =
+        markPriceWei === undefined
+          ? undefined
+          : ((markPriceWei - position.entryPriceWei) * BPS) / position.entryPriceWei;
+      // With an override in force, `decide()`'s own take-profit is IGNORED and this one governs.
+      const tpFired =
+        overrideTp === undefined
+          ? isTakeProfit
+          : moveBps !== undefined && moveBps >= overrideTp;
+      const stopFiredHere = isStop && stopAllowed;
+
+      const acting = tpFired || stopFiredHere || timeExpired;
+      if (!acting) {
+        advance();
+        continue;
+      }
       // Exit fills at THIS bar's price — the decision was taken on the previous bar's mark.
-      const t = settle(token, position, bar, entryBar, i, params);
-      trades.push(t);
+      const t = settle(token, position, bar, entryBar, i, params, entryContext);
+      trades.push(
+        stopFiredHere || tpFired ? t : { ...t, exitReason: "time-exit" as const },
+      );
       const proceeds =
         (position.entryWei * (BPS + (t.netBps < -BPS ? -BPS : t.netBps))) / BPS;
       const compartmentWei = state.compartmentWei + (proceeds > 0n ? proceeds : 0n);
@@ -427,7 +481,7 @@ export async function replayToken(
     const last = bars[bars.length - 1];
     if (last !== undefined) {
       trades.push({
-        ...settle(token, state.position, last, entryBar, bars.length - 1, params),
+        ...settle(token, state.position, last, entryBar, bars.length - 1, params, entryContext),
         exitReason: "end-of-data",
       });
     }
@@ -442,6 +496,7 @@ function settle(
   entryBarIdx: number,
   exitBarIdx: number,
   params: ReplayParams,
+  entryContext: { scoreBps: bigint; volumeWei: bigint; barsBefore: number },
 ): Trade {
   const grossBps =
     ((exitBar.priceWei - position.entryPriceWei) * BPS) / position.entryPriceWei;
@@ -468,6 +523,10 @@ function settle(
     netBps,
     exitReason: grossBps <= -params.stopLossBps ? "stop" : "take-profit",
     barsHeld: exitBarIdx - entryBarIdx,
+    scoreBps: entryContext.scoreBps,
+    volumeBeforeWei: entryContext.volumeWei,
+    barsBefore: entryContext.barsBefore,
+    heldSeconds: exitBar.ts - position.openedAtSeconds,
   };
 }
 

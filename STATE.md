@@ -119,8 +119,45 @@ Three cost-model omissions are declared incomplete (historical slippage, reverts
 impact) and **all three bias the result in the strategy's favour** — true performance is worse than
 −117bps, not better.
 
-**What would have to be true to win:** cost falling to ≤125bps, which is not reachable on this
-venue. The one untested direction is **selectivity** — p75/p90 of net returns are +655/+1125bps, so
+### ROUND 2: every remaining lead tested and refuted. The binding constraint is the venue.
+
+All five leads were tested on a proper train/test split (day 19.7). **Four refuted outright:**
+
+| lead | TRAIN result (baseline −120bps) |
+|---|---|
+| selectivity by score | **−252 … −366 bps — the score is ANTI-predictive** |
+| volume / holder floors | **monotonically worse as they tighten** |
+| stop removed or widened | −190 bps — worse than keeping it |
+| `EDGE_MULTIPLE` | no effect — and the reason is structural, below |
+| wide take-profit | +296 bps — the ONLY positive arm |
+
+**And the positive arm is survivorship, which I verified myself rather than take on trust.** It
+holds out of sample at +234bps (n=1021) — but *random* entries on the same universe with the same
+exit earn **+227bps, Welch t = 0.08**. A coin flip earns the same return. Measured directly from
+the corpus:
+
+```
+tokens ending UP over the window   280 / 461  (61%)
+mean buy-and-hold                  +31,681 bps
+random entry, wide take-profit     +264 bps    <-- NO STRATEGY AT ALL
+```
+
+The universe is the union of *today's* mcap/trending lists, so it contains only tokens that
+survived to be listed. **The bias is larger than the entire apparent edge.**
+
+**The decay curve is the most important table in the report.** The signal's edge over random is
+**t = 4.65** at the shipped horizon — stronger on held-out data than round 1's 2.63 — and decays to
+**0.08** exactly where the strategy becomes profitable. Widening the take-profit does not harvest
+the signal; it **discards** it and replaces it with a payoff a coin flip captures equally well.
+
+**A structural finding worth more than the tuning: the entry bar has never worked.** `EDGE_MULTIPLE`
+was threaded through config and the rows were *still* identical, because `levelsFor` floors the
+take-profit at `cost × multiple / position` while `evaluateEntry` defines
+`expectedGain = position × takeProfitBps` — the bar compares a number against itself. **0 refusals
+across 72 combinations of tax tier, size and multiple**, now pinned by a test.
+
+**What would have to be true to win:** cost falling to ≤145bps (the measured held-out edge), which is
+not reachable on this venue — The one untested direction is **selectivity** — p75/p90 of net returns are +655/+1125bps, so
 a profitable subset exists; whether it is identifiable *in advance* is unknown and must be run on
 held-out data. Retuning lookback, stop or drawdown will not work: all three were swept and lose
 across their entire range.

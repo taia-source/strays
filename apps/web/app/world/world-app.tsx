@@ -44,6 +44,20 @@ const WorldCanvas = dynamic(() => import("./world-canvas").then((m) => m.WorldCa
 
 const POLL_MS = 5000;
 
+/**
+ * A 24h volume figure, at a precision that stays readable in a 30ch panel.
+ *
+ * The live pad spans four orders of magnitude in this one column (measured: 4139Ξ down to 0.0Ξ), so
+ * a fixed decimal count either wastes the width on the large figures or rounds the small ones to
+ * nothing — and "0.00" on a token with 0.004Ξ of volume is a rounding artefact that reads as a
+ * measurement. Precision therefore scales with magnitude.
+ */
+function fmtVol(v: number): string {
+  if (v >= 100) return Math.round(v).toString();
+  if (v >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
 export function WorldApp({
   initial,
   adopt,
@@ -214,7 +228,17 @@ export function WorldApp({
                 <span className="fig">{quarry.tokens.length}</span>
                 <span className="world-sub"> on field · </span>
                 <span className="fed">{huntableCount} huntable</span>
-                <span className="world-sub"> of {quarry.scanned} scanned</span>
+                {/*
+                  BOTH denominators, because they answer different questions: `considered` is how
+                  many tokens cleared the market-cap prefilter and were actually assessed, and
+                  `scanned` is how many rows the three merged sorts returned in total. Printing only
+                  the larger one made "14 huntable of 40 scanned" sound like a 35% hit rate on the
+                  whole pad, which was never what it measured.
+                */}
+                <span className="world-sub">
+                  {" "}
+                  of {quarry.considered} live · {quarry.scanned} scanned
+                </span>
               </>
             ) : (
               <span className="starve">unreadable</span>
@@ -299,7 +323,31 @@ export function WorldApp({
           </p>
         </header>
 
-        <div className="world-roster-body">
+        <div className="world-roster-body" data-lead={liveStrays === 0 ? "quarry" : "colony"}>
+          {/*
+            ══ WHEN NOTHING IS ALIVE, THE QUARRY LEADS ══
+
+            Measured at 390px on the deployed page with the real vault: the colony is 8 strays and
+            ALL EIGHT are dead, so the roster rendered eight rows of "0.00000 ETH dead" and the
+            quarry — the only live thing on the page, and the whole subject of the fix above — was
+            entirely below the fold of an internally-scrolling panel.
+
+            That is the same defect the sort below already fixed one level down ("six withdrawn
+            strays filled the panel above the one live cat"), just at a scale the sort cannot reach:
+            when EVERY cat is dead there is no living cat for it to promote. Ordering within the
+            colony list cannot fix a colony that is entirely dead.
+
+            The dead are NOT hidden — DESIGN §2 requires losses stay visible, and they are all still
+            listed, in full, immediately below. They simply stop being the first thing in a panel
+            whose header promises "on the field". `order` on the flex/grid children does it in CSS
+            so the DOM order — which is what a screen reader follows — still reads colony-then-
+            quarry, matching the heading structure.
+          */}
+          {colony.ok && colony.strays.length > 0 ? (
+            <h3 className="world-roster-sub world-roster-colony-sub">
+              {liveStrays === 0 ? "THE COLONY — all starved out" : "THE COLONY"}
+            </h3>
+          ) : null}
           {colony.ok && colony.strays.length > 0 ? (
             <ul className="world-list">
               {/*
@@ -330,7 +378,7 @@ export function WorldApp({
             </ul>
           ) : null}
 
-          <h3 className="world-roster-sub">THE QUARRY — live on letscash</h3>
+          <h3 className="world-roster-sub">THE QUARRY — by 24h volume</h3>
           {quarry.ok ? (
             quarry.tokens.length === 0 ? (
               <p className="stamp">
@@ -339,8 +387,21 @@ export function WorldApp({
               </p>
             ) : (
               <ul className="world-list world-quarry-list">
+                {/*
+                  ══ THE EVIDENCE IS ON THE ROW, NOT BEHIND THE WORD ══
+
+                  This list used to print a market cap and the word "huntable", where "huntable"
+                  meant `taxPct === 1` — a rule the strategy had already deleted. Ibrahim read the
+                  result correctly: fourteen supposedly-viable targets that were dead tokens.
+
+                  So each row now shows 24h VOLUME, which is the figure that actually decides
+                  whether a stray could exit, and states the token's liveness in words. A dead token
+                  is still listed — hiding it would make the field look like every launch on the pad
+                  is viable, which is the flattering version of the same lie — but it is labelled
+                  DEAD and it can never carry the word "huntable".
+                */}
                 {quarry.tokens.map((t) => (
-                  <li key={t.address} data-huntable={t.huntable ? "" : undefined}>
+                  <li key={t.address} data-huntable={t.huntable ? "" : undefined} data-liveness={t.liveness}>
                     <a
                       href={`${PAD_SITE}/token/${t.address}`}
                       target="_blank"
@@ -349,12 +410,20 @@ export function WorldApp({
                     >
                       {t.symbol}
                     </a>
-                    <span className="fig">{t.marketCapEth.toFixed(2)} Ξ</span>
-                    {/* WHY a token is not huntable, not just that it isn't. The tax is the one
-                        filter that decides whether this product can make money (RESEARCH §3c), so
-                        naming it is the difference between a rule and an arbitrary rejection. */}
-                    <span className={t.huntable ? "fed" : "world-sub"}>
-                      {t.huntable ? "huntable" : `${t.taxPct}% tax`}
+                    {/*
+                      VOLUME, not market cap. Market cap is a claim about a token; volume is a
+                      record of what people did with it. `null` prints as "vol ?" rather than as
+                      "0Ξ" — a failed measurement is not a measurement of zero.
+                    */}
+                    <span className="fig">
+                      {t.volume24hEth === null ? "vol ?" : `${fmtVol(t.volume24hEth)} Ξ`}
+                    </span>
+                    <span
+                      className={
+                        t.huntable ? "fed" : t.liveness === "dead" ? "starve" : "world-sub"
+                      }
+                    >
+                      {t.huntable ? "huntable" : t.liveness === "dead" ? "dead" : "unmeasured"}
                     </span>
                   </li>
                 ))}
@@ -375,7 +444,7 @@ export function WorldApp({
           <span>
             {hoveredStray !== undefined
               ? `${hoveredStray.id.slice(0, 10)}… — ${hoveredStray.state}`
-              : "cats hunt the diamonds. amber = a target a stray may take."}
+              : "cats hunt the diamonds. amber = real 24h volume, a stray may take it."}
           </span>
         </footer>
         </aside>

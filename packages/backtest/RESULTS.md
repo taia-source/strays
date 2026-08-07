@@ -1,5 +1,13 @@
 # BACKTEST RESULTS — `@strays/hunt` against real letscash history
 
+> **ROUND 2 (2026-08-07, later): the selectivity hypothesis was tested and it FAILED.**
+> The profitable subset is real but it is **not identifiable in advance**, and the one arm that
+> looked profitable turns out to be measurable survivorship bias that a coin flip collects
+> equally. **The strategy is not profitable and this venue's 200bps hook tax is why.**
+> The full round-2 result is in **§8 at the bottom** — read that before the older material,
+> which §8 supersedes on three specific points.
+
+
 Run 2026-08-07 against 461 tokens, **394,635 real on-chain swaps**, 28.2 days of history.
 
 ---
@@ -354,3 +362,216 @@ npx vitest run --coverage                                 # 42 harness tests
 ```
 
 `data/series.json` is gitignored — it is 58MB and reproducible from chain at any time.
+
+---
+---
+
+# 8. ROUND 2 — THE SELECTIVITY HYPOTHESIS, TESTED AND REJECTED
+
+§6 named selectivity *"the most promising untested direction"* and set the condition: the
+profitable subset must be **identifiable in advance**, and it must be verified on **held-out
+data**. Both were done. The hypothesis fails.
+
+This section supersedes three claims made above and says so explicitly where it does.
+
+## 8.0 The answer
+
+**The strategy is not profitable, and no arm tested here makes it profitable.** One arm — a very
+wide take-profit — produces a positive mean on held-out data (+234bps, n=1021). It is reported here
+in full and then **rejected**, because:
+
+```
+signal entries, wide take-profit, HELD-OUT:   +234 bps   (n = 1021)
+RANDOM entries, same universe, same exit:     +227 bps   (n = 1952)
+                                              ─────────
+Welch t                                          0.08
+```
+
+**A coin flip earns the same return.** The number is not the strategy's. Its source is measured in
+§8.4 and it is survivorship bias in the token universe.
+
+`assessOverfitting` at the full 76-trial count: **`credible: false`**.
+
+## 8.1 Method
+
+- **TRAIN/TEST SPLIT IN TIME.** Cut at 70% of the observed window (day 19.7). TRAIN = 205 tokens /
+  165k bars / 19.7 days. TEST = 450 tokens / 230k bars / 8.5 days. Every threshold below was chosen
+  on TRAIN; every number reported as a result is from TEST.
+- **The cut is at 0.7 rather than the midpoint, and that is forced by the data, not chosen for the
+  answer.** The universe is not uniform in time: it is the union of *today's* `sort=mcap` and
+  `sort=trending` lists, so 183 of 461 tokens first trade on day 18 and 216 in the last four days.
+  A midpoint cut puts **19 tokens** in TRAIN. 0.7 is the earliest cut with a usable universe on
+  both sides, and it was picked from the bar-count histogram **before any return was measured on
+  either fold**.
+- **Trials counted: 76.** Deliberately over-counted rather than under-counted.
+- The baseline reproduces the round-1 figure exactly: **−117bps over 1723 trades**.
+
+## 8.2 What was tested, and what each result was
+
+All fitted on TRAIN. Baseline on TRAIN is −120bps.
+
+| lead | arm | TRAIN mean net | verdict |
+|---|---|---|---|
+| **1. Selectivity** | `minScoreBps` 1 → 2000 | **−252 … −366** | **WORSE than no filter at every threshold** |
+| **2. Hold longer** | 1h → 168h at fixed take-profit | −139 … −129 | no effect beyond ~4h |
+| **2b. Wider take-profit** | tp 471 → 10000 | −139 → **+296** | **the only positive arm** |
+| **3. Volume floor** | ≥1 … ≥200 ETH | −114 … −284 | **monotonically worse** |
+| **3b. Participation floor** | ≥50 … ≥5000 swaps | −119 … −159 | **monotonically worse** |
+| **4. Stop widened** | 1000, 3000bps | −215, −330 | worse |
+| **4b. Stop removed** | `stopMode: none` | −190 | **worse than keeping it** |
+| **5. `edgeMultiple`** | 1 … 8 | −120 (identical) | **no effect — see §8.5** |
+
+**Leads 1, 3 and 4 are refuted outright.** The score is *anti*-predictive: filtering to the
+highest-scored decile takes the mean from −120bps to −252bps. The quality gates get monotonically
+worse as they tighten — the opposite of the hypothesis. And removing the stop, despite stopped
+trades losing −1030bps, makes things worse, because the trades it would have stopped keep falling.
+
+## 8.3 The one positive arm, and why it is not an edge
+
+Only the take-profit width produced a positive mean, and it survives out of sample as a *number*:
+
+| take-profit | TRAIN mean | TEST mean | TEST median |
+|---|---|---|---|
+| 471 (shipped) | −139 | −104 | −204 |
+| 2000 | +69 | −1 | −502 |
+| 4000 | +192 | +53 | −542 |
+| 10000 | +296 | **+234** | **−535** |
+
+Two things kill it.
+
+**First, the median is −535bps and gets WORSE as the mean improves.** Win rate falls to 29.8%. The
+mean is carried by a handful of trades: on TEST, the **top 10 of 1021 trades (1%) are 49% of all
+profit**, and the top 3 *tokens* are 50% of it. Drop the top 10 trades and the mean falls from
++234bps to +122bps. This is a lottery-ticket payoff, and §5 caveat 1 already established that a
+single stray holding one position at a time could not have held these in parallel.
+
+**Second, and decisively — it does not beat a coin flip.** Random entries on the same universe with
+the same exit rule and the same measured cost:
+
+| take-profit | signal mean | random mean | diff | Welch t |
+|---|---|---|---|---|
+| 471 | −104 | −249 | **+145** | **4.65** |
+| 1000 | −45 | −98 | +53 | 1.39 |
+| 2000 | −1 | +58 | −60 | −1.20 |
+| 4000 | +53 | +167 | −114 | −1.69 |
+| 6000 | +171 | +189 | −17 | −0.21 |
+| 10000 | +234 | +227 | +8 | **0.08** |
+
+**THE SHAPE OF THIS TABLE IS THE WHOLE RESULT.** The signal's edge over random is largest exactly
+where the strategy loses money (t = 4.65 at the shipped take-profit) and decays to nothing exactly
+where it starts to make money. Widening the take-profit does not harvest the signal — it **discards**
+it, and replaces it with a payoff shape that a coin flip captures equally well.
+
+This *confirms* §0's finding that the signal is real (it is now t = 4.65 on held-out data, stronger
+than round 1's 2.63) while removing any way to profit from it. **The signal is real, short-horizon,
+and worth less than 218bps.**
+
+## 8.4 Where the +234bps actually comes from: survivorship, measured
+
+```
+random entry, all 461 tokens, tp=471:    mean −141 bps
+random entry, all 461 tokens, tp=10000:  mean +264 bps      <-- no strategy at all
+BUY AND HOLD, first bar to last:         mean +31,251 bps, median +547 bps
+                                         291/461 (63%) of tokens ended UP
+```
+
+**63% of this universe rose, and buy-and-hold returns a mean of +31,251bps.** That is not a market
+property; it is a property of a universe drawn from *today's* mcap and trending lists, which by
+construction cannot contain the tokens that launched and died. §5 caveat 5 flagged this bias as
+present. **§8 measures it, and it is larger than the entire apparent edge.**
+
+A wide take-profit is simply a longer exposure to that upward drift. It is the survivorship bias
+read through a wider window — which is why a coin flip collects it too.
+
+## 8.5 `EDGE_MULTIPLE` is a TAUTOLOGY — this SUPERSEDES §3
+
+§3 recorded that `EDGE_MULTIPLE` *"COULD NOT BE TESTED"* because `decide()` read a module-level
+constant, and inferred that the four byte-identical sweep rows were a plumbing problem. **The
+plumbing was fixed and the rows are still identical. The diagnosis was wrong.**
+
+`edgeMultiple` is now threaded through `DecideConfig` (optional, defaulting to `EDGE_MULTIPLE`, so
+no existing caller changes). Sweeping it 1 → 64 still changes **nothing about which trades fire**:
+
+- `levelsFor` floors the take-profit at `cost × multiple / position`.
+- `evaluateEntry` defines `expectedGain = position × takeProfitBps`.
+- So the gain the bar tests **is** the requirement the bar tests it against.
+
+**The cost bar cannot refuse a long signal — 0 refusals across 72 combinations of tax tier,
+position size and multiple**, pinned by test in `replay.test.ts`. `EDGE_MULTIPLE` moves the *exit
+target*; it is not, and never was, a selectivity control. The strategy has no working entry bar,
+and it never did.
+
+## 8.6 The honesty check
+
+```
+── BEST HELD-OUT ARM (tp=10000), 76 trials ──
+RESULT: indistinguishable from noise
+
+  overfitting  Sharpe 2.83 does NOT survive 76 trials: needed > 19.34 and 1.1 years
+               of data, have 0.0. Treat this as noise.
+  sample size  1021 trades is short of the 1145 needed for t > 3
+  cost model   INCOMPLETE (slippage, reverts, own price impact — all bias OPTIMISTIC)
+
+CREDIBLE: false
+mean 234bps   MEDIAN −535bps   n=1021   win 29.8%
+Welch t vs random entry, same exit rule: 0.08
+```
+
+**`credible: false`.** And the Welch test is the stronger objection: even if the sample were large
+enough, the return is not attributable to the signal.
+
+## 8.7 The conclusion, stated plainly
+
+**Ibrahim asked for profitable with no loss. The honest answer is that this venue's 200bps hook tax
+makes short-horizon trading on it unwinnable, and this round tested the last idea that could have
+changed that.**
+
+The arithmetic has not moved:
+
+```
+signal edge (held-out, shipped horizon)   +145 bps over random
+round trip                                −218 bps  (200 of it the hook tax)
+                                          ─────────
+                                           −73 bps
+```
+
+The edge is real and it is **67% of the toll**. Every route to closing that gap was tested:
+
+- **Fewer, better trades** — the score is anti-predictive; selectivity makes it worse.
+- **Longer holds** — no effect beyond ~4 hours; these moves resolve in minutes.
+- **Quality gates** — monotonically worse as they tighten.
+- **Fixing the stop** — removing it is worse than keeping it.
+- **A harder cost bar** — it is a tautology and refuses nothing.
+- **A wider take-profit** — profitable-looking, but a coin flip earns the same, and the source is
+  survivorship bias measured at +264bps.
+
+### What WOULD work, as falsifiable conditions
+
+1. **A 0%-tax tier, or a tax rebate/exemption.** The single binding constraint. At zero tax the
+   round trip is ~18bps of gas and the measured +145bps held-out edge is profitable immediately.
+   This is a venue term, not a code change, and it is the only condition here that is both
+   sufficient and within reach of a negotiation.
+2. **A venue with materially lower round-trip cost.** The signal is a general short-horizon
+   momentum effect; nothing about it is specific to letscash. Anywhere the round trip costs under
+   ~145bps, the same code is worth testing.
+3. **Not this.** Holding tokens for days on this pad has a positive mean, but it is survivorship
+   bias, its median is −535bps, and it is indistinguishable from buying at random. Anyone reporting
+   it as a strategy result is reporting the coin flip.
+
+### What would NOT work
+
+Retuning the lookback, the stop, the drawdown halt, the score threshold, the volume floor, the
+participation floor, the hold horizon, or the edge multiple. **All eight have now been swept and
+all eight lose across their entire tested range** — the first three in round 1, the other five here.
+
+## 8.8 Reproducing round 2
+
+```bash
+cd packages/backtest
+npx tsx src/explore.ts    # the search, on TRAIN only — 56 trials
+npx tsx src/confirm.ts    # the held-out verification + honesty check
+npx vitest run --coverage # 50 harness tests
+```
+
+`src/explore.ts` searches and never reports; `src/confirm.ts` is the only file that reports a
+number on held-out data. That separation is deliberate.

@@ -416,6 +416,20 @@ const SABOTAGES = [
     find: "  const costFloorBps =\n    numerator / args.positionWei + (numerator % args.positionWei > 0n ? 1n : 0n);",
     replace: "  const costFloorBps = numerator / args.positionWei;",
   },
+  {
+    id: "S54",
+    file: "src/decide.ts",
+    what: "IGNORE the configured edgeMultiple and silently fall back to the module constant, so a caller that raises its cost bar gets the default bar and never learns.",
+    find: "  const edgeMultiple = cfg.edgeMultiple ?? EDGE_MULTIPLE;",
+    replace: "  const edgeMultiple = EDGE_MULTIPLE;",
+  },
+  {
+    id: "S55",
+    file: "src/decide.ts",
+    what: "Let the ENTRY BAR and the TAKE-PROFIT FLOOR disagree: the bar uses the configured multiple while the target keeps the default, so a trade may fire against a target that cannot pay for it.",
+    find: "      multiple: edgeMultiple,",
+    replace: "      multiple: 1n,",
+  },
 ];
 
 const run = () => {
