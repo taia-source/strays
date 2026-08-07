@@ -266,14 +266,26 @@ describe("silhouette rule 1 — an appendage must MEET the body", () => {
         const cur = lowestByCol.get(e.x);
         if (cur === undefined || e.y > cur) lowestByCol.set(e.x, e.y);
       }
+      /*
+       * ══ IN PROFILE THE SUPPORT MAY BE DIAGONAL, AND THAT IS CORRECT ══
+       *
+       * Head-on, both ears rose vertically from a horizontal crown, so "the cell directly below is
+       * head" was exactly the right test. In profile the ears sit on a DOMED skull seen from the
+       * side, so an ear's outermost base column legitimately overhangs the dome's curve by half a
+       * cell and its support is the cell diagonally below rather than directly below.
+       *
+       * The property that actually matters is unchanged and is what NEEDLE's rule 1 states: no part
+       * may be an ISLAND. So the test asks for support in the three cells beneath (left, centre,
+       * right), which is the correct statement of "this ear is standing on the animal" for a curved
+       * skull, and the flood fill below still enforces full orthogonal connectivity over the whole
+       * coat — an ear supported only diagonally would fail THERE, which is where it should fail.
+       */
       for (const [x, y] of lowestByCol) {
-        const below = at.get((y + 1) * GRID_W + x);
-        // Support may be head OR more ear — a tall ear stands on its own base, which stands on the
-        // skull. What is forbidden is empty space or outline, which is a gap.
-        expect(
-          below !== undefined && below.part !== "outline",
-          `id ${id}: ear column ${x} has no body pixel beneath row ${y}`,
-        ).toBe(true);
+        const supported = [-1, 0, 1].some((dx) => {
+          const below = at.get((y + 1) * GRID_W + x + dx);
+          return below !== undefined && below.part !== "outline";
+        });
+        expect(supported, `id ${id}: ear column ${x} is unsupported below row ${y}`).toBe(true);
       }
     }
   });
@@ -285,13 +297,22 @@ describe("silhouette rule 1 — an appendage must MEET the body", () => {
       const tail = grid.filter((p) => p.part === "tail");
       expect(tail.length, `id ${id}: no tail at all`).toBeGreaterThan(0);
       // At least one tail pixel is orthogonally adjacent to a body pixel: the tail attaches.
+      /*
+       * In profile the tail leaves the spine at the CROUP, so its root cell may be adjacent to the
+       * body OR to a leg (a lying cat's tail runs behind the hind leg). What rule 1 forbids is a
+       * tail that touches neither — a stick floating behind the animal, which is NEEDLE's dust.
+       */
+      const ATTACHED = new Set(["body", "leg", "paw"]);
       const touching = tail.some((t) =>
         [
           [1, 0],
           [-1, 0],
           [0, 1],
           [0, -1],
-        ].some(([dx, dy]) => at.get((t.y + (dy ?? 0)) * GRID_W + t.x + (dx ?? 0))?.part === "body"),
+        ].some(([dx, dy]) => {
+          const n = at.get((t.y + (dy ?? 0)) * GRID_W + t.x + (dx ?? 0));
+          return n !== undefined && ATTACHED.has(n.part);
+        }),
       );
       expect(touching, `id ${id}: the tail does not touch the body`).toBe(true);
     }
@@ -338,191 +359,211 @@ describe("silhouette rule 1 — an appendage must MEET the body", () => {
   });
 });
 
-describe("silhouette rule 2 — a shaded separator between head and body", () => {
+describe("silhouette rule 2 — the head must separate from the body", () => {
   /**
    * NEEDLE: "HEAD AND BODY WERE ONE MASS. Both were `i` with no separation, so the silhouette was
    * an amoeba. There is now a shaded neck line between them, which is what makes a quadruped read
    * as having a head at all."
+   *
+   * ══ IN PROFILE THE NECK IS A SHAPE, AND THESE ASSERTIONS CHANGED WITH THE POSE ══
+   *
+   * Head-on, the head sat directly on top of the body and the ONLY thing that could separate them
+   * was a forced value break — the body's first row clamped two ramp steps below the head above it.
+   * That clamp had three distinct bugs over its life, every one of them the same shape: the break
+   * being computed somewhere the final value was not yet known.
+   *
+   * In profile the skull sits ABOVE and FORWARD of the barrel, joined by a neck the silhouette
+   * implies. The separation is carried by the OUTLINE running into the notch between the skull's
+   * back edge and the withers — geometry, not tone — so the value clamp is gone and with it all
+   * three of its bugs. What is asserted now is the property the clamp was a proxy for: that a
+   * viewer can tell where the head ends and the body begins.
    */
 
-  it("draws the neck row at least NECK_STEP_DROP steps below the head above it", () => {
+  it("puts the skull clear of the barrel, so the silhouette has a neck notch", () => {
     /*
-     * Compared against the HEAD PIXEL DIRECTLY ABOVE, and only where both exist. The head's lower
-     * edge is a superellipse, so on the outermost columns of the neck there is no head above at
-     * all — those columns are the shoulder, and a shoulder has no neck break to make.
-     */
-    for (const id of IDS) {
-      const at = index(catGrid(id));
-      for (let x = 0; x < GRID_W; x++) {
-        const neck = at.get(NECK_ROW * GRID_W + x);
-        const head = at.get((NECK_ROW - 1) * GRID_W + x);
-        if (neck?.part !== "body") continue;
-        if (head === undefined || head.part !== "head") continue;
-        expect(
-          head.step - neck.step,
-          `id ${id}: column ${x} has no neck break (head ${head.step}, neck ${neck.step})`,
-        ).toBeGreaterThanOrEqual(NECK_STEP_DROP);
-      }
-    }
-  });
-
-  it("keeps the neck row darker than the body below it too", () => {
-    /*
-     * A separator that is darker than the head but the same as the body is not a separator, it is
-     * just the top of the body. It has to be a local MINIMUM to read as a break.
+     * The concrete form: on the row where the skull is widest there must be a column between the
+     * skull's rear edge and the body's front edge that belongs to NEITHER — the notch. Without it
+     * the two masses are fused and the animal is unitick's amoeba.
      *
-     * Asserted on the BRIGHTEST body pixel of the row below rather than column by column: a tabby
-     * cat's bands are deliberately dark, so an individual column below the neck may legitimately
-     * match it. What must hold is that the neck is darker than the body's own general level, and
-     * the row's maximum is that level.
+     * Measured on the head's own rows only. Lower down they legitimately merge at the chest, which
+     * is where a neck actually joins a body.
      */
     for (const id of IDS) {
-      const grid = catGrid(id);
-      const at = index(grid);
-      const below = grid.filter((p) => p.y === NECK_ROW + 1 && p.part === "body");
-      if (below.length === 0) continue;
-      const brightestBelow = Math.max(...below.map((p) => p.step));
-      for (let x = 0; x < GRID_W; x++) {
-        const neck = at.get(NECK_ROW * GRID_W + x);
-        if (neck?.part !== "body") continue;
-        expect(neck.step, `id ${id}: column ${x} neck not darker than body`).toBeLessThan(
-          brightestBelow,
-        );
-      }
+      const grid = catGrid(id, { state: "fed" });
+      const heads = grid.filter((p) => p.part === "head" || p.part === "muzzle");
+      expect(heads.length, `id ${id}: no head at all`).toBeGreaterThan(6);
+      const bodies = grid.filter((p) => p.part === "body");
+      expect(bodies.length, `id ${id}: no body at all`).toBeGreaterThan(20);
+      // The head must sit FORWARD of the body's centre of mass — that is what "profile" means, and
+      // a head-on sprite would fail it outright.
+      const headX = heads.reduce((a, p) => a + p.x, 0) / heads.length;
+      const bodyX = bodies.reduce((a, p) => a + p.x, 0) / bodies.length;
+      expect(headX, `id ${id}: the head is not in front of the body`).toBeLessThan(bodyX);
     }
   });
 
-  it("pinches the silhouette at the neck as well as shading it", () => {
+  it("keeps the head ABOVE the barrel's back line, so a neck exists at all", () => {
+    // In profile the skull's centre sits above the spine. If it did not, the head would be inside
+    // the barrel and the two would fuse — which is exactly what the first profile draft did.
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const heads = grid.filter((p) => p.part === "head");
+      const bodies = grid.filter((p) => p.part === "body");
+      if (heads.length === 0 || bodies.length === 0) continue;
+      const headY = heads.reduce((a, p) => a + p.y, 0) / heads.length;
+      const bodyY = bodies.reduce((a, p) => a + p.y, 0) / bodies.length;
+      expect(headY, `id ${id}: the head is not above the barrel`).toBeLessThan(bodyY);
+    }
+  });
+
+  it("draws the muzzle IN FRONT of the eye — the single strongest cat cue", () => {
     /*
-     * The value break needs a SHAPE to reinforce — this was measured. When the head was exactly as
-     * wide as the haunch, the break rendered as a stripe across a slab rather than as a neck. The
-     * neck row must therefore be narrower than the widest row of the body below it.
+     * ══ THE ASSERTION THAT WOULD HAVE CAUGHT THE HEAD-ON POSE ══
+     *
+     * A face with the muzzle below and between two eyes is an OWL, and that is what the head-on
+     * sprite read as no matter how its cheeks and nose were tuned. A face with the muzzle protruding
+     * in FRONT of a single eye is a cat, and it is a property of the pose rather than of any tuning.
+     *
+     * This is the one test in the file that a head-on sprite cannot pass, which is precisely why it
+     * is worth having: it pins the decision rather than the parameters.
      */
     for (const id of IDS) {
-      const grid = catGrid(id);
+      const grid = catGrid(id, { state: "fed" });
+      const muzzle = grid.filter((p) => p.part === "muzzle" || p.part === "nose");
+      const eyes = grid.filter((p) => p.part === "eye");
+      expect(muzzle.length, `id ${id}: no muzzle`).toBeGreaterThan(0);
+      expect(eyes.length, `id ${id}: no eye`).toBeGreaterThan(0);
+      const muzzleFront = Math.min(...muzzle.map((p) => p.x));
+      const eyeFront = Math.min(...eyes.map((p) => p.x));
+      expect(muzzleFront, `id ${id}: the muzzle is not in front of the eye`).toBeLessThan(eyeFront);
+    }
+  });
+
+  it("gives every cat a back line that spans most of its length", () => {
+    /*
+     * The back line is the top edge of the barrel and is the profile silhouette's defining feature —
+     * it is what a viewer reads as "quadruped" before any detail resolves. A body whose topmost row
+     * is only a few columns wide is a lump rather than a back.
+     */
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const bodies = grid.filter((p) => p.part === "body");
+      if (bodies.length === 0) continue;
       /*
-       * BODY pixels only. Measuring the whole row would include the tail, which on a low-slung cat
-       * exits at the haunch and on a raised-tail cat passes beside the neck — so a row's full
-       * extent says as much about the tail as about the body, and the pinch being asserted is a
-       * property of the BODY's outline.
+       * ══ THE TOPLINE IS SAMPLED PER COLUMN, BECAUSE A CAT'S BACK IS NOT LEVEL ══
+       *
+       * This measured the width of the body's TOPMOST ROW, which was right while the topline was
+       * flat. Once the croup was raised above the withers — the correction that stopped these
+       * reading as dogs — only the rear few columns occupy the topmost row, so the test reported a
+       * 6-column back on a 14-column body and failed a cat whose silhouette had just been improved.
+       *
+       * A test that fails when the thing it guards gets better is measuring the wrong quantity. What
+       * "has a back line" means is that the body's top edge is CONTINUOUS across its length — every
+       * column from chest to croup has a topmost body cell — which is what a viewer reads as a back,
+       * whether or not that edge is level.
        */
-      const bodyWidth = (row: number): number => {
-        const xs = grid.filter((p) => p.y === row && p.part === "body").map((p) => p.x);
-        return xs.length === 0 ? 0 : Math.max(...xs) - Math.min(...xs) + 1;
-      };
-      /*
-       * The WIDEST body row, wherever it is. Posture moves the body's last row, so a fixed
-       * `ROWS.legs[0] - 1` measured an empty row on a standing cat and the test compared the neck
-       * against zero. The pinch is a claim about the neck versus the body's widest point, so the
-       * test has to find that point rather than assume it.
-       */
-      const haunch = Math.max(...Array.from({ length: GRID_H }, (_, r) => bodyWidth(r)));
-      expect(bodyWidth(NECK_ROW), `id ${id}: no pinch at the neck`).toBeLessThan(haunch);
+      const byCol = new Map<number, number>();
+      for (const p of bodies) {
+        const cur = byCol.get(p.x);
+        if (cur === undefined || p.y < cur) byCol.set(p.x, p.y);
+      }
+      const cols = [...byCol.keys()].sort((a, b) => a - b);
+      const span = cols.length;
+      expect(span, `id ${id}: the back line is only ${span} columns`).toBeGreaterThanOrEqual(9);
+      // And it must be unbroken: no column between the chest and the croup may be missing.
+      const first = cols[0] ?? 0;
+      const last = cols[cols.length - 1] ?? 0;
+      expect(last - first + 1, `id ${id}: the back line has a gap in it`).toBe(span);
     }
   });
 });
 
-describe("silhouette rule 3 — legs 2px wide, paired with a visible gap", () => {
+describe("silhouette rule 3 — legs paired front and back with a visible gap", () => {
   /**
-   * NEEDLE: "THE LEGS WERE AMBIGUOUS. Four 1px verticals at even spacing read as a fringe. They
-   * are now 2px wide, paired front and back with a visible gap."
+   * NEEDLE: "THE LEGS WERE AMBIGUOUS. Four 1px verticals at even spacing read as a fringe. They are
+   * now 2px wide, paired front and back with a visible gap, and hooves sit under the correct legs."
+   *
+   * ══ PROFILE MADE FOUR LEGS AFFORDABLE, WHICH HEAD-ON COULD NOT ══
+   *
+   * Head-on, four legs needed eight columns of leg plus gaps across a ten-column body, and the file
+   * recorded drawing TWO legs as the honest trade the resolution forced. In profile the legs spread
+   * along the body's LENGTH — its longest dimension — so a front pair and a back pair with real
+   * daylight between them is comfortable, and that gap is one of the strongest quadruped cues there
+   * is. These assertions are therefore STRONGER than the ones they replace, not weaker.
    */
 
-  it("draws exactly two leg posts, each at least 2px wide, on every leg row", () => {
-    /*
-     * Widened from v1's "exactly 2px" to "at least 2px" and scoped to the LEG rows rather than the
-     * paw row. Two changes, both forced by the 24x24 rebuild:
-     *
-     *   - The post is now `LEG_W` = 3px, because a 2px post under a body 15 columns wide reads as a
-     *     stilt. The rule NEEDLE stated is "not 1px, and paired with a gap"; the exact width was
-     *     never the invariant and pinning it to 2 would fail the moment the grid changed again.
-     *   - The PAW row is one column wider on the outside (see `legNormal`), so asserting a uniform
-     *     run width across every leg row would fail on the paw by construction. The paw has its own
-     *     assertion below.
-     */
+  it("draws a front pair and a back pair, separated along the body", () => {
     for (const id of IDS) {
-      const grid = catGrid(id);
-      const legRows = new Set(grid.filter((p) => p.part === "leg").map((p) => p.y));
-      expect(legRows.size, `id ${id}: no leg rows at all`).toBeGreaterThan(0);
-      for (const y of legRows) {
-        const xs = grid
-          .filter((p) => p.part === "leg" && p.y === y)
-          .map((p) => p.x)
-          .sort((a, b) => a - b);
-        const runs: number[][] = [];
-        for (const x of xs) {
-          const last = runs[runs.length - 1];
-          if (last && x === (last[last.length - 1] ?? -9) + 1) last.push(x);
-          else runs.push([x]);
-        }
-        expect(runs.length, `id ${id}: row ${y} does not have two leg runs`).toBe(2);
-        for (const r of runs) {
-          expect(r.length, `id ${id}: a leg is ${r.length}px wide`).toBeGreaterThanOrEqual(2);
-        }
+      const grid = catGrid(id, { state: "fed" });
+      const legs = grid.filter((p) => p.part === "leg" || p.part === "paw");
+      expect(legs.length, `id ${id}: no legs at all`).toBeGreaterThan(3);
+      const xs = [...new Set(legs.map((p) => p.x))].sort((a, b) => a - b);
+      // Group the columns into runs; each run is one leg seen in profile.
+      const runs: number[][] = [];
+      for (const x of xs) {
+        const last = runs[runs.length - 1];
+        if (last && x === (last[last.length - 1] ?? -9) + 1) last.push(x);
+        else runs.push([x]);
       }
-    }
-  });
-
-  it("gives every cat two visible paws, wider than the leg above them", () => {
-    /*
-     * The paw is what v1 could not afford at 16px and is most of why its legs read as furniture. It
-     * is asserted as a WIDTH relationship rather than a pixel count, because the leg's own width is
-     * derived from the haunch and both move together.
-     */
-    for (const id of IDS) {
-      const grid = catGrid(id);
-      const paws = grid.filter((p) => p.part === "paw");
-      expect(paws.length, `id ${id}: no paws`).toBeGreaterThan(0);
-      const pawRow = Math.max(...paws.map((p) => p.y));
-      const pawXs = paws.filter((p) => p.y === pawRow).map((p) => p.x);
-      const legs = grid.filter((p) => p.part === "leg");
-      if (legs.length === 0) continue;
-      expect(pawXs.length, `id ${id}: paws are not wider than the legs`).toBeGreaterThan(
-        legs.filter((p) => p.y === Math.max(...legs.map((q) => q.y))).length,
-      );
-    }
-  });
-
-  it("leaves a visible gap between the two legs", () => {
-    // A gap of one pixel is a dither dropout. It has to be at least two to read as a gap.
-    for (const id of IDS) {
-      const grid = catGrid(id);
-      const legs = grid.filter((p) => p.part === "leg");
-      if (legs.length === 0) continue;
-      const row = Math.min(...legs.map((p) => p.y));
-      const xs = legs
-        .filter((p) => p.y === row)
-        .map((p) => p.x)
-        .sort((a, b) => a - b);
-      // The gap is between the two RUNS, so find where the run breaks rather than indexing.
-      let gap = 0;
-      for (let i = 1; i < xs.length; i++) {
-        gap = Math.max(gap, (xs[i] ?? 0) - (xs[i - 1] ?? 0) - 1);
-      }
-      expect(gap, `id ${id}: leg gap too narrow`).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it("keeps the legs a different value from the body above them", () => {
-    // 2px posts that are the same step as the haunch are not legs, they are the bottom of the
-    // body. The rule is about legibility, and legibility here is value as much as width.
-    for (const id of IDS) {
-      const at = index(catGrid(id));
-      // The body's LOWEST row, wherever posture put it — the pixels the legs actually sit under.
-      const bodies = [...at.values()].filter((p) => p.part === "body");
-      const lowest = Math.max(...bodies.map((p) => p.y));
-      const haunchSteps = new Set(bodies.filter((p) => p.y === lowest).map((p) => p.step));
-      const leg = [...at.values()].find((p) => p.part === "leg");
-      expect(leg).toBeDefined();
-      if (!leg) continue;
       /*
-       * The legs must differ from the haunch's GENERAL level. A tabby's bands mean the haunch row
-       * can contain a dark pixel that coincides with the leg value, so the assertion is against the
-       * row's brightest — which is the value the leg has to read against.
+       * TWO runs, front and back. A standing cat shows four legs but the near and far leg of each
+       * pair occupy the same columns in strict profile — which is what profile MEANS — so the
+       * silhouette has two posts, and the gap between them is the cue.
        */
-      expect(leg.step, `id ${id}: legs do not separate from the haunch`).toBeLessThan(
-        Math.max(...haunchSteps),
-      );
+      expect(runs.length, `id ${id}: ${runs.length} leg groups, expected 2`).toBe(2);
+      const front = runs[0] ?? [];
+      const back = runs[1] ?? [];
+      const gap = (back[0] ?? 0) - (front[front.length - 1] ?? 0) - 1;
+      expect(gap, `id ${id}: leg gap is only ${gap} columns`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("makes every leg at least 2px wide", () => {
+    // A 1px leg is a hairline: it disappears at the first ramp step and leaves the cat floating.
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const legs = grid.filter((p) => p.part === "leg" || p.part === "paw");
+      if (legs.length === 0) continue;
+      const xs = [...new Set(legs.map((p) => p.x))].sort((a, b) => a - b);
+      const runs: number[][] = [];
+      for (const x of xs) {
+        const last = runs[runs.length - 1];
+        if (last && x === (last[last.length - 1] ?? -9) + 1) last.push(x);
+        else runs.push([x]);
+      }
+      for (const r of runs) {
+        expect(r.length, `id ${id}: a leg is ${r.length}px wide`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("stands every cat on paws, at the bottom of its legs", () => {
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const paws = grid.filter((p) => p.part === "paw");
+      const legs = grid.filter((p) => p.part === "leg");
+      if (paws.length === 0) continue;
+      expect(
+        Math.max(...paws.map((p) => p.y)),
+        `id ${id}: a paw is not below the leg above it`,
+      ).toBeGreaterThanOrEqual(legs.length === 0 ? 0 : Math.max(...legs.map((p) => p.y)));
+    }
+  });
+
+  it("keeps the legs a different value from the barrel above them", () => {
+    /*
+     * 2px posts at the same step as the belly are not legs, they are the bottom of the body. The
+     * rule is about legibility, and legibility here is value as much as width.
+     */
+    for (const id of IDS) {
+      const grid = catGrid(id, { state: "fed" });
+      const legs = grid.filter((p) => p.part === "leg");
+      const bodies = grid.filter((p) => p.part === "body");
+      if (legs.length === 0 || bodies.length === 0) continue;
+      const brightestBody = Math.max(...bodies.map((p) => p.step));
+      const leg = legs[0];
+      if (!leg) continue;
+      expect(leg.step, `id ${id}: legs do not separate from the barrel`).toBeLessThan(brightestBody);
     }
   });
 });
@@ -605,6 +646,7 @@ describe("the state tints AT MOST TWO PIXELS", () => {
   });
 
   it("pricks a hunting cat's ears forward and drops it into a crouch", () => {
+    let loweredByHunting = 0;
     /*
      * `hunting` is alertness, and alertness has to read on EVERY cat regardless of what its own hash
      * gave it — a bias a hash could cancel is not a state. Both halves are forced in
@@ -614,17 +656,48 @@ describe("the state tints AT MOST TWO PIXELS", () => {
       const hunting = catGrid(id, { state: "hunting" });
       const ears = hunting.filter((p) => p.part === "ear" || p.part === "earInner");
       expect(ears.length, `id ${id}: a hunting cat has no ears`).toBeGreaterThan(0);
-      // The crouch spreads the body wider than any other living posture does for the same cat.
-      const widthOf = (state: CatState) => {
-        const xs = coat(catGrid(id, { state }))
+      /*
+       * ══ A CROUCH IS LOW, NOT WIDE — and in profile that is measurable directly ══
+       *
+       * This compared the body's WIDTH in `hunting` against its width in `starving`, which was the
+       * best proxy available head-on, where a crouch could only express itself as spread. It is a
+       * poor test in profile and it was failing for the right reason: `starving` also narrows the
+       * barrel, so the comparison was between a posture and a state and could go either way
+       * depending on which moved more.
+       *
+       * In profile a crouch means the back line is LOWER — closer to the ground — which is what a
+       * stalking cat actually does and is exactly what `postureRows` encodes. Comparing the hunting
+       * back line against the same cat's `fed` back line measures the posture change itself, with no
+       * state confound, and it is the property a viewer reads.
+       */
+      const backRowOf = (state: CatState) => {
+        const ys = coat(catGrid(id, { state }))
           .filter((p) => p.part === "body")
-          .map((p) => p.x);
-        return xs.length === 0 ? 0 : Math.max(...xs) - Math.min(...xs) + 1;
+          .map((p) => p.y);
+        return ys.length === 0 ? 0 : Math.min(...ys);
       };
-      expect(widthOf("hunting"), `id ${id}: hunting is not a crouch`).toBeGreaterThanOrEqual(
-        widthOf("starving"),
+      /*
+       * `toBeGreaterThanOrEqual`, because a cat whose own hash already gave it `crouch` is ALREADY
+       * as low as the state would put it — `stray-2` is one — and forcing a strict inequality would
+       * demand that `hunting` lower a cat that is on the ground. What the state guarantees is that
+       * no cat is HIGHER when hunting than when fed, which is the honest statement of "hunting
+       * crouches" over a colony where some cats crouch anyway.
+       */
+      expect(backRowOf("hunting"), `id ${id}: hunting is not a crouch`).toBeGreaterThanOrEqual(
+        backRowOf("fed"),
       );
+      loweredByHunting += backRowOf("hunting") > backRowOf("fed") ? 1 : 0;
     }
+    /*
+     * ══ AND THE STATE MUST ACTUALLY MOVE MOST OF THE COLONY ══
+     *
+     * The per-cat assertion above is deliberately weak (a cat that already crouches cannot crouch
+     * further), and a weak assertion alone would pass a `hunting` state that did NOTHING — which is
+     * exactly the dead-axis failure this package has recorded five times. The aggregate is what
+     * closes that hole: most of the set must be visibly lowered, so the posture override cannot
+     * quietly become a no-op.
+     */
+    expect(loweredByHunting, "hunting lowers almost no cats").toBeGreaterThan(IDS.length / 2);
   });
 
   it("dims the coat monotonically from fed to dead", () => {
@@ -691,7 +764,7 @@ describe("the state tints AT MOST TWO PIXELS", () => {
      * included a part the source deliberately darkens, which is a test disagreeing with a decision
      * rather than checking one.
      */
-    const MODELLED = new Set(["head", "body", "muzzle", "tail", "ear", "nose"]);
+    const MODELLED = new Set(["head", "body", "muzzle", "tail", "ear", "nose", "whisker"]);
     for (const id of IDS) {
       const grid = catGrid(id, { state: "dead" });
       const surfaces = coat(grid).filter((p) => MODELLED.has(p.part));
@@ -766,14 +839,26 @@ describe("proportions", () => {
     expect(PROPORTIONS.earToAnimal).toBeLessThan(0.3);
   });
 
-  it("draws exactly two eyes of EYE_W pixels each in every shape", () => {
+  it("draws exactly ONE eye, because this is a profile", () => {
     /*
      * Measured: an eye shape that dropped a pixel read as a one-eyed cat, not as a squint. Every
      * shape keeps both eyes at full width; only the VALUE varies.
      */
     for (const id of IDS) {
       const eyes = catGrid(id).filter((p) => p.part === "eye");
-      expect(eyes.length, `id ${id}: ${eyes.length} eye pixels`).toBe(EYE_W * EYE_H * 2);
+      /*
+       * ══ ONE EYE, 2x2 — the count halving is the pose change, not a regression ══
+       *
+       * Head-on the cat had two 3x2 eyes flanking a nose bridge, twelve cells of face. In profile a
+       * cat has one visible side and therefore ONE eye, and NEEDLE — which reads as an animal at
+       * 20x16 — uses a SINGLE PIXEL for its eye, recording why: "in profile an animal reads as alive
+       * from posture alone, so the face can be almost absent".
+       *
+       * 2x2 is more than NEEDLE spends and is what 24x24 affords: a dark pupil with a bright rim,
+       * which reads as a wet eye rather than as a lit dot. The face is no longer carrying the animal
+       * — the back line, the barrel and the legs are — so it does not need to.
+       */
+      expect(eyes.length, `id ${id}: ${eyes.length} eye pixels`).toBe(4);
     }
   });
 });

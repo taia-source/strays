@@ -86,6 +86,23 @@ export function canSpend(): boolean {
  * never be assumed cheap — that is the direction that loses money.
  */
 const taxCache = new Map<string, number>();
+
+/**
+ * The built candidate set for ONE tick, shared across every stray in it.
+ *
+ * Keyed on the block so it expires naturally: a new block means a new market, and nothing stale is
+ * ever reused. Cleared rather than grown.
+ */
+let marketCache: { block: bigint; built: unknown[] } | null = null;
+
+/**
+ * How many candidates are enriched in parallel.
+ *
+ * MEASURED: at 6 a tick over 17 candidates took 59s; the chain RPC dominates. 12 halves it while
+ * staying an order of magnitude inside the pad's 240 req/60s budget — the cap exists to stay
+ * polite, not because we are near it.
+ */
+const CONCURRENCY = 12;
 async function padTaxPct(token: string): Promise<number | null> {
   const key = token.toLowerCase();
   const hit = taxCache.get(key);
@@ -311,6 +328,18 @@ async function main(): Promise<void> {
      * OBSERVE mode; going live requires a Postgres-backed ledger first, and `assertDurableLedger`
      * is what will stop anyone forgetting.
      */
+    /*
+     * ══ ONE MARKET, SHARED BY THE WHOLE COLONY ══
+     *
+     * `decide` is called once PER STRAY, and every stray sees the SAME market. Building the
+     * candidate set inside it meant the quoter calls, sell simulations, holder fetches and
+     * buy-ratio fetches ran once per stray over identical inputs.
+     *
+     * MEASURED: 7 strays x 17 candidates took 40 SECONDS a tick — seven times the same work. This
+     * memoises the built set for the life of one tick, keyed on the block, so the Nth stray reuses
+     * what the first one paid for. It is the same reason `discover()` runs once per tick rather
+     * than once per stray, applied one level deeper.
+     */
     decide: async ({ stray, candidates, gasPriceWei, currentValueWei, block }) => {
       const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -329,7 +358,10 @@ async function main(): Promise<void> {
        * real shape instead, and a token we cannot quote is simply not a candidate this tick.
        */
       const sizeProbeWei = 1_200_000_000_000_000n; // ~$2.3, the size we would actually trade
-      const huntCandidates = [];
+      /** Only the fully-built candidates. `string` means the sell simulation refused it; `null`
+       * means it could not be quoted or read at all. Neither is a candidate. */
+      type Built = Exclude<Awaited<ReturnType<typeof buildCandidate>>, string | null>;
+      const huntCandidates: Built[] = [];
       /** Named in the decision log, so a user can see WHY the colony is quiet. */
       const unsellable: string[] = [];
 
@@ -408,20 +440,25 @@ async function main(): Promise<void> {
        * 2. **Bounded parallelism** over the rest. A CAP rather than an unbounded `Promise.all`:
        *    the pad allows 240 req/60s and a full fan-out would burn that budget in one tick.
        */
-      const worth = candidates.filter((c) => c.marketCapEth > SEED_MARKET_CAP_ETH);
-      const skippedAtSeed = candidates.length - worth.length;
-
-      const CONCURRENCY = 6;
-      for (let i = 0; i < worth.length; i += CONCURRENCY) {
-        const batch = await Promise.all(worth.slice(i, i + CONCURRENCY).map(buildCandidate));
-        for (const b of batch) {
-          if (b === null) continue;
-          if (typeof b === "string") {
-            unsellable.push(b);
-            continue;
-          }
-          huntCandidates.push(b);
+      /*
+       * Build the market ONCE per tick and share it. See the note on `decide` above: this used to
+       * run per stray over identical inputs and cost 40 seconds a tick with seven strays.
+       */
+      if (marketCache === null || marketCache.block !== block) {
+        const worth = candidates.filter((c) => c.marketCapEth > SEED_MARKET_CAP_ETH);
+        const built: unknown[] = [];
+        for (let i = 0; i < worth.length; i += CONCURRENCY) {
+          built.push(...(await Promise.all(worth.slice(i, i + CONCURRENCY).map(buildCandidate))));
         }
+        marketCache = { block, built };
+      }
+      for (const b of marketCache.built) {
+        if (b === null) continue;
+        if (typeof b === "string") {
+          unsellable.push(b);
+          continue;
+        }
+        huntCandidates.push(b as Built);
       }
 
       const d = await strategyDecide(

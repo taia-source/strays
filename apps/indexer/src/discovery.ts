@@ -257,9 +257,45 @@ export async function fetchCandidates(opts: {
   readonly minHolders?: number;
 }): Promise<DiscoveryResult> {
   const limit = opts.limit ?? 48;
+  /*
+   * ══ WHY THREE SORTS AND NOT `newest` ALONE ══
+   *
+   * `sort=newest` was the only source, and it is structurally incapable of supplying what the
+   * strategy needs. MEASURED on live data: of the newest 48 tokens, 5 survive the seed-cap
+   * prefilter and their ages are 1, 2, 8, 14 and 41 MINUTES. The signal measures a move over a
+   * 60-minute window, so every candidate was refused with "age < 3600s" — the scanner and the
+   * strategy were looking at disjoint sets and the cats could never trade.
+   *
+   * `sort=mcap` and `sort=trending` return established tokens: ages up to 573h and 235h, with
+   * real volume. And they are dramatically safer — MEASURED with the sell simulation:
+   *
+   *     newest 40  ->   7 sellable  (18%)
+   *     mature 11  ->  11 sellable (100%)
+   *
+   * `newest` is kept because a genuinely new token is the product's premise, and the sell
+   * simulation is what makes including it safe rather than reckless.
+   */
   let list: unknown;
   try {
-    list = await getJson(`${API}/tokens?sort=newest&limit=${limit}`);
+    const [newest, mcap, trending] = await Promise.all([
+      getJson(`${API}/tokens?sort=newest&limit=${limit}`),
+      getJson(`${API}/tokens?sort=mcap&limit=${limit}`).catch(() => null),
+      getJson(`${API}/tokens?sort=trending&limit=${limit}`).catch(() => null),
+    ]);
+    const merged: unknown[] = [];
+    const seen = new Set<string>();
+    for (const src of [mcap, trending, newest]) {
+      if (!isRecord(src) || !Array.isArray(src.tokens)) continue;
+      for (const row of src.tokens) {
+        const addr = isRecord(row) && typeof row.address === "string" ? row.address.toLowerCase() : null;
+        if (addr === null || seen.has(addr)) continue;
+        seen.add(addr);
+        merged.push(row);
+      }
+    }
+    // One source failing must not empty the pond — a fetch failure is a failure mode, not a
+    // conclusion. Only a total failure of all three is fatal.
+    list = merged.length > 0 ? { tokens: merged } : newest;
   } catch (err) {
     // A fetch failure is a failure mode, not a conclusion. The caller must NOT read this as
     // "there are no tokens today" — that is how a service quietly stops trading.
@@ -280,23 +316,39 @@ export async function fetchCandidates(opts: {
     (t) => t.marketCapEth >= (opts.minMarketCapEth ?? SEED_MARKET_CAP_ETH + 0.044),
   );
 
+  /*
+   * ══ DETAIL FETCHES RUN IN PARALLEL, WITH A CAP ══
+   *
+   * This was a serial `for` loop, one detail fetch per candidate. MEASURED: 61 candidates at
+   * ~500ms each = **30 SECONDS of a 34-second tick**, and it scales linearly with the pad. At a
+   * 5-minute tick that is 10% of the cycle spent waiting on HTTP that could have been concurrent.
+   *
+   * The cap is the point, not the parallelism: the pad allows 240 req/60s, so 8 concurrent
+   * requests at ~500ms each is ~16 req/s sustained — inside the budget with room, and far short
+   * of the unbounded fan-out that would trip the rate limiter and turn a slow tick into no tick.
+   */
   const candidates: Candidate[] = [];
-  for (const s of huntable) {
+  const DETAIL_CONCURRENCY = 8;
+
+  const fetchOne = async (s: TokenSummary): Promise<Candidate | null> => {
     const cached = detailCache.get(s.address);
-    if (cached && opts.now - cached.at < DETAIL_TTL_MS) {
-      candidates.push(cached.value);
-      continue;
-    }
+    if (cached && opts.now - cached.at < DETAIL_TTL_MS) return cached.value;
     try {
       const raw = await getJson(`${API}/tokens/${s.address}`);
       const detail = parseDetail(raw, { time: opts.now, block: opts.block });
-      if (!detail) continue; // a row we cannot build a swap from is skipped, never guessed at
-      if (detail.holders < (opts.minHolders ?? 3)) continue;
+      if (!detail) return null; // a row we cannot build a swap from is skipped, never guessed at
+      if (detail.holders < (opts.minHolders ?? 3)) return null;
       detailCache.set(s.address, { at: opts.now, value: detail });
-      candidates.push(detail);
+      return detail;
     } catch {
-      // One bad detail fetch must not fail the cycle. The token is simply not a candidate now.
+      // One bad detail fetch must not fail the cycle.
+      return null;
     }
+  };
+
+  for (let i = 0; i < huntable.length; i += DETAIL_CONCURRENCY) {
+    const batch = await Promise.all(huntable.slice(i, i + DETAIL_CONCURRENCY).map(fetchOne));
+    for (const d of batch) if (d !== null) candidates.push(d);
   }
 
   return { ok: true, candidates, scanned: summaries.length };

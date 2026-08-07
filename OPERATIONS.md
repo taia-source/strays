@@ -115,6 +115,20 @@ with a `failed` outcome means the strategy fired and the transaction did not —
 **"The keeper is quiet."** Check `/health` on the keeper service — it reports `mode: observe|live`
 and the tick interval. A keeper in observe mode is *supposed* to be quiet on chain.
 
+**RPC rate limiting — MEASURED, 2026-08-07.** The public endpoint
+`https://rpc.mainnet.chain.robinhood.com` is fronted by Cloudflare and **starts returning a 403
+managed challenge** under sustained load. It surfaced mid-session as an HTML challenge page in
+place of a JSON-RPC response, which `cast` reports as a wall of HTML rather than as a rate limit.
+
+Two consequences worth knowing:
+
+- **A keeper on a 5-minute tick with N strays makes ~6 calls per candidate.** That is fine at this
+  scale and is exactly why the candidate pipeline is prefiltered and capped at 6 concurrent — but
+  the ceiling is real and it is not documented anywhere by the chain.
+- **`ROBINHOOD_RPC_URL` in `/root/.env` is a working alternate endpoint** and should be preferred
+  for anything sustained. `@taia/rpc` exists for this: concurrency caps and a fallback transport
+  rather than a single hardcoded URL.
+
 **Discovery failures.** The pad's API is unofficial, has no OpenAPI spec, and its routes were
 reverse-engineered from the site bundle. It can change without notice. The indexer logs
 `discovery failed (recoverable|FATAL)` and returns nothing to hunt for that cycle — it never treats

@@ -119,6 +119,15 @@
 
 import { fnv1a, quantise, shadeSphere } from "@taia/ui/mechanisms";
 
+import { GRID_H, GRID_W } from "./dims.js";
+import {
+  type ProfileGeometry,
+  type ProfilePart,
+  PROFILE_ROWS,
+  profilePartAt,
+  profileTailCells,
+} from "./profile.js";
+
 /**
  * THE NATIVE GRID. Every cat is authored at this resolution and never at another.
  *
@@ -138,8 +147,7 @@ import { fnv1a, quantise, shadeSphere } from "@taia/ui/mechanisms";
  * Square, so the same sprite sits in a map slot, a detail portrait and a roster chip without any of
  * them cropping it. 24 also halves cleanly to 12 and is a whole multiple of the 3px quantum.
  */
-export const GRID_W = 24;
-export const GRID_H = 24;
+export { GRID_H, GRID_W };
 
 /**
  * ══ THE ROW BUDGET — which rows each part owns ══
@@ -744,8 +752,25 @@ function frameGeometry(geom: CatGeometry, frame: number): CatGeometry {
          * is the axis most likely to ship dead, and the assertion is the only thing that would have
          * caught it.
          */
+        /*
+         * ══ THE FLICK MOVES THE LIFT, NOT ONLY THE CURL ══
+         *
+         * The flick pushed `tailCurl` toward the far end of its range, which worked while the curl
+         * swept the tail HORIZONTALLY. Once the curl was split into a bounded X sweep plus a vertical
+         * hook — the fix for tails clipping off the right edge — the X term took `Math.abs(curl)`, so
+         * flipping the curl's sign moved the tip vertically but left its X untouched, and on a cat
+         * whose tail was already near the vertical the net movement was under a cell.
+         *
+         * `mackerel` came out with a flick that moved ZERO cells. That is the fifth instance in this
+         * package of the same defect — a parameter whose effect falls below the quantum after a
+         * downstream change — and it is why the frame assertion measures the rendered cells rather
+         * than trusting the geometry to have moved.
+         *
+         * Driving BOTH axes means the flick always has somewhere to go: the lift raises the whole
+         * curve and the curl hooks the tip, and the two cannot cancel.
+         */
         tailCurl: Math.max(-1, Math.min(1, geom.tailCurl - Math.sign(geom.tailCurl || 1) * 0.9)),
-        tailLift: Math.min(1, geom.tailLift + 0.22),
+        tailLift: Math.max(0, Math.min(1, geom.tailLift > 0.5 ? geom.tailLift - 0.55 : geom.tailLift + 0.55)),
         // One ear twitches back. Applied to the ANGLE rather than the height so the ear leans
         // rather than shrinking — a shrinking ear reads as the sprite being clipped.
         earAngle: Math.max(-1, Math.min(1, geom.earAngle - 0.4)),
@@ -755,211 +780,6 @@ function frameGeometry(geom: CatGeometry, frame: number): CatGeometry {
       return geom;
     default:
       return geom;
-  }
-}
-
-/**
- * How posture and state move the row budget. Returns the rows the BODY occupies and the rows the
- * LEGS do.
- *
- * A function rather than a table because the two spans must tile without a gap — a gap between the
- * body's last row and the leg's first is rule 1 broken, and computing the leg span FROM the body's
- * end makes that impossible to get wrong.
- */
-function postureRows(
-  posture: Posture,
-  state: CatState,
-): {
-  readonly bodyTop: number;
-  readonly bodyEnd: number;
-  readonly legEnd: number;
-} {
-  /*
-   * ══ `bodyTop` IS WELDED TO THE HEAD, AND THAT IS NOT AN OVERSIGHT ══
-   *
-   * v1 moved `bodyTop` down a row for `crouch`, on the reasoning that a crouched cat's body sits
-   * lower. It broke 250 of 300 cats: the head still ended where it ended and the body now started a
-   * row later, so the row between was EMPTY and the sprite was two disconnected pieces — a floating
-   * head above a body. Silhouette rule 1 violated wholesale, found by the flood-fill test rather
-   * than by eye because at 96px it read as a slightly odd neck.
-   *
-   * The lesson generalises: the body's TOP is welded to the head and is not a free parameter.
-   * Posture varies the body's BOTTOM and the leg rows, which is where the silhouette has slack —
-   * and, conveniently, where a real cat's posture actually varies. A cat lowers its haunches and
-   * folds its legs; its head does not detach from its shoulders.
-   */
-  const bodyTop = ROWS.body[0];
-  /*
-   * A DEAD cat lies down. The body runs all the way to the floor and the legs get nothing — which
-   * is the ONE place a posture is allowed to delete the legs, because a dead cat is not standing on
-   * them. Every other state keeps rule 3 intact.
-   */
-  /*
-   * A DEAD cat lies down: the body spreads to the floor and the legs fold under it, so the last two
-   * rows are leg rather than body. That is the ONE place a state is allowed to shorten the legs
-   * below what rule 3 asks for — a lying animal's legs are folded, not standing — and it is why
-   * `legEnd` is not simply `bodyEnd`. Rule 3's two-post assertion is scoped to the living states in
-   * `grid.test.ts` for exactly this reason, stated there rather than left implicit.
-   */
-  /*
-   * ══ A DEAD CAT LIES DOWN, AND THAT MEANS THE HEAD COMES DOWN TOO ══
-   *
-   * The first two attempts kept `bodyTop` welded to the head and only changed the body's bottom, on
-   * the rule this function is built around. The result, rendered at both sheet sizes, was a cat
-   * standing bolt upright drawn in one flat value — a BELL, or a chess pawn. It did not read as a
-   * dead animal at all, because the single most recognisable thing about a dead animal is that it is
-   * DOWN, and posture was the one axis the state was not allowed to touch.
-   *
-   * The weld rule exists to stop a GAP opening between head and body, and it is worth restating why
-   * that matters: the head's rows are fixed by `ROWS`, so moving the body down leaves the row between
-   * them empty and the sprite becomes two disconnected pieces. That is a real constraint and it is
-   * not what is happening here — this raises the body's TOP to overlap the head's own rows, so the
-   * body grows UP into the skull rather than dropping away from it. There is no row between them to
-   * be empty; there is an overlap, and `partAt` resolves the head first, so the overlap is harmless.
-   *
-   * The result is a low, wide, flat mass that fills the bottom two thirds of the grid with the skull
-   * embedded in its upper edge — a cat collapsed on its side. The flood-fill test covers this state
-   * like every other, so the connectivity claim is asserted rather than argued.
-   */
-  /*
-   * ══ THE DEAD BODY STARTS BELOW THE SKULL, NOT INSIDE IT ══
-   *
-   * Overlapping the body with the head made the two one mass, so the silhouette was a wide triangle
-   * with an eye pair in it — the bell again, just lower. The body has to start where the head ENDS,
-   * exactly as it does in every living state, and the weld is preserved because both have been
-   * displaced by the same `DEAD_DROP`.
-   *
-   * The rows it gets are DELIBERATELY FEW: two, against the seven a living cat's body has. That is
-   * what makes the mass horizontal rather than tall — a lying cat is a long low shape, and the width
-   * comes from `deadSpread` while the height is taken away here. A dead cat that kept seven body
-   * rows was a standing cat lying about it.
-   */
-  if (state === "dead") {
-    return { bodyTop: ROWS.head[1] + DEAD_DROP, bodyEnd: GRID_H - 1, legEnd: GRID_H };
-  }
-  switch (posture) {
-    /*
-     * STANDING — the body ends early and the legs take all four rows, so there is daylight under
-     * the cat. The tallest, lightest silhouette of the four.
-     */
-    case "stand":
-      return { bodyTop, bodyEnd: ROWS.legs[0] - 1, legEnd: GRID_H };
-    /*
-     * CROUCHED — the body runs a row lower over the leg rows and the legs keep two rows underneath
-     * it. The lowest, heaviest silhouette: a cat flattened to the ground.
-     *
-     * v1 gave the body every row down to the floor and left the legs a single row, and rule 3
-     * requires two 2px posts with a visible gap — one row of them is not a leg. Posture may change
-     * how much daylight there is under the cat; it may NOT delete a feature the silhouette rules
-     * require. A rule a posture can switch off is not a rule.
-     */
-    case "crouch":
-      return { bodyTop, bodyEnd: ROWS.legs[0] + 2, legEnd: GRID_H };
-    /*
-     * STRETCHING — the play bow. The body reaches the same row as sitting, but `postureTilt` drops
-     * its FRONT and lifts its back, which is what makes the pose; the rows alone cannot carry it.
-     */
-    case "stretch":
-      return { bodyTop, bodyEnd: ROWS.legs[0] + 1, legEnd: GRID_H };
-    default:
-      return { bodyTop, bodyEnd: ROWS.legs[0], legEnd: GRID_H };
-  }
-}
-
-/** The neck row for a given posture — the body's own FIRST row, whichever that is. */
-function neckRowFor(posture: Posture, state: CatState): number {
-  return postureRows(posture, state).bodyTop;
-}
-
-/**
- * How much wider the haunch runs for a given posture.
- *
- * Posture has to change the silhouette without moving the body's top row (which is welded to the
- * head) and without stealing rows from the legs (which rule 3 requires). Width is what is left, and
- * it is the honest cue: a crouching cat spreads against the ground, a standing one draws its mass
- * up and in.
- */
-function postureSpread(posture: Posture): number {
-  switch (posture) {
-    // Drawn up and narrow — a cat on its feet is taller and slimmer through the body.
-    case "stand":
-      return -1.0;
-    // Flattened and spread wide against the ground. 0.9 rather than 1.4 — see `haunchHalfWidth`
-    // for why the sum of this and the state spread had to be brought under the clamp.
-    case "crouch":
-      return 0.9;
-    // A stretching cat's haunch is high and its chest is low; the width stays near the reference.
-    case "stretch":
-      return 0.3;
-    default:
-      return 0;
-  }
-}
-
-/**
- * ══ STATE REACHES THE BODY'S WIDTH — this is "the state affects the ANIMAL" ══
- *
- * Returned as a half-width delta in pixels, applied to the haunch alongside `build` and
- * `postureSpread`. A starving cat is nearly two pixels narrower on each side than a fed one, which
- * at 24px is a change of about a fifth of the body's width — unmistakable at 32px, where a dimming
- * is not.
- *
- * The magnitudes are deliberately larger than `build`'s own range. State has to be readable ACROSS
- * cats — a starving stocky cat must read as thinner than a fed lean one — and if state moved the
- * width by less than the identity axis did, it would be masked by it on half the colony.
- */
-function stateSpread(state: CatState): number {
-  switch (state) {
-    /*
-     * ══ THE MAGNITUDES ARE 1.2 AND −2.1, WIDENED AFTER A TEST FOUND THEM TOO WEAK ══
-     *
-     * They were 0.9 and −1.7, a span of 2.6 half-widths. The cell-difference assertion found
-     * `stray-2` with only NINETEEN cells between its fed and starving silhouettes — under 5% of the
-     * sprite, which at 48px is nothing. The cause is that the haunch is CLAMPED at both ends (see
-     * `haunchHalfWidth`), and on a lean cat in a narrow posture the starving value was already
-     * hitting the floor, so most of the intended narrowing was being thrown away by the clamp.
-     *
-     * A span of 3.3 clears the clamp on every combination of build and posture, which the test now
-     * asserts across the whole id set rather than on the reference cat alone. This is the same
-     * failure mode the hash-budget table warns about — an axis whose effect is smaller than what the
-     * downstream quantisation or clamping preserves is a dead axis — arriving in a state rather than
-     * in an identity trait.
-     */
-    // Plump. A cat that has eaten carries visible condition.
-    case "fed":
-      return 1.2;
-    // Visibly thin. Ribs are drawn separately — see `ribDrop`.
-    case "starving":
-      return -2.1;
-    /*
-     * ══ A DEAD CAT'S BODY IS NARROWER THAN ITS HEAD, AND THAT IS WHAT BREAKS THE BELL ══
-     *
-     * Three renders of the dead state produced the same picture — a wide triangle with two dark eyes
-     * in it, reading as a bell or a chess pawn — and each fix addressed the wrong variable: first
-     * the body's bottom row, then its top, then the whole animal's vertical offset. The empty band
-     * above the cat arrived and the bell stayed.
-     *
-     * The actual cause is a WIDTH relationship. The living cat's silhouette reads because the head
-     * is wider than the shoulder — that pinch is rule 2's whole purpose and it is the thing that
-     * separates a head from a body at a glance. The dead body kept the living haunch's width, which
-     * at its top row already exceeded the skull, so head and body fused into one convex mass with no
-     * neck anywhere. A convex mass tapering upward to a point IS a bell; there was nothing else it
-     * could have read as.
-     *
-     * Pulling the haunch in by 2.6 puts the dead body's widest row inside the skull's own width, so
-     * the silhouette has a visible shoulder BELOW a wider head — the same pinch every living cat
-     * has, which is what makes it read as an animal at all. The mass is then low, compact and
-     * horizontal, which is a cat lying down.
-     *
-     * The general lesson, and this file's sixth instance of it: three fixes in a row that each move
-     * a different parameter and produce the same failure mean the failure is STRUCTURAL, and the
-     * structure here was a width comparison that no amount of vertical adjustment could reach. It is
-     * the identical pattern the whiskers went through, recorded in `isWhisker`.
-     */
-    case "dead":
-      return 0;
-    default:
-      return 0;
   }
 }
 
@@ -1011,65 +831,6 @@ function stateGeometry(geom: CatGeometry, state: CatState): CatGeometry {
  * columns of jaw on each side, which is what makes the head read as a cat rather than as a fox
  * (narrow jaw) or a bear (uniform round).
  */
-/**
- * ══ THE EXPONENT IS 2.2, LOWERED FROM 2.9 — measured at 384x zoom, and it is the largest ══
- * ══ single correction this file has had. ══
- *
- * 2.9 was chosen on the reasoning that "a cat's skull is boxier than a foal's, so the exponent
- * should be higher than openhood's 2.6". The reasoning was right about anatomy and wrong about
- * RASTERISATION, and the render settled it: at 2.9 a 12px-wide superellipse rounds to an almost
- * perfect RECTANGLE — the corners it rounds off are smaller than one pixel, so the head came out as
- * a square slab with two ear nubs stranded on top of it. It read as an owl, or as a robot.
- *
- * That is the same lesson `bodyNormal` records for the body and this file keeps re-learning: an
- * exponent that reads as "gently rounded" in continuous maths reads as "square" once the rounding it
- * produces is under a pixel. The higher the exponent, the smaller that rounding — so the direction
- * that sounds boxier is the direction that DESTROYS the box's corners.
- *
- * At 2.2 the corners round by a visible pixel and a half, which gives the skull a jaw that narrows
- * toward the chin and a crown that curves in toward the ears. That narrowing is what a cat's head
- * actually does, and it is also what gives the ears somewhere to SIT — a rectangle has no shoulders
- * for an ear to rise from.
- */
-const HEAD_EXP = 2.2;
-
-/**
- * ══ THE HEAD'S ELLIPSE IS TALLER THAN THE ROWS IT OCCUPIES, AND THAT IS THE POINT ══
- *
- * `ry` is the head's row span plus `HEAD_RY_PAD`, so the rasterised head is the ellipse's MIDDLE
- * band rather than its full height. Without the pad the crown row sits at `ny = -0.88`, where a
- * superellipse has narrowed to about half its width — a 5.2 half-width head takes only 2.8 at its
- * top row.
- *
- * That narrow crown is what made the ears touch. Two ears whose outer edges are flush with a 2.8
- * crown have their inner edges meeting at the centreline, so the pair rasterised as one continuous
- * crest and the cat read as having a mohawk rather than two ears. Widening the ears made it worse
- * and moving them apart detached them from the skull — the two constraints were unsatisfiable
- * because the SKULL was the thing that was wrong.
- *
- * Padding `ry` flattens the taper across the rows that are actually drawn.
- *
- * ══ 2.6, RAISED FROM 1.1, AND THIS WAS THE ROOT CAUSE BEHIND NINE FAILED EAR FIXES ══
- *
- * A trace of the ear's own arithmetic finally showed what every one of those fixes had been working
- * around: at a pad of 1.1 the skull's half-width AT THE EAR'S BASE ROW was 2.10 on a mid-range head
- * — about four columns of crown for TWO ears and a gap between them. There was simply not enough
- * skull to stand two ears on, so every constraint the ear geometry tried to satisfy was
- * unsatisfiable, and each fix moved the failure to a different cat rather than removing it.
- *
- * Nine attempts at the ear, and the ear was never wrong. That is worth recording as a debugging
- * lesson rather than a geometry one: when a series of fixes to one part keeps relocating the same
- * failure, the constraint being violated probably belongs to a NEIGHBOURING part. The trace that
- * settled it took two minutes and would have saved all nine.
- *
- * At 2.6 the crown carries about 3.6 half-columns — seven columns of skull — which fits two 3-column
- * ear bases with a gap, at every head width in the range. The head is correspondingly boxier at the
- * top, which is also what a cat's skull looks like between its brow and its ear line.
- *
- * The chin gains the same flattening, which is also correct — a cat's jaw does not come to a point.
- */
-const HEAD_RY_PAD = 2.6;
-
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * HOW FAR THE WHOLE ANIMAL DROPS WHEN IT DIES — and why this breaks the weld rule on purpose.
@@ -1169,1422 +930,6 @@ const DEAD_SLIDE = 0;
 function stateSlide(state: CatState): number {
   return state === "dead" ? DEAD_SLIDE : 0;
 }
-
-function headNormal(
-  px: number,
-  py: number,
-  headWidth: number,
-  drop: number,
-  slide: number,
-): { nx: number; ny: number } | null {
-  const cy = (ROWS.head[0] + ROWS.head[1]) / 2 + drop;
-  const ry = (ROWS.head[1] - ROWS.head[0]) / 2 + HEAD_RY_PAD;
-  const nyRaw = (py + 0.5 - cy) / ry;
-  const rx = headWidth * cheekFlare(nyRaw);
-  /*
-   * ══ THE HEAD IS CLIPPED TO ITS OWN ROW BUDGET ══
-   *
-   * `HEAD_RY_PAD` flattens the ellipse's taper by making it taller than the rows it draws on, and it
-   * does that at BOTH ends. The crown gain is what the pad is for; the chin gain is a side effect,
-   * and it is destructive: a dump showed the head reaching row 13, which is the BODY's first row and
-   * the neck. `partAt` resolves the head before the body, so the head painted over the neck row at
-   * its own bright floor and rule 2's break had nothing to break against — the head and body fused,
-   * which is unitick's amoeba arriving through a padding constant.
-   *
-   * The budget in `ROWS` is what owns the rows; the pad only shapes the curve within them. Clipping
-   * here rather than shrinking the pad keeps the crown wide — the two ends of the ellipse wanted
-   * opposite things and only a clip can give both.
-   */
-  if (py < ROWS.head[0] + drop || py >= ROWS.head[1] + drop) return null;
-  const nx = (px + 0.5 - CX) / rx;
-  const ny = nyRaw;
-  if (Math.abs(nx) ** HEAD_EXP + Math.abs(ny) ** HEAD_EXP > 1) return null;
-  return { nx, ny };
-}
-
-/**
- * THE CHEEK FLARE. A smooth bulge peaking just below the head's midline, tapering to nothing at the
- * brow and at the chin.
- *
- * A cosine rather than a linear ramp so the widest row is a single row and the flare eases off above
- * and below it; a linear flare produced a head that was a trapezium, which reads as a helmet.
- * Peaking a third of the way down from the midline puts the widest point level with the muzzle,
- * which is where a cat's cheek ruff actually is.
- *
- * 0.09, lowered from 0.14: with the exponent at 2.2 the head is already narrowing toward the chin,
- * so a strong flare fought that narrowing and flattened the jaw back out. The flare's job is to put
- * ONE row of extra width at the cheek, not to restore the slab.
- *
- * Extracted so `headNormal` and `headHalfWidthAt` cannot disagree. Every gap-in-the-silhouette bug
- * in this file has been two pieces of geometry measuring one head two ways.
- */
-function cheekFlare(ny: number): number {
-  return 1 + 0.09 * Math.max(0, Math.cos((ny - 0.35) * 2.4));
-}
-
-/** The head's real half-width at one row, solved from the superellipse the rasteriser used. */
-function headHalfWidthAt(py: number, headWidth: number, drop = 0): number {
-  const cy = (ROWS.head[0] + ROWS.head[1]) / 2 + drop;
-  const ry = (ROWS.head[1] - ROWS.head[0]) / 2 + HEAD_RY_PAD;
-  const ny = (py + 0.5 - cy) / ry;
-  const remain = 1 - Math.abs(ny) ** HEAD_EXP;
-  if (remain <= 0) return 0;
-  return headWidth * cheekFlare(ny) * remain ** (1 / HEAD_EXP);
-}
-
-/**
- * THE MUZZLE — a SHORT rounded snout, and "short" is the entire cat cue.
- *
- * openhood's muzzle records the failure to avoid: "a first pass at rx 4.2 / ry 2.4 spread the
- * muzzle nine pixels wide and turned the whole lower face into a snout — the exact small-horse
- * failure". A cat's muzzle is shorter than a horse's by a much larger margin than a dog's is: it
- * protrudes barely at all, and the whole lower face is two rounded whisker pads either side of a
- * small nose.
- *
- * So this is drawn WIDE and FLAT — 4.6 across, 1.5 tall — rather than as a protruding snout. That
- * width is the whisker pads, and it is what separates a cat's face from a fox's at 24px. v1 drew
- * this as a fixed 3px mark on one row because there was no room to model it, which is exactly the
- * detail that made v1's faces generic.
- *
- * Its normal leans TOWARD the viewer (`ny` biased negative), so it takes more light than the cheek
- * beside it and separates without an outline.
- */
-function muzzleNormal(
-  px: number,
-  py: number,
-  drop: number,
-  slide: number,
-): { nx: number; ny: number } | null {
-  /*
-   * ══ 3.3 WIDE, NOT 4.6 — measured at 384x zoom ══
-   *
-   * At rx 4.6 the muzzle spanned nine of the head's twelve columns, and floored a step above the
-   * cheek it came out as a PALE SLAB filling the entire lower face. That is openhood's recorded
-   * muzzle failure exactly ("spread the muzzle nine pixels wide and turned the whole lower face into
-   * a snout"), reproduced here by copying its first-pass number rather than its corrected one.
-   *
-   * The whisker PADS are what wanted the width, and they are not the muzzle — a cat's pads sit
-   * either side of a small snout, and drawing them as one continuous form loses the small snout that
-   * is the actual cat cue. At 3.3 the muzzle is 6-7 columns: a distinct snout with lit cheek either
-   * side of it, which is the read the width was reaching for and did not get.
-   */
-  const cy = 11.6 + drop;
-  const rx = 3.3;
-  const ry = 1.5;
-  /*
-   * THE MUZZLE MAY NEVER REACH THE EYE ROWS — measured from a step-grid dump.
-   *
-   * At `cy` 11.6 with `ry` 1.5 the ellipse's top edge is 10.1, so it claimed pixels on row 10 —
-   * which is the eyes' own lower row. `partAt` resolves the eye first, so the eyes survived, but the
-   * muzzle filled the 3px bridge BETWEEN them at its own bright floor, and the two eyes plus a lit
-   * bridge became one horizontal bar: the VISOR failure that the dark nose bridge exists to prevent,
-   * arriving from underneath it.
-   *
-   * A hard row floor rather than a smaller `ry`, because the muzzle needs its height to model a
-   * snout and the constraint is specifically about the eye band. This is the same class of fix as
-   * `bodyNormal` stopping where the legs begin: parts owning disjoint rows is cheaper and more
-   * legible than depth-sorting them.
-   */
-  if (py < EYE_Y + EYE_H + drop) return null;
-  const nx = (px + 0.5 - CX - slide) / rx;
-  const ny = (py + 0.5 - cy) / ry;
-  if (nx * nx + ny * ny > 1) return null;
-  return { nx: nx * 0.65, ny: ny * 0.65 - 0.2 };
-}
-
-/**
- * THE NOSE — a 2x1 dark mark at the top centre of the muzzle.
- *
- * v1 rejected a nose outright: "a dark 1px pixel in the centre of the muzzle read as a missing
- * pixel — a hole in the face — because at 16px a single dark pixel surrounded by lit ones is
- * indistinguishable from a dither dropout."
- *
- * That rejection was correct AT 16PX and is wrong here, and the difference is exactly the two
- * pixels: a 2x1 mark cannot be a dither dropout, because the dither operates per-pixel and never
- * produces an adjacent pair. At 24px the nose is affordable, and it is worth a great deal — the
- * inverted triangle of two eyes and a nose is the single strongest "this is a face" signal there
- * is, and without it a face is two lit dots on a blank field.
- *
- * Returns a STEP rather than a normal, for `eyeStepAt`'s reason: a nose is a MARK, not a surface.
- */
-function noseStepAt(px: number, py: number, drop: number, slide: number): number | null {
-  if (py !== 11 + drop) return null;
-  const dx = px + 0.5 - CX - slide;
-  if (Math.abs(dx) > 1) return null;
-  // Two steps below the muzzle's own floor, so it reads as a dark mark on a lit snout. Not step 0:
-  // at 0 it is the outline's own value and the nose read as a hole punched through the face.
-  return 2;
-}
-
-/**
- * AN EYE. Returns a STEP directly, never a normal.
- *
- * openhood's reason holds and is worth restating: an eye is not a shaded surface, it is a MARK.
- * Running it through the diffuse model gives it a gradient, and a gradient across a few pixels
- * reads as a dent in the face rather than as an eye.
- *
- * ══ HERE IT IS A BRIGHT MARK WITH A DARK PUPIL — the referent, not a style ══
- *
- * openhood's eyes are step 0, the darkest, which is correct for a creature seen in daylight. This
- * cat is seen through an IR camera trap, and the single most recognisable thing about IR wildlife
- * footage is EYESHINE: the tapetum lucidum reflects the illuminator straight back, so an animal's
- * eyes are the BRIGHTEST thing in the frame by a wide margin.
- *
- * ══ AND AT 24PX THE EYE FINALLY HAS A PUPIL ══
- *
- * v1's eye was 2x1, so it was two lit pixels and nothing else — a cat has the same two dots as
- * every other cat, and eyeshine with no pupil reads as a lamp rather than as an eye. At 3x2 the
- * mask can hold a bright rim AND a dark vertical pupil, which is what makes a cat's eye a CAT's
- * eye: the slit pupil is the most distinctive thing about it.
- *
- * The masks are WRITTEN OUT rather than computed, for openhood's recorded reason: it derived three
- * eye shapes from `dx === 1` predicates and shipped three bugs in four lines, including a "happy
- * squint" that curved downward into a frown. At this size there is nothing to compute.
- *
- * `#` is full eyeshine, `o` is the dimmer iris ring, `.` is the dark slit pupil, ` ` is face.
- */
-function eyeStepAt(
-  px: number,
-  py: number,
-  shape: number,
-  frame: number,
-  drop: number,
-  slide: number,
-): number | null {
-  const dy = py - EYE_Y - drop;
-  if (dy < 0 || dy >= EYE_H) return null;
-  for (const ex of [EYE_L_X + slide, EYE_R_X + slide]) {
-    const dx = px - ex;
-    if (dx < 0 || dx >= EYE_W) continue;
-
-    /*
-     * ══ THE BLINK IS A FRAME, NOT A SHAPE ══
-     *
-     * Frame 2 closes every eye regardless of the cat's own `eyeShape`. A blink that varied per cat
-     * would be an identity axis rather than an animation, and the two must not share a channel: a
-     * viewer watching a cat blink must not conclude that the cat CHANGED.
-     *
-     * A closed eye is the BOTTOM row only, at a dim step. Bottom rather than top because a cat's
-     * upper lid comes down — a closed eye's visible line is the lash line at the bottom of the
-     * socket, and drawing it at the top read as the eye having moved up the face.
-     */
-    if (frame % CAT_FRAMES === 2) {
-      if (dy !== EYE_H - 1) return null;
-      return 3;
-    }
-
-    const MASKS: Readonly<Record<number, readonly string[]>> = {
-      /*
-       * ══ THE PUPIL IS ONE PIXEL ON THE BOTTOM ROW, NOT A COLUMN THROUGH THE EYE ══
-       *
-       * The first 24px mask was `#.#` / `o.o` — a vertical slit down the eye's centre, on the
-       * reasoning that "the slit pupil is the most distinctive thing about a cat's eye". True of a
-       * real cat and false at three pixels: a slit down the middle of a 3px eye is a THIRD of the
-       * eye's area, so both eyes rendered as dark holes with a rim, and eyeshine — the entire reason
-       * these eyes are bright at all — was gone. At 384x zoom the cat looked hollow-eyed.
-       *
-       * The correction is the one openhood reached for at the same size: at 3px there are not enough
-       * pixels for a knocked-out shape to read as anatomy, it just reads as a missing pixel. So the
-       * eye is a solid bright mass with ONE dark pixel low and inward, which reads as a pupil
-       * because of where it sits rather than because of its shape — and leaves five of six pixels
-       * carrying the eyeshine.
-       *
-       * ROUND — wide open. Full eyeshine across the top, iris and pupil below. The default and the
-       * most legible.
-       */
-      0: ["###", "o.o"],
-      /*
-       * NARROW — the top row is iris rather than eyeshine, so the eye reads as more relaxed and
-       * slightly hooded. Distinguishable at a glance rather than by counting pixels.
-       */
-      1: ["o##", "#.o"],
-      /*
-       * HALF — the upper lid down. The top row is iris rather than eyeshine, so the eye reads as
-       * half-closed and drowsy without any pixel going missing.
-       *
-       * ══ EVERY SHAPE KEEPS ALL SIX PIXELS. This was measured and it is the correction. ══
-       *
-       * v1's shape 1 was `#.` — the outer pixel only, meant to read as a narrowed slit. Rendered at
-       * 96px it did not read as a squint; it read as a cat with ONE EYE, or as a sprite with a
-       * dropped pixel. At small sizes a missing pixel is indistinguishable from a dither dropout,
-       * and the face is the one place a viewer reads a dropout as damage rather than as detail.
-       *
-       * So the shapes vary in VALUE, not in presence. What changes is which of the six pixels is
-       * eyeshine, which is iris and which is pupil. A variation axis that degrades into "no
-       * variation" is fine; one that degrades into "broken" is not.
-       */
-      2: ["ooo", "#.#"],
-    };
-    const mask = MASKS[shape] ?? MASKS[0];
-    // The LEFT eye reads its mask mirrored, so an asymmetric shape points both eyes outward rather
-    // than sending both to the same side of the face — which reads as a squint at something
-    // off-frame.
-    const i = ex === EYE_L_X + slide ? EYE_W - 1 - dx : dx;
-    const cell = mask?.[dy]?.[i];
-    if (cell === undefined || cell === " ") return null;
-    if (cell === ".") return 1; // the slit pupil — dark, but above the outline's own 0
-    if (cell === "o") return RAMP_STEPS - 3; // the iris ring
-    return RAMP_STEPS - 1; // full eyeshine
-  }
-  return null;
-}
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE EARS — two triangles with a modelled INNER surface, and the feature that carries identity.
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * This function occupies the slot `hornNormal` did. §9 of `ART-DIRECTION.md` names ear angle as one
- * of the two fixes for an unreadable colony, and a triangle above a round head is the entire
- * difference between "cat" and "any small mammal".
- *
- * ══ THE INNER EAR IS ITS OWN PART, AND THAT IS A v2 CHANGE ══
- *
- * v1 shaded the inner surface through the NORMAL — biasing `nx` inward so the inner half landed a
- * step or two darker. It recorded why it did not draw an explicit inner triangle: "at a base width
- * of 3px the inset triangle is 1px wide and one row tall — a single dark pixel, which the dither
- * erases roughly half the time."
- *
- * At 24px the base is 5-6px, so the inset triangle is 3px wide and 3 rows tall. That is a real
- * shape, and it is drawn as a real shape — `earInner` is its own `Part` taking its own ramp step,
- * two below the outer ear's. That is what makes an ear read as a CONE OPEN TOWARD THE VIEWER
- * rather than as a triangle sticker, and it is the single detail that most separates these ears
- * from v1's.
- *
- * The normal-based shading is KEPT as well, underneath, so the outer surface still turns toward the
- * light across its own width. The explicit inner wedge and the shaded outer surface are doing
- * different jobs: one is anatomy, the other is lighting.
- *
- * ══ WHAT THE THREE EAR AXES DO ══
- *
- * `earAngle` shears the apex sideways by up to `EAR_SHEAR` px. Negative leans the tips OUTWARD (a
- * relaxed, airplane-eared cat), positive leans them INWARD (alert, pricked).
- *
- * `earHeight` is 3, 4 or 5 rows and `earWidth` is a 1.6..2.9 base half-width. Together they span a
- * broad low triangle to a tall narrow spike — far more than either axis reaches alone.
- *
- * ══ THE SHEAR WAS TRIPLED IN v1, AND IT IS SCALED AGAIN HERE ══
- *
- * v1's `EAR_SHEAR` was 1.15 and became 2.6 after a render review found twelve cats whose ears were
- * "effectively the same": a continuous axis whose full range is smaller than the quantum it is
- * rasterised onto is a dead axis. It looks live in the source and in a unit test, and it does
- * nothing on screen.
- *
- * 3.4 here, scaled by the same 1.5x the grid grew. `grid.test.ts` asserts the ear tip moves at
- * least two columns across the range rather than trusting the constant.
- *
- * REJECTED: rotating the whole ear triangle by an angle. Rotation at this size turns the outer edge
- * into an aliased 2px-wide smear and costs the crisp diagonal that reads as "point". A shear moves
- * the apex and leaves both edges as clean lines, which is the same visual information for none of
- * the cost.
- */
-const EAR_SHEAR = 3.4;
-
-function earNormal(
-  px: number,
-  py: number,
-  angle: number,
-  height: number,
-  width: number,
-  headWidth: number,
-  drop: number,
-  slide: number,
-): { nx: number; ny: number; inner: boolean } | null {
-  const baseY = ROWS.ear[1] + drop;
-  // 0 at the base row, 1 at the apex.
-  const t = (baseY - (py + 0.5)) / height;
-  if (t < 0 || t > 1) return null;
-
-  for (const side of [-1, 1] as const) {
-    /*
-     * The ear sits at a fixed FRACTION of the head's half-width rather than at a fixed offset, so a
-     * wide head carries its ears further apart and a narrow one carries them close. That is what
-     * makes `headWidth` move two features for one hash axis.
-     *
-     * 0.58 places the ear centre just over halfway out, which keeps the whole base — centre plus
-     * `width` — inside the skull at every combination of the two axes. Rule 1 by construction.
-     */
-    /*
-     * ══ THE EAR CENTRE IS A FRACTION OF THE SKULL'S WIDTH AT THE ROW THEY MEET ══
-     *
-     * This was `headWidth * 0.58` — a fraction of the head's WIDEST half-width, which is measured at
-     * the head's vertical centre. But the ear meets the skull at its TOP row, where a superellipse
-     * has already tapered in hard: a dump showed a head whose widest half-width was 5.18 taking only
-     * 2.78 at its crown. So the ear base sat at ±3.0 against a crown reaching ±2.78, the ear's inner
-     * column had no skull beneath it, and the outline pass drew a dark ring straight through the
-     * junction. Rendered at 384x zoom, both ears were visibly detached from the head by a dark line
-     * — silhouette rule 1, broken on every cat.
-     *
-     * This is the FIFTH time this file has hit the same defect and the fix is the same one every
-     * time: when two pieces of geometry must meet, DERIVE one from the other. The ear now takes its
-     * position from the skull's real half-width at its own base row, so a narrow crown carries its
-     * ears close together and a broad one sets them apart — and the ear can never start outside the
-     * head, at any combination of the axes, by construction rather than by a constant that happened
-     * to work.
-     *
-     * 0.62 of the CROWN's half-width rather than 0.58 of the widest: the crown is the smaller
-     * measure, so the fraction has to be larger to keep the ears from bunching over the eyes. It is
-     * clamped to leave at least the ear's own base half-width inside the skull, which is what
-     * guarantees the inner base column has head under it.
-     */
-    /*
-     * The ear centre sits at the CROWN's own outer edge, less half the ear's base width — i.e. the
-     * ear's outer edge is flush with the skull's crown and it grows INWARD from there.
-     *
-     * Expressed that way rather than as a fraction, because a fraction has to serve two constraints
-     * that pull opposite ways: too small and the ears bunch together over the eyes (a dump at 0.62
-     * showed the two ear bases TOUCHING at the centreline, so the pair read as one crest); too large
-     * and the inner base column hangs off the skull, which is the detachment this whole block exists
-     * to prevent. Anchoring the ear's OUTER edge to the crown's edge satisfies both at once and at
-     * every combination of `headWidth` and `earWidth`, because both terms are in the expression.
-     */
-    /*
-     * The ear's base is placed so its OUTER edge lands exactly on the crown's edge, by subtracting a
-     * full base half-width rather than the 0.55 of one it used to. With the overhang clamp now
-     * applied at every row (see below), a base that reached past the crown had its outer columns
-     * trimmed away on every row at once — a dump showed cats with ZERO ear pixels, the nub failure
-     * taken to its limit.
-     *
-     * `crownHw - width` puts the whole triangle inside the skull by construction, so the clamp never
-     * binds and never trims anything; it remains as the guarantee rather than as the mechanism. The
-     * `width * 0.9` floor keeps the two ears from meeting at the centreline on the narrowest crowns,
-     * which is the other failure this position has had.
-     */
-    /*
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     * THE EAR'S PLACEMENT — derived in ONE direction, after eight bounds fighting each other.
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *
-     * This block replaced a chain of eight successive bounds — an anchor fraction, a shear cap, a
-     * width shrink, a per-row clamp, a base-row cap, a `t` rescale, a separation floor and a support
-     * bound — each added to fix the cats the previous one broke. Every one of them was individually
-     * reasonable and the set was unsatisfiable, because two of them computed the WIDTH from the
-     * anchor while two others computed the ANCHOR from the width. A cycle cannot be tightened into
-     * correctness; it has to be cut.
-     *
-     * The derivation now runs strictly one way, and each step depends only on the ones above it:
-     *
-     *   1. `supportHw` — how wide the skull is at the ear's own bottom row. The ground truth.
-     *   2. `fitted`    — the ear's half-width, shrunk if the skull cannot carry the hash's request.
-     *   3. `baseCx`    — the anchor, placed from `fitted` so the base always lands on the skull.
-     *   4. `halfWidth` — a per-row taper in whole columns, non-increasing as the row rises.
-     *   5. `centre`    — a per-row shear in whole half-columns, capped so rows always overlap.
-     *
-     * Nothing below reaches back up. That is what makes rule 1 hold for every id rather than for the
-     * ones the last fix happened to be measured on.
-     *
-     * ══ THE EAR IS HINGED AT THE SKULL'S CORNER ══
-     *
-     * A cat's ears sit at the CORNERS of the skull: the outer edge of the ear continues the line of
-     * the cheek, which is what makes head-plus-ears read as one wedge rather than as a ball with
-     * things stuck on it. Anchoring them inboard of that (an early version fitted the whole triangle
-     * inside the crown) reads as a V-shaped notch cut into a round head — several cats looked like
-     * rabbits.
-     */
-    /*
-     * Measured at the head's OWN FIRST ROW — the row directly beneath the ear's base, which is the
-     * row that actually provides the support. It was measured at `baseY - 1`, the ear's own bottom
-     * row, where `headHalfWidthAt` reports the width the head WOULD have if it extended that high;
-     * the head is clipped to its row budget and does not, so the bound was checking a row that is
-     * not drawn. The ear came out spanning columns 7..17 over a head spanning 7..15.
-     *
-     * The ninth and last instance of this file's most-repeated bug: measuring the ideal rather than
-     * the thing the rasteriser draws.
-     */
-    /*
-     * STEP 1 — THE SKULL'S DRAWN COLUMNS AT THE ROW BENEATH THE EAR.
-     *
-     * `headColsEitherSide` counts the columns the head ACTUALLY OCCUPIES on its own first row, by
-     * the same predicate `headNormal` uses. Every earlier version of this bound computed a
-     * continuous half-width and compared it against a drawn span, and every one of them was off by a
-     * rounding on some subset of ids — the ear overhanging the skull by a column, or the base coming
-     * out narrower than the row above it. Counting the drawn columns removes the mismatch at its
-     * source: the bound and the drawing are the same integer.
-     */
-    const headRow = ROWS.head[0] + drop;
-    let headMin = GRID_W;
-    let headMax = -1;
-    for (let c = 0; c < GRID_W; c++) {
-      if (headNormal(c, headRow, headWidth, drop, slide) === null) continue;
-      if (c < headMin) headMin = c;
-      if (c > headMax) headMax = c;
-    }
-    // No skull on this row at all: there is nothing for an ear to stand on.
-    if (headMax < headMin) continue;
-
-    /*
-     * STEP 2 — the ear's base half-width, in whole columns.
-     *
-     * Bounded so that two ears plus a one-column gap fit within the skull's own drawn width. The
-     * floor of 1 keeps a 3-column base — the narrowest that has room for an inner cone; below that
-     * the ear rasterises to a 1px spike, which reads as an antenna rather than as an ear.
-     */
-    /*
-     * The ear's half-width in whole columns, bounded so TWO ears plus a one-column gap fit inside
-     * the skull's own drawn span. Derived from the head's actual first and last drawn column rather
-     * than from `CX` and a half-width: the head's rasterised span is not always symmetric about the
-     * grid's centre (a slid skull never is), and anchoring to `Math.round(CX)` while measuring width
-     * from the drawn span put the ear a column off — `stray-1` reached column 16 over a head ending
-     * at 15.
-     */
-    const gap = 1;
-    const supportCols = Math.max(1, Math.floor((headMax - headMin + 1 - gap) / 2));
-    const fitted = Math.max(1, Math.min(Math.round(width), supportCols));
-
-    /*
-     * STEP 3 — the anchor, in whole columns. The ear's OUTER edge sits on the skull's outer column,
-     * so the centre is `fitted` columns inboard of it — which places the entire base on the head by
-     * construction, at every head width and every ear width, with no clamp needed afterward.
-     *
-     * A cat's ears are hinged at the CORNERS of the skull: the outer edge of the ear continues the
-     * line of the cheek, which is what makes head-plus-ears read as one wedge rather than as a ball
-     * with things stuck on it. An early version fitted the whole triangle inside the crown instead
-     * and every cat read as a rabbit — a V-shaped notch cut into a round head.
-     */
-    /*
-     * `Math.min`, not `Math.max`. The separation floor (`gap + fitted`, pushing the ear OUT from the
-     * centreline so the pair does not meet) and the corner anchor (`supportCols - fitted`, pulling
-     * it IN from the skull's edge) pull in opposite directions, so taking the larger picked whichever
-     * was further out and pushed the base past the skull: `stray-1` anchored at column 15 with a
-     * half-width of 2, reaching column 17 over a head that ended at 15.
-     *
-     * The corner is the binding constraint — an ear that touches its twin is ugly, an ear that floats
-     * off the skull is broken — so the support bound wins and the separation floor only applies when
-     * the skull is wide enough to honour both.
-     */
-    // The ear's OUTER edge sits on the skull's outermost drawn column, so the centre is `fitted`
-    // columns inboard of it. The entire base lands on the head by construction.
-    const baseCol = side < 0 ? headMin + fitted : headMax - fitted;
-
-    /*
-     * STEP 4 — the taper, stepping down one whole column every `rowsPerColumn` rows.
-     *
-     * Nine attempts enforced the taper on a continuous half-width and all nine broke on some id,
-     * because rounding is what decides the drawn columns: two rows whose continuous widths differ by
-     * a tenth of a column can rasterise to spans differing by a whole column in either direction,
-     * and a fractional shrink inside a floor OSCILLATES (a single ear came out 9-14, 10-13, 9-14).
-     *
-     * Integer division cannot oscillate. The width steps down by exactly one column at a time and
-     * the span is a pure function of two integers, so a taper that is non-increasing in `rowsUp` is
-     * non-increasing in the drawn columns — there is no rasterisation left to get it wrong.
-     */
-    const rowsUp = Math.max(0, Math.round(baseY - 1 - py));
-    /*
-     * ONE ROW PER COLUMN — the ear loses a column of half-width every row it rises.
-     *
-     * `(height - 1) / fitted` was derived so the ear reached a 1-column tip exactly at its apex, and
-     * on a tall narrow ear that evaluates to 2 or 3 rows per column — so the first two or three rows
-     * were the SAME width and the ear rasterised as a rectangle with a point on top. Rendered, those
-     * cats had ears like tower blocks.
-     *
-     * A cat's ear is a triangle whose sides run at roughly 45 degrees, which is one column per row,
-     * and at this size that is also the only rate that reads as a diagonal rather than as a stack of
-     * steps. A tall ear therefore reaches its 1-column tip before its apex and simply continues at
-     * one column wide — which is a tall pointed ear, exactly what a 6-row ear should be.
-     */
-    /*
-     * ══ THE TAPER RATE IS DERIVED SO THE EAR REACHES A 1-COLUMN TIP AT ITS APEX ══
-     *
-     * A fixed one column per row was tried and it is too fast: a 4-row ear with a 3-column base
-     * loses its whole width by its second row, so rows 1 and 2 were a single column and the ear
-     * rendered as a narrow vertical POST — a horn or an antenna, not a cat's ear. Rendered at 384x
-     * zoom, four of six cats had them.
-     *
-     * The rate has to be a function of BOTH the ear's height and its base width, because the ear has
-     * to spend exactly `fitted - 1` columns of narrowing over exactly `height - 1` rows of rise. A
-     * tall narrow ear then tapers slowly and stays a spike; a short broad one tapers fast and stays
-     * a triangle — which is the whole range the `earHeight` and `earWidth` axes are supposed to
-     * span, and a fixed rate collapsed it to one shape.
-     *
-     * `Math.ceil` rather than round: it is better for an ear to reach its tip a row early (a 1-column
-     * point, which is what a cat's ear tip is) than a row late, which would leave the apex 2 columns
-     * wide and blunt.
-     */
-    const rowsPerColumn = Math.max(1, Math.ceil((height - 1) / Math.max(1, fitted)));
-    const halfCols = Math.max(0, fitted - Math.floor(rowsUp / rowsPerColumn));
-
-    /*
-     * STEP 5 — the shear, stepping at the SAME rate the taper does.
-     *
-     * Tying the two together means every row that leans is also a row that narrows, which keeps
-     * consecutive spans nested. Advancing them on different schedules produced a zig-zag edge
-     * however carefully each was bounded — `harbour` came out 8-15, 9-14, 8-15 down one ear.
-     *
-     * `side *` means a positive angle leans BOTH ears inward rather than sliding the pair sideways.
-     * A pair of ears that slide together read as a hat.
-     */
-    /*
-     * ══ THE SHEAR STEPS AT HALF THE TAPER'S RATE ══
-     *
-     * Once the taper stepped one column per row, tying the shear to the SAME rate meant the centre
-     * moved a column on every row the width lost one — so the outer edge stayed put while the inner
-     * edge moved two, and on a hard lean the rows stopped overlapping entirely. The empty-id cat
-     * came apart into 223 pieces.
-     *
-     * The condition for two consecutive rows to overlap is that the centre moves by less than the
-     * sum of their half-widths, and with the width shrinking by one column per row that leaves at
-     * most half a column of centre movement per row. `rowsUp / 2` is exactly that bound, and it is
-     * the tightest lean the geometry can carry without the flood fill catching it — which is why it
-     * is expressed as a bound rather than as a tuned constant.
-     */
-    /*
-     * ══ THE SHEAR MOVES THE CENTRE INWARD ONLY ══
-     *
-     * The lean is applied as `-side` — always toward the cat's centreline — rather than in the
-     * direction the angle names. That is what finally closed rule 1 for the ear, and the reason is
-     * geometric rather than aesthetic: the ear's base is anchored with its OUTER edge flush against
-     * the skull's outermost drawn column, so there is nothing outside it to lean into. A tip sheared
-     * outward leaves the skull's silhouette and, once the taper has narrowed the row, stops
-     * overlapping the row below — the empty-id cat came apart into 204 pieces at columns 8 and 14
-     * over a row of 9 and 13.
-     *
-     * Leaning inward is also the more useful half of the range. A cat's ears rotate between "pricked
-     * forward" and "flattened back", and on a front-facing sprite both of those read as the tips
-     * moving toward or away from the midline — never as the tips moving outside the head's own
-     * width, which is what an outward lean would draw.
-     *
-     * `earAngle` therefore selects HOW FAR the tips lean in (0 for a fully upright ear, up to
-     * `EAR_SHEAR` columns for a hard-flattened one) rather than which way. The axis keeps its full
-     * range and its two-pixel minimum; it simply spends all of it on one side.
-     */
-    /*
-     * The lean is bounded so the two ears can never reach each other: at full lean the tips must
-     * still leave `gap` columns between them. Without that bound both ears converged on the
-     * centreline — `stray-2` drew a single column at 11 on two rows and then split back to 10 and 12
-     * above it, so each ear was in two pieces and the flood fill found the cat in 202 of them.
-     *
-     * `maxLean` is how far one ear's centre may travel inward before the pair would touch, derived
-     * from the same `baseCol` and `gap` the anchor uses so the two cannot disagree.
-     */
-    const inwardRoom = Math.max(0, Math.abs(baseCol - Math.round(CX + slide)) - fitted - gap);
-    const lean = Math.min(Math.abs(angle) * EAR_SHEAR, inwardRoom, Math.floor(rowsUp / 2));
-    const centreCol = baseCol - side * Math.round(lean);
-
-    const dx = px - centreCol;
-    if (Math.abs(dx) > halfCols) continue;
-
-    /*
-     * ══ THE EAR MAY NOT OVERHANG THE SKULL — rule 1 at the ear's BASE ══
-     *
-     * Every fix above keeps the ear connected to ITSELF. This keeps it connected to the HEAD, and
-     * the two are different failures: an ear whose base column sits outside the skull's own
-     * silhouette has nothing beneath it, so it reads as a horn floating off the corner of the head.
-     * v1's per-column assertion found it on `stray-1` after the ear taper was widened to fix the
-     * self-connectivity bug — one fix opening the next, which is why both are asserted rather than
-     * reasoned about.
-     *
-     * Solving the head's superellipse for its half-width at the ear's BASE row gives the columns
-     * the skull actually occupies there. An ear pixel outside them is refused. That trims the outer
-     * corner of a hard-leaning ear, which is also what a real ear does — it is hinged at the skull
-     * and cannot slide off it.
-     */
-    /*
-     * ══ MEASURED AT THE HEAD'S WIDEST ROW, NOT AT THE EAR'S BASE ROW ══
-     *
-     * This solved the skull's half-width AT `baseY` — the ear's own base, which is the head's TOP
-     * row. On a superellipse the top row is the NARROWEST part of the head, so the test was
-     * comparing the ear against the tightest measurement the skull ever takes, and it rejected
-     * almost every ear pixel: a step-grid dump showed a cat with `earHeight: 3` whose ears occupied
-     * ONE row. The ears had become nubs, which is exactly what the 384x render showed and what no
-     * amount of adjusting `earWidth` was going to fix.
-     *
-     * The rule this test is enforcing is "an ear must have skull beneath it", and "beneath" means
-     * anywhere down the head, not on the single row where the ear happens to meet it. Measuring at
-     * the head's widest row (its vertical centre) gives the ear the skull's real extent to sit on,
-     * while still refusing an ear that has wandered clear of the animal entirely.
-     *
-     * `+0.5` of slack because an ear is hinged ON the skull's edge rather than strictly inside it —
-     * a real ear's outer base is flush with the widest point of the head, not inset from it.
-     */
-    /*
-     * ══ THE TEST IS AGAINST THE SKULL'S CROWN, AND ONLY ON THE EAR'S BASE ROW ══
-     *
-     * Two earlier versions of this check both failed, in opposite directions, and the pair is worth
-     * recording because the fix for one caused the other:
-     *
-     *   - Measuring at the ear's BASE row used the head's NARROWEST width, which rejected almost
-     *     every ear pixel and left the ears as one-row nubs.
-     *   - Measuring at the head's WIDEST row was too permissive: the per-column assertion in
-     *     `grid.test.ts` found `stray-1` with an ear pixel at column 6 on row 4 and nothing beneath
-     *     it on row 5, because the crown at that row is narrower than the head's middle. The ear
-     *     overhung the skull and the outline pass drew its ring into the notch.
-     *
-     * The rule being enforced is "every ear column has head directly beneath it", which is a claim
-     * about the row the ear MEETS the head on — the crown — and it only binds on the ear's own
-     * bottom row, since higher rows sit above other ear rows rather than above skull. So the test is
-     * scoped to `t` near 0 and measured at the crown, which is exactly the geometry the assertion
-     * describes. Rows further up are free to overhang, and they must be: a leaning ear's tip is
-     * supposed to extend past the skull.
-     */
-    /*
-     * ══ THE CLAMP APPLIES TO EVERY ROW, NOT ONLY THE BASE ══
-     *
-     * Scoping it to the base row alone produced an ear that was WIDER AT THE TOP THAN AT THE BOTTOM:
-     * the base row was trimmed to the crown while the rows above kept their full taper, so an ear
-     * spanned columns 5-7 at its base and 4-6 one row up, and column 4 had nothing beneath it. The
-     * per-column assertion caught it immediately.
-     *
-     * That is the same defect the base-row-only version was introduced to fix, inverted — trimming
-     * one row of a shape whose other rows are not trimmed just moves the overhang up by a row. An
-     * ear is a triangle narrowing upward, and the only way to guarantee every column has support
-     * beneath it is for the clamp to be MONOTONIC in the same direction as the taper.
-     *
-     * Clamping every row to the crown does that: the ear is a triangle inscribed inside the skull's
-     * own width at its base, narrowing as it rises, so every column's lowest pixel is either on
-     * another ear pixel or on the crown. Rule 1 by construction at every row rather than at one.
-     */
-    /*
-     * ══ THE CLAMP BINDS ONLY WHERE THE HEAD IS — above the crown an ear is free ══
-     *
-     * Clamping every ear row to the crown's half-width made the ears TRIANGLES INSCRIBED IN THE
-     * SKULL: rendered at 384x zoom they read as small bumps on top of a round head rather than as
-     * ears rising off it, because their widest row was inside the head's own outline and the
-     * silhouette never actually broke. Cat after cat looked like a bear cub.
-     *
-     * The rule being enforced is "every ear column has support beneath it", and that is a claim
-     * about the rows where the ear OVERLAPS the head — at and just above the crown. Rows well above
-     * the skull have ear beneath them, not head, so the clamp has nothing to say about them and
-     * applying it there only shrinks the ear.
-     *
-     * `ROWS.ear[1] - 2` is the overlap band: the ear's base row and the one above it. Below that
-     * band the clamp guarantees rule 1; above it the ear tapers freely and rises clear of the head,
-     * which is the whole point of having ears.
-     */
-    /*
-     * ══ NO PER-ROW TRIMMING AT ALL — the support is guaranteed BY THE ANCHOR ══
-     *
-     * Three versions of a per-row clamp were tried and each failed the per-column assertion in a
-     * different way: clamping every row to the crown inscribed the ears inside the skull (they read
-     * as a notch); clamping only the overlap rows to the cheek let the base overhang (`stray-1`,
-     * column 5, nothing beneath it); clamping the overlap rows to the base row's own width trimmed
-     * the BASE narrower than the row above it, so the ear was wider at the top and the outermost
-     * column lost its support again.
-     *
-     * The third failure is the informative one. An ear is a triangle that narrows as it rises, so
-     * its widest row is its base — and any clamp that trims the base without trimming the rows above
-     * by at least as much INVERTS that and creates the very overhang it was added to prevent. A
-     * clamp cannot be monotonic with a taper it is applied to independently.
-     *
-     * So there is no clamp. The ear's ANCHOR is bounded instead: `baseCx` is placed so the outer
-     * edge of the base — `baseCx + width` — never exceeds the skull's half-width at the base row.
-     * The taper then narrows monotonically from a base that is inside the head by construction, so
-     * every column's lowest pixel has either ear or skull beneath it, at every angle and every
-     * height. Rule 1 held by the geometry rather than by a filter applied on top of it, which is the
-     * lesson this file has now recorded six times over.
-     */
-
-    /*
-     * ══ THE INNER SURFACE — an explicit inset triangle, not a shading bias ══
-     *
-     * The inner wedge is the part of the ear's cone facing the viewer: inset from the ear's own
-     * outer edge by `EAR_RIM` on both sides, and stopping short of the tip so the point stays solid.
-     *
-     * `EAR_RIM` is 0.8 rather than 1.0 so the rim is a hair under one pixel — which after
-     * rasterisation gives a rim exactly 1px wide on most rows and 2px on the widest. A rim of a
-     * constant 1.0 gave a 1px rim everywhere including the base, where the ear is 6px across, and a
-     * 6px ear with a 1px rim reads as an outline rather than as a cone.
-     *
-     * `t < 0.72` stops the inner wedge before the apex: an inner surface that reaches the tip makes
-     * the tip a single dark pixel, which reads as a notch cut out of the ear.
-     */
-    /*
-     * The inner cone is inset by exactly ONE COLUMN from the ear's outer edge, so the rim is a clean
-     * 1px line of lit cartilage around a shadowed hollow. Expressed in integer columns like the rest
-     * of the ear; a fractional inset rasterised to a rim that was 1px on some rows and 0 on others,
-     * which reads as a broken outline rather than as a cone.
-     *
-     * It stops before the apex — an inner surface that reaches the tip makes the tip a single dark
-     * pixel, which reads as a notch cut out of the ear rather than as a point.
-     */
-    const inner = halfCols >= 2 && Math.abs(dx) < halfCols && rowsUp <= height - 2;
-    /*
-     * The outer surface's own normal. `-side` points inward, so each ear's inner half turns toward
-     * the cat's centreline and away from the light. `ny` is negative (upward-facing) because an ear
-     * leans back off the skull.
-     */
-    const across = halfCols === 0 ? 0 : dx / halfCols;
-    return { nx: across * 0.6 - side * 0.3, ny: -0.4 - t * 0.3, inner };
-  }
-  return null;
-}
-
-/** How far the inner wedge is inset from the ear's outer edge. See `earNormal`. */
-const EAR_RIM = 0.8;
-
-/**
- * THE BODY — a cat's body: narrow at the shoulders, widening to a haunch.
- *
- * ══ WHAT v1's FIRST RENDER SHOWED, AND WHY THE SHAPE IS A TAPER ══
- *
- * v1's first pass was a superellipse — the direct analogue of openhood's body with the width
- * relationship inverted (a cat's body is bigger than its head, where a neotenous unicorn's is
- * smaller). Rendered to PNG at 96px and looked at, it failed three ways at once:
- *
- *   1. IT WAS A RECTANGULAR SLAB. At small sizes an exponent-2.4 superellipse rounds to a
- *      full-width block with square corners. The cat read as a head glued to a filing cabinet. An
- *      exponent that reads as "gently rounded" at 24px reads as "square" at 16px, because the
- *      rounding it produces is smaller than one pixel.
- *   2. IT SWALLOWED THE TAIL. Reaching the far column meant the tail root was INSIDE the body, and
- *      the body resolves first — so the first four tail samples were painted as body and only a
- *      stub escaped past the edge.
- *   3. IT ERASED THE NECK. A body as wide as the head makes the whole sprite one mass, and rule 2's
- *      value break cannot rescue a silhouette that has no pinch in it.
- *
- * ══ THE FIX: A TAPER, NOT AN ELLIPSE ══
- *
- * The half-width is a function of the row — narrow at the shoulder and widening to the haunch. That
- * is a cat seen from the front, which is the pose a camera trap actually catches an animal in, and
- * it solves all three failures with one change: the shoulder is narrower than the head so the
- * silhouette PINCHES at the neck; the widest row leaves the tail root outside the body; and a taper
- * has no corners to read as square.
- *
- * REJECTED: keeping the ellipse and simply shrinking rx. It fixed the tail and the neck and left a
- * small round body, which read as a bird — a cat's mass is in its haunches and an evenly round body
- * puts it in the middle.
- *
- * ══ THE HAUNCH FLOOR IS LOAD-BEARING ══
- *
- * `headWidth` tops out at 5.8, so the haunch's floor of 6.0 keeps the body always wider than the
- * head and rule 2's neck pinch survives every combination of the two axes.
- */
-/**
- * The shoulder's half-width — the body's NARROWEST point, and the other half of the neck.
- *
- * 2.9, lowered from 3.4. Rule 2 needs the silhouette to PINCH where the head meets the body, and a
- * pinch is a comparison: the head's narrowest half-width is 4.0, so a shoulder at 3.4 was only half
- * a pixel narrower and the notch it produced was under one column — invisible after rasterisation.
- * At 2.9 the shoulder is a full pixel inside the narrowest head on each side, so every cat has a
- * visible waist under its jaw regardless of what its `headWidth` axis gave it.
- */
-const BODY_HW_TOP = 2.9;
-const BODY_HW_HAUNCH_MIN = 6.0;
-const BODY_HW_HAUNCH_MAX = 7.4;
-
-/**
- * The haunch's half-width. The widest the body ever gets.
- *
- * Extracted because FOUR callers need it and every one must agree: `bodyNormal` draws the taper,
- * `tailPixels` roots the tail half a pixel outside it, `coatDrop` insets the tabby bands from it,
- * and `ribDrop` places the ribs inside it. When v1's tail root was a hardcoded 11.6 that agreed
- * with a hardcoded haunch of 4.0, making the haunch a variable silently detached the tail on every
- * stocky cat. Deriving all four from one function is what stops that whole class of bug.
- */
-function haunchHalfWidth(build: number, posture: Posture, state: CatState): number {
-  const w =
-    BODY_HW_HAUNCH_MIN +
-    ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN) +
-    postureSpread(posture) +
-    stateSpread(state);
-  /*
-   * CAPPED so the tail always has somewhere to go.
-   *
-   * The tail roots half a pixel outside the haunch and needs at least two columns beyond that to
-   * read as a tail at all. Uncapped, a stocky crouching fed cat's haunch reached the grid edge and
-   * the tail was clipped — v1's flood-fill test caught 340 truncated tails at once. `CX` is 11.5 and
-   * the grid is 24 wide, so 8.4 leaves the last three columns free.
-   *
-   * FLOORED as well, which the v1 version lacked: a starving standing cat's haunch would otherwise
-   * fall below the shoulder's own width and the taper would INVERT, giving a wedge-shaped body that
-   * read as a fish. The floor is `BODY_HW_TOP + 0.6` so the body always widens downward.
-   */
-  /*
-   * The ceiling is 7.2, lowered from 8.4 after a step-grid dump showed why the tails were vanishing.
-   *
-   * `CX` is 11.5 and the grid is 24 wide, so a haunch of 8.4 puts the body's edge at column 19.9 and
-   * leaves the tail FOUR columns to exist in — of which its own root takes one. Several cats' tails
-   * came out as three cells hugging the hip, which is not a tail, it is a bump. The tail is half the
-   * silhouette budget and it was being crowded out by a body that had grown to fill the wider grid.
-   *
-   * At 7.2 the body's edge sits near column 18.7 and the tail has five clear columns plus the two
-   * the curl can reach past them. That is enough for the curl axis to actually sweep — which is the
-   * whole point of the axis, and it was measured as dead at the old ceiling in exactly the way the
-   * hash-budget table warns about.
-   */
-  /*
-   * ══ THE CEILING IS 7.6 AND THE CROUCH SPREAD WAS CUT, BECAUSE THE CLAMP WAS EATING THE STATE ══
-   *
-   * The cell-difference assertion found `mackerel` — a CROUCH cat — with only thirteen cells between
-   * its fed and starving silhouettes, after the state magnitudes had already been widened once. The
-   * cause is that `postureSpread("crouch")` and `stateSpread("fed")` are ADDITIVE and their sum was
-   * landing above the ceiling, so both fed and starving were clamped to the same width and the state
-   * axis was entirely erased on one posture in four.
-   *
-   * Two clamps in series, each individually reasonable, silently cancelling a whole axis on a
-   * subset of cats: that is the same shape as every dead-axis bug recorded in this file, and it is
-   * only ever visible as a difference between two renders rather than in either one.
-   *
-   * The ceiling rises to 7.6 and `postureSpread`'s crouch drops from 1.4 to 0.9, so the widest
-   * combination now sits clear of the clamp. The tail still has its columns — 7.6 puts the body's
-   * edge at 19.1 on a 24-wide grid — and the crouch is still visibly the widest posture, it simply
-   * no longer consumes the entire budget on its own.
-   */
-  return Math.max(BODY_HW_TOP + 0.6, Math.min(7.6, w));
-}
-
-/**
- * ══ THE POSTURE TILT — what makes `stretch` a pose rather than a width ══
- *
- * Returns how many rows the body's FRONT is displaced relative to its back, at a given row fraction.
- * Only `stretch` uses it: the chest drops toward the ground while the haunch stays up, which is a
- * cat's play bow and is the most recognisable cat pose there is.
- *
- * It is expressed as a row offset applied to the body's TOP at each column rather than as a
- * rotation, because a rotation resamples the whole body and at 24px that turns a taper into a
- * staircase. Displacing rows keeps every edge a clean run.
- */
-function postureTilt(posture: Posture): number {
-  return posture === "stretch" ? 1.6 : 0;
-}
-
-/**
- * ══ THE TAPER IS `sqrt(t)`, NOT `t` — and that is what makes the neck a neck ══
- *
- * A LINEAR taper spreads the width change evenly over every body row. On a `sit` body that is seven
- * rows, so the shoulder row is only one-seventh of the way from the neck's width to the haunch's —
- * about half a pixel narrower than the row below it, which after rasterisation is no narrower at
- * all. A step-grid dump showed the result plainly: rows 13 through 21 were the same width, so the
- * body was a RECTANGLE and rule 2's value break was a stripe across a slab. On a `crouch` body,
- * nine rows long, it was worse.
- *
- * `sqrt(t)` puts most of the widening in the FIRST rows below the neck and then flattens, so the
- * body flares out fast from a narrow shoulder and then runs nearly straight down to the haunch. That
- * is both the shape a cat actually has — the mass is in the barrel and the haunch, not distributed
- * evenly down a cone — and the shape that leaves a visible pinch at the top for the neck to be.
- *
- * The general lesson, and this file's fourth instance of it: a parameter that varies smoothly in
- * continuous maths does nothing once its per-row effect falls under one pixel. The fix is never to
- * widen the range; it is to redistribute where the range is spent.
- */
-function taperT(py: number, bodyTop: number, bodyEnd: number): number {
-  const raw = Math.max(0, Math.min(1, (py + 0.5 - bodyTop) / Math.max(1, bodyEnd - bodyTop)));
-  return Math.sqrt(raw);
-}
-
-/** The body's half-width at one row: the taper from shoulder to haunch. */
-function bodyHalfWidthAt(py: number, geom: CatGeometry, state: CatState): number {
-  const { bodyTop, bodyEnd } = postureRows(geom.posture, state);
-  const t = taperT(py, bodyTop, bodyEnd);
-  return (
-    BODY_HW_TOP + (haunchHalfWidth(geom.build, geom.posture, state) - BODY_HW_TOP) * t
-  );
-}
-
-function bodyNormal(
-  px: number,
-  py: number,
-  build: number,
-  posture: Posture,
-  state: CatState,
-): { nx: number; ny: number } | null {
-  const { bodyTop, bodyEnd } = postureRows(posture, state);
-  /*
-   * THE STRETCH TILT. The body's top row is pushed DOWN toward the front of the cat (the left, where
-   * the chest is) and stays put at the back. `tiltAt` is 0 at the cat's right edge and full at its
-   * left, so the shoulder line slopes.
-   *
-   * The tilt is applied to the body's TOP only, not to its bottom: a cat in a play bow has its
-   * chest on the ground and its haunch in the air, so the two ends of the body are at different
-   * HEIGHTS but both still reach the floor.
-   */
-  const tilt = postureTilt(posture);
-  const frontness = Math.max(0, Math.min(1, (CX - (px + 0.5)) / 8 + 0.5));
-  const top = bodyTop + tilt * frontness;
-  // The body STOPS where the legs begin. openhood's recorded bug: without this the body's rounded
-  // lower edge spills into the leg rows and, since body resolves before legs, paints over the posts
-  // — the creature gets a skirt with feet poking out.
-  if (py + 0.5 < top || py >= bodyEnd) return null;
-  // 0 at the shoulder, 1 at the haunch — `sqrt`-shaped, so the flare happens fast below the neck.
-  const t = taperT(py, bodyTop, bodyEnd);
-  const hw = BODY_HW_TOP + (haunchHalfWidth(build, posture, state) - BODY_HW_TOP) * t;
-  const dx = px + 0.5 - CX;
-  if (Math.abs(dx) > hw) return null;
-  // `nx` across the taper, so the body takes light as a cylinder. `ny` leans forward at the chest
-  // and away at the haunch, which keeps the lower rows a step darker and stops the body reading as
-  // one flat value.
-  return { nx: dx / hw, ny: -0.35 + t * 0.95 };
-}
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE TAIL — a hash-swept curve, and the second half of the identity budget.
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * This occupies the slot `maneNormal` did: the largest per-cat SILHOUETTE variation, the part a
- * person would describe first after the colour.
- *
- * ══ IT IS DRAWN AS A SWEPT PATH, NOT AS A REGION ══
- *
- * Every other part in this file is an implicit region: "is this pixel inside my ellipse". A tail
- * cannot be, because a tail is a 1-2px curve and an implicit region 1px wide has no interior — the
- * rasteriser hits it or misses it depending on where the curve crosses the pixel centre, and the
- * result is a dotted line. That IS the NEEDLE failure: "four isolated pixels on a diagonal read as
- * dust rather than as a horn".
- *
- * So the tail is MARCHED. `TAIL_SAMPLES` points are walked along the parametric curve and each one
- * stamps its nearest pixel. A marched path is continuous by construction — consecutive samples are
- * less than a pixel apart, so they either land on the same pixel or on an adjacent one, and there is
- * no way to produce a gap.
- *
- * ══ AND IT IS TWO PIXELS THICK AT THE ROOT, WHICH IS A v2 CHANGE ══
- *
- * v1's tail was 1px along its whole length. At 16px that was the only affordable thickness, and it
- * is why v1's tails read as wires: a real tail is thick where it leaves the body and tapers to a
- * tip. At 24px the root can be 2px and taper to 1, which costs about eight pixels and is the single
- * change that most makes the tail read as part of the animal rather than as a line drawn beside it.
- *
- * ══ WHAT THE AXES DO ══
- *
- *   tailLift  0..1  — how high the tail is carried. 0 is a low slung hunting tail dragging near the
- *                     ground; 1 is the vertical greeting tail a cat raises when approaching. The
- *                     largest single change to the sprite's bounding box.
- *   tailCurl −1..1  — how hard, and which way, the tip hooks. Applied on `t*t` so the base leaves
- *                     the hip straight and the hook accumulates at the tip. A cat's tail bends
- *                     progressively; a constant-curvature arc reads as a rope handle.
- *
- * REJECTED: a fully vertical tail behind the cat, as a Q-shape. It occupies the same columns as the
- * body's own outline and the two merge into one lump — the exact failure openhood recorded for its
- * mane ("the head and mane were one indistinguishable mass"). The tail is pushed OUT to the side,
- * always, so it always breaks the body's outline.
- *
- * REJECTED: a tail that switches sides on a hash bit. Half the colony facing one way and half the
- * other read as two species rather than as one species with variation.
- */
-const TAIL_SAMPLES = 72;
-
-function tailPixels(geom: CatGeometry, state: CatState): Map<number, number> {
-  const { tailCurl: curl, tailLift: lift, build, posture } = geom;
-  const { bodyEnd } = postureRows(posture, state);
-  /*
-   * THE ROOT IS DERIVED FROM THE HAUNCH, not a constant.
-   *
-   * v1 had `TAIL_ROOT_X = 11.6`, correct only while the haunch was a fixed 4.0. Once `build` moved
-   * the haunch and `posture` moved which row it ended on, a fixed root was inside the body on a
-   * stocky cat (the body eats the first samples) and detached from it on a lean one (rule 1 broken,
-   * tail reads as dust).
-   *
-   * Deriving it from the same haunch value `bodyNormal` uses means the root sits exactly half a
-   * pixel outside the widest body column at every combination of the axes. Rule 1 held by
-   * construction rather than by a constant that happened to work.
-   */
-  const rootX = CX + haunchHalfWidth(build, posture, state) - 0.5;
-  const rootY = bodyEnd - 1.8;
-
-  /** pixel key -> `t` at the sample that claimed it, so the tip can be shaded lighter. */
-  const out = new Map<number, number>();
-  /** The previous stamped cell, so a diagonal step can be bridged. */
-  let last: { x: number; y: number } | null = null;
-
-  const stamp = (sx: number, sy: number, st: number): void => {
-    if (sx < 0 || sx >= GRID_W || sy < 0 || sy >= GRID_H) return;
-    const k = sy * GRID_W + sx;
-    // Keep the SMALLEST `t` that claimed a pixel, so a pixel shared by root and tip shades as root.
-    // The tail thins and lightens toward the tip; a pixel that both pass through belongs to the
-    // thicker part.
-    const prev = out.get(k);
-    if (prev === undefined || st < prev) out.set(k, st);
-  };
-
-  for (let i = 0; i <= TAIL_SAMPLES; i++) {
-    const t = i / TAIL_SAMPLES;
-    /*
-     * X: the tail exits right, sweeping out over its length, with the curl hooking the tip back.
-     * `t*t` on the curl so the hook is a tip event rather than a constant-curvature arc.
-     *
-     * The curl range is 5.2 — scaled from v1's 4.0 by the same 1.5x the grid grew, so the tip still
-     * sweeps about seven columns across the full −1..1 range. A hard negative curl brings the tip
-     * back over the cat's own back and a hard positive one throws it clear of the sprite, which are
-     * recognisably different tails at map size.
-     */
-    const x = rootX + 3.6 * t + curl * 5.2 * t * t;
-    /*
-     * Y: `lift` interpolates the tip's height between +2.4 rows (below the root, a low dragging
-     * tail) and −11.0 rows (well above it, a vertical greeting tail). The `t*t` term makes the tail
-     * leave the hip roughly horizontal and then turn — a tail that rises linearly from the root
-     * reads as a straight stick pointing diagonally, which is a dog's tail or an antenna.
-     */
-    const rise = -11.0 * lift + 2.4 * (1 - lift);
-    const y = rootY + rise * t * t + 0.6 * t;
-    const pxi = Math.round(x - 0.5);
-    const pyi = Math.round(y - 0.5);
-
-    /*
-     * ══ THE DIAGONAL BRIDGE — rule 1 for a marched path, and a measured bug ══
-     *
-     * Dense sampling guarantees consecutive stamps are ADJACENT, which v1's header claimed was
-     * enough for continuity. It is not, and the flood-fill test found 74 cats broken by it: on a
-     * steeply climbing segment the path moves DIAGONALLY between two samples, and two diagonally
-     * adjacent pixels are not orthogonally connected. The outline pass then draws its ring through
-     * the diagonal notch and the tail is visibly cut into pieces by a dark line.
-     *
-     * This is the same class of error as everywhere else in this file — a rule enforced by a
-     * property (sample density) that does not actually imply it. Orthogonal connectivity has to be
-     * enforced by orthogonal construction, so every diagonal step lays down the intervening pixel.
-     */
-    if (last !== null && pxi !== last.x && pyi !== last.y) stamp(pxi, last.y, t);
-    stamp(pxi, pyi, t);
-    /*
-     * ══ THE TAPER — 2px at the root, 1px at the tip ══
-     *
-     * The second pixel is laid BELOW the path for the first 45% of its length. Below rather than
-     * beside, because the tail's own direction is mostly horizontal at the root: thickening
-     * perpendicular to the path means thickening vertically there, and a tail thickened
-     * horizontally at the root read as a wider hip rather than as a thicker tail.
-     *
-     * It is dropped past `t = 0.45` so the tip is a clean 1px line, which is what carries the curl.
-     */
-    if (t < 0.45) stamp(pxi, pyi + 1, t);
-    if (pxi >= 0 && pxi < GRID_W && pyi >= 0 && pyi < GRID_H) last = { x: pxi, y: pyi };
-  }
-  return out;
-}
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE LEGS AND PAWS — two posts with visible paws, which 16px could not afford.
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ══ TWO POSTS, not four, and this is the resolution being honest ══
- *
- * Rule 3 requires 2px legs with a visible gap. On a cat whose body spans about 14 columns, four 3px
- * posts need 12 columns of leg plus 3 of gap, which does not fit. The options were:
- *
- *   (a) four 1px legs — EXPLICITLY BANNED by rule 3. This is the fringe failure, verbatim.
- *   (b) four posts overflowing the body — openhood recorded this exact bug at 24px ("the outer two
- *       hung past the silhouette and the set read as three legs and a stray mark").
- *   (c) TWO posts. A cat in a near-frontal view occludes its own far legs almost completely, so two
- *       visible legs is not a compromise — it is what the pose actually shows.
- *
- * (c), at 3px wide rather than v1's 2px, because the grid grew and a 2px leg under a 14px body reads
- * as a stilt.
- *
- * ══ AND THEY HAVE PAWS, WHICH IS THE WHOLE REASON THE LEG BUDGET WENT FROM 2 ROWS TO 4 ══
- *
- * v1 had two leg rows and recorded the cost plainly: "at 16x16 there is no room for a modelled leg
- * or a modelled paw." A leg with no paw is a post, and a cat standing on two posts reads as
- * furniture. The bottom row of each leg is a PAW: one column wider than the leg on the outside
- * only, and lit a step brighter than the leg above it.
- *
- * ASYMMETRIC — wider on the outside only — because a paw that flares both ways reads as a hoof or a
- * boot. A cat's paw sits forward and slightly out from the leg, and one column of asymmetry at 24px
- * is what carries that.
- */
-const LEG_W = 3;
-
-function legNormal(
-  px: number,
-  py: number,
-  posture: Posture,
-  build: number,
-  state: CatState,
-): { nx: number; ny: number; paw: boolean } | null {
-  const { bodyEnd, legEnd } = postureRows(posture, state);
-  if (py < bodyEnd || py >= legEnd) return null;
-  /*
-   * THE POSTS ARE DERIVED FROM THE HAUNCH, not hardcoded.
-   *
-   * Same lesson as the tail root: v1's legs were at fixed columns that agreed with a fixed body
-   * width. Once the body's width became a function of build, posture AND state, fixed legs hung
-   * outside a starving cat's silhouette and sat under the centre of a fed one's — which is v1's own
-   * recorded "legs under the centre read as a single wide pedestal".
-   *
-   * 0.62 of the haunch places each post's outer edge just inside the body's widest column, so the
-   * legs always sit under the mass they carry.
-   */
-  const hw = haunchHalfWidth(build, posture, state);
-  const inset = hw * 0.62;
-  const isPaw = py === legEnd - 1;
-  for (const side of [-1, 1] as const) {
-    const legLeft = CX + side * inset - LEG_W / 2;
-    // The paw is one column wider on the OUTSIDE only. See the header.
-    const left = isPaw && side < 0 ? legLeft - 1 : legLeft;
-    const width = isPaw ? LEG_W + 1 : LEG_W;
-    if (px + 0.5 < left || px + 0.5 >= left + width) continue;
-    // A leg is a small cylinder: its normal sweeps across its width and is flat along its length,
-    // so it takes light as a rounded post rather than as a flat bar.
-    return { nx: ((px + 0.5 - left) / width - 0.5) * 1.6, ny: -0.1, paw: isPaw };
-  }
-  return null;
-}
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE COAT PATTERN — a luminance-only marking, on top of the pigment.
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Returns how many ramp steps to subtract from a body pixel. Never a colour — the hue comes from
- * the pigment, and keeping the two axes separate is what gives seven pigments times four patterns
- * rather than seven cats.
- *
- * TWO steps, not one. One step is inside the Bayer dither's own range, so a one-step marking is
- * literally indistinguishable from the noise the shading already produces.
- *
- *   TABBY   — bands on alternating rows across the body. Horizontal because the body's shading
- *             gradient is vertical, so a horizontal band cuts across it and stays legible at every
- *             row; vertical stripes ran parallel to the gradient and disappeared into it.
- *   PATCHED — one block on the cat's left flank, from the shoulder to mid-body. Deliberately
- *             ASYMMETRIC: a symmetric patch reads as shading, and the entire value of this axis is
- *             that it is obviously a MARKING rather than a light effect.
- *   TORTIE  — a scattered mottle keyed on position through the same `fnv1a` the geometry uses, so
- *             it is deterministic and still looks random. Only affordable at 24px.
- */
-function coatDrop(
-  coat: Coat,
-  px: number,
-  py: number,
-  bodyTop: number,
-  bodyHalfWidth: number,
-): number {
-  switch (coat) {
-    /*
-     * Every other row — but INSET from both edges, which is the correction.
-     *
-     * v1's first version banded the full width of the body. Rendered at 96px the bands read as
-     * horizontal SLOTS cut through the cat, like louvres in a vent, because a dark line running from
-     * one edge of a shape to the other is read as a gap in the shape rather than as a mark on it.
-     * The silhouette appeared to be sliced into layers.
-     *
-     * Leaving the outermost column lit on each side keeps the body's edge continuous, so the band
-     * is plainly ON the cat. That is also how a tabby's markings actually sit — they wrap toward the
-     * belly and stop, they do not cut the animal in half.
-     */
-    case "tabby": {
-      if ((py - bodyTop) % 2 !== 1) return 0;
-      /*
-       * INSET BY 2.4 COLUMNS, widened from 1.6 after the louvre failure returned at 24px.
-       *
-       * The inset exists so the body's outermost lit columns survive on each side and the band reads
-       * as a mark ON the cat rather than as a slot cut THROUGH it. 1.6 was carried over from the
-       * 16px grid, where the body was 10 columns wide and 1.6 left a fifth of it lit. At 24px the
-       * body is 15-17 columns, so the same absolute inset left proportionally far less rim, and at
-       * 384x zoom the bands read as louvres in a vent again — the cat looked slatted.
-       *
-       * An inset that keeps a shape readable is a FRACTION of the shape, not a constant, and this is
-       * the third time in this file a constant tuned at 16px has had to be re-derived rather than
-       * rescaled. 2.4 keeps roughly the same proportion of lit rim the 16px version had.
-       */
-      return Math.abs(px + 0.5 - CX) > bodyHalfWidth - 2.4 ? 0 : 2;
-    }
-    // The left flank only, and only the upper half of the body.
-    case "patched":
-      return px + 0.5 < CX - 0.5 && py < bodyTop + 4 ? 2 : 0;
-    /*
-     * TORTIE — a deterministic mottle. `fnv1a` on the coordinate rather than a `Math.random`, so it
-     * is stable across renders and the ban holds.
-     *
-     * The threshold is on the top bits of the hash and the cell is 1x2 (`py >> 1`) rather than 1x1:
-     * a 1x1 mottle at this scale is exactly the size of the Bayer dither's own scatter and the two
-     * were indistinguishable. Making the cell two rows tall puts the mottle at a different spatial
-     * frequency from the dither, which is what lets the eye separate them.
-     */
-    case "tortie": {
-      const h = fnv1a(`tortie:${px}:${py >> 1}`);
-      return h % 100 < 42 ? 2 : 0;
-    }
-    default:
-      return 0;
-  }
-}
-
-/**
- * ══ THE RIBS — how a starving cat is drawn starving ══
- *
- * `ART-DIRECTION.md` §8: "a starving cat is drawn starving. The mechanic is honest about losses or
- * it is a lie with whiskers on it." v1 honoured that with a DIMMING, which is a statement about the
- * light rather than about the animal — a starving cat in v1 looked like a fed cat photographed
- * badly.
- *
- * Two dark bands across the upper body, inset from the edges the same way the tabby bands are so
- * they read as marks on the chest rather than as slots cut through it. Combined with the haunch
- * narrowing in `stateSpread`, a starving cat is both thinner and visibly ribbed, which is a claim
- * about the ANIMAL.
- *
- * THREE steps, deeper than the tabby's two, because the ribs must be legible on a cat that is
- * ALREADY tabby — a rib drawn at the same depth as a stripe is indistinguishable from one.
- */
-function ribDrop(px: number, py: number, bodyTop: number, bodyHalfWidth: number): number {
-  const row = py - bodyTop;
-  if (row !== 1 && row !== 3) return 0;
-  return Math.abs(px + 0.5 - CX) > bodyHalfWidth - 2.4 ? 0 : 3;
-}
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE WHISKERS — 1px lines off the cheeks, and the part that took four renders to get right.
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * NO NORMAL, and that is deliberate: a whisker is a hair, not a surface. Shading it through the
- * Lambert model lands it at whatever step the cheek beside it is at, which makes it invisible — the
- * whole point of a whisker is that it is a different value from the face.
- *
- * It is also the only part exempt from the outline pass — see `catGrid`. Outlining a 1px line
- * doubles its apparent thickness and turns two whiskers into a moustache.
- *
- * ══ FOUR RENDERS, FOUR DISTINCT FAILURES, AND WHAT EACH TAUGHT ══
- *
- *   RENDER 1 — A MOUSTACHE BAR. Whiskers ran straight out from both cheeks, same length, same row.
- *     At 96px the head and its two whiskers read as a horizontal ROD PASSING THROUGH THE SKULL. A
- *     shape mirrored exactly about the axis reads as one continuous object passing behind whatever
- *     sits between the two halves.
- *   RENDER 2 — DUST. The fix was a one-pixel gap between whisker and cheek. That produced isolated
- *     single pixels floating beside the head, which is NEEDLE's floating horn exactly.
- *   RENDER 3 — THE BAR AGAIN, WORSE. Gap removed, asymmetry (one side a pixel shorter) relied on to
- *     break the rod read. It did not: a one-pixel length difference across a fourteen-pixel span is
- *     invisible, and the eye integrates the whole row and still sees a bar.
- *   RENDER 4 — A STRIKETHROUGH. At 2px per side the whiskers ran three pixels clear of an
- *     eight-pixel head and read as "a line struck through the sprite".
- *
- * ══ THE FIX: BREAK THE ROW, NOT THE LENGTH ══
- *
- * All four failures share one cause — a continuous horizontal run — and length was never going to
- * fix it. The whiskers sit on DIFFERENT ROWS from each other: the left on the muzzle's own row, the
- * right one row up. A stepped pair cannot read as a single rod, because a rod is straight, and that
- * holds at every length and every size. It is also true of a real cat, whose whiskers fan from
- * several rows of follicles rather than from one.
- *
- * ══ RENDER 5, AT 24PX: THE STRIKETHROUGH RETURNED, AND THE CAP GOES BACK TO 1PX ══
- *
- * The 24x24 rebuild allowed 2px per side, reasoning that "the head is now 12px across and a 2px
- * whisker no longer reaches past the body's own width — the strikethrough failure was about the
- * whisker exceeding the BODY, not about its absolute length."
- *
- * Rendered at 384x zoom and looked at, that was wrong twice over. The bar came back on every cat,
- * and the diagnosis is that the whisker's length was never the operative variable at all: what makes
- * a rod is a long run of pixels at ONE VALUE crossing the face, and going from 1px to 2px per side
- * doubles the run's length while the face's own width stays put. The ratio got worse, not better.
- *
- * The second error was subtler and is the one worth recording. The whiskers sat on rows 10 and 11 —
- * and row 11 is the MUZZLE's own centre row, the brightest band on the face. So the left whisker was
- * not a mark beside the face, it was a continuation of the muzzle's own lit run, and the "step"
- * between the two sides did nothing because both whiskers were at the same value as the pale mass
- * between them. A structural fix (different rows) was defeated by a VALUE collision the structure
- * did not consider.
- *
- * So: back to 1px per side, and both whiskers moved OFF the muzzle's rows entirely — the left onto
- * the cheek row below the muzzle, the right two rows above it. The face's lit muzzle band now has
- * nothing colinear with it on either side, which is what actually breaks the rod.
- *
-
- * ══ THE START IS THE HEAD'S REAL EDGE ON THIS ROW, NOT ITS NOMINAL HALF-WIDTH ══
- *
- * v1 read `start = headWidth` and the flood-fill test found it detaching 238 of 300 cats.
- * `headWidth` is the superellipse's half-width at its WIDEST row, and the whiskers sit rows below
- * that, where the superellipse has already tapered in. So the whisker began a column clear of the
- * face, the outline pass drew its ring in the gap, and the whisker was an isolated pixel separated
- * from the cat by a dark line.
- *
- * Solving the superellipse AT THIS ROW gives the edge the rasteriser actually produced. Rule 1 by
- * construction rather than by a constant that happened to work — the third time this file has
- * learned that when two pieces of geometry must meet, DERIVE one from the other.
- */
-const WHISKER_STEP = 3;
-
-function isWhisker(
-  px: number,
-  py: number,
-  len: number,
-  headWidth: number,
-  drop: number,
-  slide: number,
-): boolean {
-  const dx = px + 0.5 - CX - slide;
-  /*
-   * THE ROWS. Left whisker on the lower cheek (row 12), right whisker on the upper cheek (row 10) —
-   * two rows apart and NEITHER on the muzzle's own centre row of 11. A stepped pair cannot read as a
-   * single rod because a rod is straight, and keeping both off the muzzle's lit band means neither
-   * is colinear with the brightest run on the face.
-   */
-  const row = (dx < 0 ? 12 : 10) + drop;
-  if (py !== row) return false;
-  const start = headHalfWidthAt(py, headWidth, drop);
-  // Off the head entirely on this row: there is nothing for a whisker to attach to.
-  if (start <= 0) return false;
-  const a = Math.abs(dx);
-  // ONE pixel, always. `len` survives as a 1-or-2 axis only in that a `len` of 3 reaches a second
-  // pixel on the LEFT side alone, which keeps the pair asymmetric without lengthening the run that
-  // made the bar.
-  const reach = dx < 0 && len >= 3 ? 2 : 1;
-  return a > start && a <= start + reach;
-}
-
-/**
- * Which part owns this pixel, and its local normal.
- *
- * ══ ORDER IS THE DEPTH SORT, and getting it wrong ruins every cat ══
- *
- * openhood's warning transfers unchanged: "putting the mane before the head swallows the face;
- * putting the head before the eyes erases them." The order here, front to back:
- *
- *   EYE, NOSE, MUZZLE — on the face, so they win over the head they sit on.
- *   EAR               — resolved before the head so an ear base overlapping the skull's top corners
- *                       stays ear. Resolving the head first would eat the ear bases and detach the
- *                       ears — rule 1 broken by a sort order.
- *   HEAD              — in front of the body.
- *   BODY              — in front of the tail. This is what makes the tail's root pixels read as hip.
- *   TAIL              — behind the body, in front of nothing.
- *   LEG               — underneath.
- *   WHISKER           — last, and only where nothing else claimed the pixel.
- */
-function partAt(
-  px: number,
-  py: number,
-  geom: CatGeometry,
-  tail: Map<number, number>,
-  state: CatState,
-  frame: number,
-): { part: Part; nx: number; ny: number; step?: number; t?: number } | null {
-  const drop = stateDrop(state);
-  const slide = stateSlide(state);
-  const head = headNormal(px, py, geom.headWidth, drop, slide);
-  if (head) {
-    const eye = eyeStepAt(px, py, geom.eyeShape, frame, drop, slide);
-    if (eye !== null) return { part: "eye", nx: 0, ny: 0, step: eye };
-    const nose = noseStepAt(px, py, drop, slide);
-    if (nose !== null) return { part: "nose", nx: 0, ny: 0, step: nose };
-    const muzzle = muzzleNormal(px, py, drop, slide);
-    if (muzzle) return { part: "muzzle", ...muzzle };
-  }
-  const ear = earNormal(
-    px,
-    py,
-    geom.earAngle,
-    geom.earHeight,
-    geom.earWidth,
-    geom.headWidth,
-    drop,
-    slide,
-  );
-  if (ear) return { part: ear.inner ? "earInner" : "ear", nx: ear.nx, ny: ear.ny };
-  if (head) return { part: "head", ...head };
-  const body = bodyNormal(px, py, geom.build, geom.posture, state);
-  if (body) return { part: "body", ...body };
-  const t = tail.get(py * GRID_W + px);
-  if (t !== undefined) {
-    // A tail is a tapering cylinder. Its normal sweeps with `t` so the tip catches a different value
-    // from the root and the curve reads as round rather than as a drawn line.
-    return { part: "tail", nx: 0.25 + t * 0.5, ny: -0.2, t };
-  }
-  const leg = legNormal(px, py, geom.posture, geom.build, state);
-  if (leg) return { part: leg.paw ? "paw" : "leg", nx: leg.nx, ny: leg.ny };
-  /*
-   * NO WHISKERS ON A DEAD CAT, and this is a connectivity fix as much as a reading.
-   *
-   * `isWhisker` finds the head's real edge by solving the superellipse at the whisker's own row, and
-   * that solve does not know about `slide` — so on a slid skull the whisker started from where the
-   * head WOULD have been and landed clear of where it actually is. A dump showed two orphan pixels
-   * three columns off the body, which is NEEDLE's dust exactly and breaks rule 4.
-   *
-   * The fix could have been to thread the slide into the solve, and that was rejected: a dead cat's
-   * whiskers are not a feature anyone reads, the flat fill already removes every other fine detail
-   * on the sprite, and adding a fifth parameter to a predicate that has broken the silhouette twice
-   * already buys nothing. Deleting the part in the one state that does not want it is the smaller
-   * change and it cannot regress.
-   */
-  if (state !== "dead" && isWhisker(px, py, geom.whiskerLen, geom.headWidth, drop, slide)) {
-    return { part: "whisker", nx: 0, ny: 0, step: WHISKER_STEP };
-  }
-  return null;
-}
-
 /**
  * The Lambert term for one surface normal, run through the ramp and the dither.
  *
@@ -2783,6 +1128,363 @@ function applyState(step: number, part: Part, state: CatState): number {
   return Math.max(1, Math.min(top, Math.round(scaled)));
 }
 
+
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE COAT PATTERN IN PROFILE — and it finally sits along the animal rather than across it.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Head-on, the tabby bands were HORIZONTAL rows across the body, and the file recorded two
+ * corrections to stop them reading as louvres cut through the cat. That was always a compromise: a
+ * real tabby's mackerel stripes run VERTICALLY down the flank, perpendicular to the spine, and
+ * head-on there was no spine to be perpendicular to.
+ *
+ * In profile the stripes run the way they actually do — down from the back line toward the belly,
+ * spaced along the barrel's length. That reads as a tabby at a glance rather than as a shaded
+ * cylinder with bands on it, and it needs no inset correction because a vertical stripe on a
+ * horizontal animal never spans the silhouette edge-to-edge.
+ *
+ * Returns how many ramp steps to subtract. TWO, never one: one step is inside the Bayer dither's own
+ * range and is indistinguishable from the noise the shading already produces.
+ */
+function profileCoatDrop(coat: Coat, px: number, py: number, prof: ProfileGeometry): number {
+  switch (coat) {
+    /*
+     * MACKEREL STRIPES — vertical bars down the flank, every third column.
+     *
+     * Every THIRD rather than every other: at 24px a stripe every second column leaves one lit
+     * column between two dark ones, which after the dither reads as a texture rather than as
+     * stripes. Every third gives a 1-dark 2-lit rhythm that survives being shrunk to 16px.
+     *
+     * Inset from the back line so the spine stays lit — a tabby's stripes hang OFF the dorsal line,
+     * they do not cross it, and leaving the topmost row lit is what keeps the back line reading as
+     * the silhouette's edge.
+     */
+    case "tabby": {
+      if ((px - Math.round(prof.headX)) % 3 !== 0) return 0;
+      return py <= prof.backRow + 0.9 ? 0 : 2;
+    }
+    /*
+     * PATCHED — one block over the shoulder and chest, which is where a bicolour stray's white
+     * blaze actually sits. Deliberately ASYMMETRIC along the body's length; the whole value of this
+     * axis is that it reads as a MARKING rather than as a light effect.
+     */
+    case "patched":
+      return px < prof.headX + prof.headR + 3.5 && py > prof.backRow + 1.5 ? 2 : 0;
+    /*
+     * TORTIE — a deterministic mottle, `fnv1a` on the coordinate rather than `Math.random`, so it is
+     * stable across renders and the ban holds. The cell is 1x2 so the mottle sits at a different
+     * spatial frequency from the Bayer dither underneath it; at 1x1 the two were indistinguishable.
+     */
+    case "tortie": {
+      const h = fnv1a(`tortie:${px}:${py >> 1}`);
+      return h % 100 < 42 ? 2 : 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+/**
+ * ══ THE RIBS — how a starving cat is drawn starving, and in profile they are RIBS ══
+ *
+ * `ART-DIRECTION.md` §8: "a starving cat is drawn starving. The mechanic is honest about losses or
+ * it is a lie with whiskers on it."
+ *
+ * Head-on this was two horizontal bands across the chest, which is not what a rib looks like from
+ * any angle — it was the only mark the pose allowed. In profile the ribs are short VERTICAL strokes
+ * on the ribcage, angled back the way a real ribcage is, sitting between the shoulder and the tucked
+ * flank. Combined with the shallower barrel and the drawn-up belly line, a starving cat now reads as
+ * starving from its outline alone, before any of the internal marks are seen.
+ *
+ * THREE steps, deeper than the tabby's two, so a rib is legible on a cat that is ALREADY tabby.
+ */
+function profileRibDrop(px: number, py: number, prof: ProfileGeometry): number {
+  const start = prof.headX + prof.headR + 1.2;
+  const rib = px - Math.round(start);
+  if (rib < 0 || rib > 5 || rib % 2 !== 0) return 0;
+  // Only on the upper half of the barrel: ribs sit high on the flank, and carried down to the belly
+  // they read as stripes rather than as a ribcage.
+  return py > prof.backRow + 1.2 && py < prof.backRow + prof.depth * 0.72 ? 3 : 0;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE PROFILE GEOMETRY — the identity axes, resolved into a side-on skeleton.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `geometryFor` returns the cat's IDENTITY — the hash-derived axes that make one stray different
+ * from another. This turns those axes, plus the posture, the state and the animation frame, into the
+ * concrete profile skeleton `profile.ts` draws from.
+ *
+ * The split matters: identity is stable forever (a cat's ears and coat are its own), while the
+ * skeleton changes with what the animal is doing. Keeping them apart is what lets `state` reach the
+ * geometry — a starving cat is genuinely thinner — without state ever leaking into identity.
+ *
+ * ══ WHAT EACH POSTURE DOES IN PROFILE, AND WHY IT READS BETTER THAN IT DID HEAD-ON ══
+ *
+ * Head-on, posture could only change the body's WIDTH and which rows it occupied, because every
+ * other axis was hidden behind the animal. All four postures came out as variations on "wider" or
+ * "narrower", which is why a reviewer called twelve cats "effectively the same".
+ *
+ * In profile each posture changes the relationship between the back line, the ground and the legs,
+ * which is what posture actually is:
+ *
+ *   SIT     — haunches down, front legs straight, chest up and back sloping down to the croup.
+ *   STAND   — all four legs extended, back level, belly clear of the ground.
+ *   CROUCH  — back line dropped toward the ground, legs folded, the whole animal compressed.
+ *   STRETCH — the play bow: front end down, croup UP, spine arched. Unmistakable, and completely
+ *             undrawable head-on.
+ */
+function profileGeometryFor(
+  geom: CatGeometry,
+  state: CatState,
+  frame: number,
+): ProfileGeometry {
+  const lying = state === "dead";
+
+  /*
+   * THE BACK ROW — where the spine sits. Posture's primary lever, because in profile the height of
+   * the back line off the ground IS the posture.
+   */
+  const backByPosture: Readonly<Record<Posture, number>> = {
+    stand: PROFILE_ROWS.body[0],
+    sit: PROFILE_ROWS.body[0] + 1,
+    crouch: PROFILE_ROWS.body[0] + 2.6,
+    stretch: PROFILE_ROWS.body[0] + 0.6,
+  };
+  const backRow = lying ? PROFILE_ROWS.body[0] + 5.4 : (backByPosture[geom.posture] ?? PROFILE_ROWS.body[0] + 1);
+
+  /*
+   * THE BARREL'S LENGTH. `build` lengthens a stocky cat and shortens a lean one, and `stretch`
+   * extends it further — a stretching cat is visibly longer, which is the pose's own strongest cue
+   * after the arched spine.
+   *
+   * A LYING cat is longest of all: an animal on its side presents its full length to the viewer
+   * where a sitting one foreshortens it.
+   */
+  /*
+   * ══ 8.4, SHORTENED SO THE TAIL HAS COLUMNS TO SWEEP INTO ══
+   *
+   * At 9.4 the barrel's rump reached column 20 on a 24-wide grid, so the tail rooted at 21 and had
+   * two columns before the edge — `0xf00d` came out with a tail clipped flat against the boundary
+   * and the flick frame moved it ZERO cells, which the frame assertion caught. That is the same
+   * crowding failure the head-on version recorded when its haunch grew to fill the wider grid.
+   *
+   * The tail is half the silhouette budget and it is the part a person names a cat by, so it gets
+   * the columns. A shorter barrel is also the more cat-like proportion: the length that reads as
+   * "long" on a quadruped is mostly the TAIL, and spending grid on the body to get it was the wrong
+   * trade twice over.
+   */
+  const bodyLen =
+    8.4 +
+    geom.build * 1.1 +
+    (geom.posture === "stretch" ? 1.8 : 0) +
+    (geom.posture === "crouch" ? 0.8 : 0) +
+    (lying ? 2.4 : 0);
+
+  /*
+   * THE BARREL'S DEPTH — back to belly. This is where `fed` and `starving` land, and in profile it
+   * is a completely different statement from the head-on version's "narrower": a fed cat is DEEP
+   * through the barrel and a starving one is SHALLOW, which is what a thin animal actually looks
+   * like from the side.
+   */
+  /*
+   * ══ THE DEPTH IS FLOORED, BECAUSE THE AXES ARE ADDITIVE AND CAN CANCEL ══
+   *
+   * `build`, the state and the posture all move the barrel's depth and they simply sum, so a lean
+   * cat (`stray-2`, build −0.91) that is also starving landed at about three rows of barrel — a
+   * strip rather than a body, with the legs reduced to stubs hanging off it. That is the same
+   * additive-clamp defect the head-on version hit twice, and the fix is the same: floor the result
+   * rather than narrowing every contributing range.
+   *
+   * FIVE rows is the floor. Below that the barrel cannot carry the tabby stripes, the ribs or the
+   * shading gradient that makes it read as a cylinder, so it stops being a body and becomes a line.
+   *
+   * The base rose from 5.8 to 7.0 alongside the leg shortening. Both halves are needed: a cat is low
+   * because its legs are short AND because its chest is deep, and shortening the legs alone would
+   * have produced a small dog rather than a cat. The two changes together move the belly line down
+   * toward the paws, which is the actual read.
+   */
+  const depth = Math.max(
+    5,
+    7.0 +
+      geom.build * 0.7 +
+      (state === "fed" ? 0.9 : 0) +
+      (state === "starving" ? -1.1 : 0) +
+      (geom.posture === "crouch" ? 0.5 : 0),
+  );
+
+  /*
+   * ══ THE TUCK — the sunken flank, and the reason `starving` is legible at last ══
+   *
+   * Head-on, a starving cat could only be narrower, and a reviewer called that row "muddy" because
+   * narrower is not a thing a viewer reads as hungry. In profile the flank is drawn UP toward the
+   * spine behind the ribcage, which is the single most recognisable sign of a starving animal and
+   * costs about six pixels.
+   */
+  const tuck = state === "starving" ? 2.3 : state === "fed" ? 0 : 0.7;
+
+  /*
+   * THE ARCH. A stretching cat's spine curves upward over the croup; a frightened or hunting one
+   * flattens. Only `stretch` uses much of it — an arch on a sitting cat reads as a hunch.
+   */
+  const arch = geom.posture === "stretch" ? 0.85 : 0;
+
+  /*
+   * THE GROUND ROW. Where the paws stand. A crouched cat's ground is closer to its back; a standing
+   * cat's is further. A LYING cat has no standing legs at all — the ground row sits just under the
+   * barrel, so the folded legs read as a shadow beneath the mass.
+   */
+  /*
+   * THE GROUND ROW — where the paws stand.
+   *
+   * Derived from the BELLY rather than from a fixed row: the first draft used `PROFILE_ROWS.legs[1]`
+   * and a crouched cat whose barrel sat high ended up with legs six rows long, which read as a
+   * spider. A leg's length is the distance from the belly to the ground, so tying the ground to a
+   * constant while the belly moves with posture makes the leg length a residual of two unrelated
+   * numbers.
+   *
+   * `legLen` is the leg's own length and posture varies IT, which is what posture actually changes:
+   * a standing cat's legs are extended, a crouching cat's are folded to almost nothing.
+   */
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   * ══ A CAT IS LOW SLUNG — and getting this wrong made twelve cats read as DEER ══
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * The first profile draft used 4.2 rows of leg on a barrel 7 rows deep — a leg-to-depth ratio of
+   * 1:1, which is a canid or an ungulate proportion, and a review of the render said so in as many
+   * words: "they read as DOGS or small DEER, not cats". Rendered at 96px the legs were about a third
+   * of the sprite's total height and ran straight down, which is a deer's stance exactly.
+   *
+   * The cause was copying NEEDLE's proportions along with its method. NEEDLE is a UNICORN in
+   * profile, so its leg-to-barrel ratio is equine by construction — the method transfers and the
+   * proportions emphatically do not. That distinction is stated in this package's own header about
+   * openhood's artwork and I applied it to the colour and not to the skeleton.
+   *
+   * A cat is LOW: its belly sits close to the ground and its legs are roughly HALF its barrel's
+   * depth, where a dog's are equal to it and a deer's are greater. `PROPORTIONS.legToDepth` asserts
+   * the ratio stays under 0.75 so a later edit cannot walk it back toward a dog one row at a time.
+   */
+  const legLen =
+    geom.posture === "stand" ? 2.0 : geom.posture === "stretch" ? 1.6 : geom.posture === "sit" ? 1.2 : 0.8;
+  const groundRow = lying
+    ? backRow + depth + 1.2
+    : Math.min(GRID_H - 1.5, backRow + depth + legLen);
+
+  /*
+   * THE HEAD. Sits forward of the chest and above it, on a neck the silhouette implies rather than
+   * draws — the notch between the skull's back edge and the withers IS the neck, and in profile it
+   * is a shape rather than the value break rule 2 had to manufacture head-on.
+   *
+   * A crouched or hunting cat carries its head LOW and forward — the stalking posture — which is a
+   * far stronger state read than the head-on version's forced ear angle.
+   */
+  /*
+   * ══ THE SKULL SITS ABOVE AND FORWARD OF THE CHEST, NOT INSIDE THE BARREL ══
+   *
+   * The first profile draft placed the head at `backRow + 0.4`, which put its centre level with the
+   * spine — so the skull's lower half sat INSIDE the barrel and the two masses fused into one lump
+   * with an eye in it. A step-grid dump showed head and body cells interleaved across six rows.
+   *
+   * A cat's skull in profile sits ABOVE the line of the back and FORWARD of the chest, joined by a
+   * neck that the silhouette implies. `headY` is therefore measured UP from the back line, and the
+   * skull's own radius keeps its bottom edge near the withers rather than below them — which is what
+   * leaves the notch between skull and shoulder that reads as a neck.
+   */
+  /*
+   * ══ THE SKULL IS SMALL, BECAUSE THE BARREL IS THE SUBJECT IN PROFILE ══
+   *
+   * 2.2 base, down from 2.9. Head-on, the head WAS the sprite — it carried the eyes, the ears and
+   * the muzzle, and the body was a plinth for it, so a large skull was correct there. In profile the
+   * subject is the whole animal and the barrel is its largest mass; a skull sized for a portrait
+   * makes the cat read as a kitten or as a bobblehead, and rendered at 384x zoom the first profile
+   * draft looked like a foal.
+   *
+   * NEEDLE is the calibration: its skull is about 4 cells across on a barrel 11 long — roughly 1:3.
+   * At 2.2 radius the skull is ~4.5 cells against a barrel of ~9, which lands in the same band. The
+   * `headWidth` identity axis still moves it, just over a smaller range.
+   */
+  /*
+   * ══ 1.8, LOWERED AGAIN — a cat's skull is SHORT and ROUND ══
+   *
+   * A review of the profile render found the heads reading as canid: "the head is too large and too
+   * long... several of these have a muzzle long enough to read as a dog". At 2.2 radius the skull
+   * spanned about five columns and the muzzle projected three more, so the face was eight columns
+   * on a barrel of fourteen — a snout, and a snout on a quadruped is a dog every time.
+   *
+   * A cat's skull in profile is SHORT front-to-back and nearly circular, with a muzzle that barely
+   * projects past it. At 1.8 the skull is under four columns, which reads as the compact round head
+   * a cat has, and it leaves the ears — which are the same size as before — proportionally much
+   * larger, which is itself a strong cat cue. Shrinking the head made the ears bigger for free.
+   */
+  /*
+   * ══ 2.1, BETWEEN THE SNOUTED DOG AND THE PINHEAD ══
+   *
+   * 2.2 read as canid; 1.8 overcorrected and left a skull of FOUR cells, which the neck-notch and
+   * back-line assertions caught immediately — a head that small is a knob on the end of the barrel
+   * and the animal loses its face entirely.
+   *
+   * The head is not what makes a cat read as a cat in profile; the LOW STANCE, the HIGH HAUNCH and
+   * the EARS are. So the skull only has to be small enough not to read as a dog's, and 2.1 clears
+   * that while keeping a five-cell skull with room for an eye and a jaw. What actually fixed the dog
+   * read was the MUZZLE — shrinking its projection from three columns to one — and that is where the
+   * budget was better spent.
+   */
+  /*
+   * FLOORED at 2.3 as well as scaled. `headWidth` runs 4.0..5.2, so the smallest skull was 2.46 —
+   * which after rasterisation is six cells including the muzzle, and the neck-notch assertion wants
+   * more than six before it will call it a head. A skull that small stops having room for the eye
+   * and the jaw to be separate features.
+   */
+  const headR = Math.max(2.3, 2.1 + geom.headWidth * 0.09);
+  const headLow =
+    (geom.posture === "crouch" ? 1.9 : 0) + (geom.posture === "stretch" ? 1.5 : 0);
+  const headX = NOSE_X_OFFSET + headR;
+  const headY = backRow - headR * 0.62 + headLow + (lying ? headR * 0.9 : 0);
+
+  return {
+    backRow,
+    bodyLen,
+    depth,
+    tuck,
+    arch,
+    groundRow,
+    headX,
+    headY,
+    headR,
+    earHeight: geom.earHeight,
+    earWidth: geom.earWidth,
+    /*
+     * A HUNTING cat pins its ears forward and a DEAD one lets them fall flat. Both are forced rather
+     * than nudged, because a state has to read on every cat regardless of what its own hash gave it
+     * — a bias a hash could cancel is not a state.
+     */
+    earAngle: lying ? -0.9 : state === "hunting" ? Math.max(0.5, geom.earAngle) : geom.earAngle,
+    tailCurl: geom.tailCurl,
+    tailLift: geom.tailLift,
+    eyeShape: geom.eyeShape,
+    whiskerLen: geom.whiskerLen,
+    // A sitting, crouching, stretching or lying cat has its front legs folded; only a standing one
+    // has them extended to the ground.
+    frontTucked: lying || geom.posture === "sit" || geom.posture === "crouch",
+    lying,
+  };
+}
+
+/**
+ * The muzzle's front edge, in columns. The animal faces LEFT, so this is its leading edge.
+ *
+ * 2.2, moved forward from 3.4 to buy the TAIL three more columns at the other end. The cat is not
+ * centred in the grid and should not be: it faces left, so the space it needs is BEHIND it, where
+ * the tail sweeps. Centring the animal left the tail clipped against the right edge on high-curl
+ * cats, and the flick frame had nowhere to move — a whole animation axis dead because of a layout
+ * constant.
+ */
+const NOSE_X_OFFSET = 2.2;
+
 /**
  * THE GRID — every filled pixel of a cat, as ramp indices.
  *
@@ -2800,17 +1502,9 @@ export function catGrid(
   // (hunting crouches), and the frame then perturbs whatever that produced. Reversing them would
   // let a frame's tail flick be overwritten by the state, so frame 1 would be a no-op in `hunting`.
   const geom = frameGeometry(stateGeometry(geometryFor(id), state), state === "dead" ? 0 : frame);
-  const tail = tailPixels(geom, state);
-  const { bodyTop } = postureRows(geom.posture, state);
-  const neckRow = neckRowFor(geom.posture, state);
-  /**
-   * The head's ramp step per column, filled in as the scan passes the head's rows.
-   *
-   * The scan runs top-down, so by the time it reaches the neck row every head column above it has
-   * already been written. That ordering is load-bearing and is why this is a plain map rather than
-   * a second pass: rule 2's break is defined against the pixel directly above.
-   */
-  const headStepAbove = new Map<number, number>();
+  // The identity axes, resolved into a side-on skeleton for this posture, state and frame.
+  const prof = profileGeometryFor(geom, state, frame);
+  const tail = profileTailCells(prof);
   const out: GridPixel[] = [];
   /** Which cells the cat occupies, so the outline pass can find its edge. */
   const filled = new Set<number>();
@@ -2819,7 +1513,7 @@ export function catGrid(
 
   for (let y = 0; y < GRID_H; y++) {
     for (let x = 0; x < GRID_W; x++) {
-      const hit = partAt(x, y, geom, tail, state, frame);
+      const hit = profilePartAt(x, y, prof, tail, frame, CAT_FRAMES);
       if (!hit) continue;
 
       const key = y * GRID_W + x;
@@ -2888,12 +1582,26 @@ export function catGrid(
        * Rule 2 is a statement about the DIFFERENCE between two rows, so the code has to compute that
        * difference.
        */
-      if (hit.part === "body" && y === neckRow) {
-        const above = headStepAbove.get(x);
-        step =
-          above === undefined
-            ? Math.max(1, step - NECK_STEP_DROP)
-            : Math.max(1, Math.min(step, above - NECK_STEP_DROP));
+      /*
+       * ══ RULE 2 IN PROFILE — THE NECK IS A SHAPE, NOT A VALUE BREAK ══
+       *
+       * Head-on, the head sat directly on top of the body and the two masses could only be separated
+       * by forcing the body's first row two ramp steps darker than the head above it. That clamp had
+       * three separate bugs over its life, all of the same shape: the break being computed somewhere
+       * the final value was not yet known.
+       *
+       * In profile the neck is a NOTCH in the silhouette — the gap between the skull's back edge and
+       * the withers — so the separation is carried by the shape itself and needs no clamp at all.
+       * `NECK_STEP_DROP` survives as the shading of the throat, which is the one place the head and
+       * the body still meet: the cells under the jaw are pushed down so the chest reads as being
+       * behind the head rather than continuous with it.
+       *
+       * That is the fourth defect the pose change dissolved rather than fixed. A rule that needed
+       * three bug fixes head-on needs none here, because the geometry now states what the rule was
+       * trying to say.
+       */
+      if (hit.part === "body" && x < prof.headX + prof.headR && y < prof.headY + prof.headR) {
+        step = Math.max(1, step - NECK_STEP_DROP);
       }
       /*
        * ══ THE FLOORS — measured by rendering to PNG and looking, per openhood's method ══
@@ -2995,7 +1703,20 @@ export function catGrid(
        * which is a cub or an owl. Floored above, the ear is among the brightest things on the cat,
        * which is the correct hierarchy: on a cat the ears are the first read.
        */
-      if (hit.part === "ear") step = Math.max(5, step);
+      /*
+       * ══ THE EAR IS THE BRIGHTEST THING ON THE CAT AFTER THE EYESHINE ══
+       *
+       * Floored at 6, raised from 5. A review of the profile render found the ears "absorbed into
+       * the head mass" — and the dump showed why: the ear floored at 5 and the skull beneath it
+       * floored at 4-5, so the two were within one ramp step and the dither closed the gap. The ears
+       * were geometrically correct, well-shaped triangles that were tonally INVISIBLE.
+       *
+       * At 24px an ear is the single most identifying feature a cat's silhouette has, and it only
+       * works if it BREAKS the skull's outline — which needs a value break as well as a shape. Two
+       * clear steps above the face puts the ear in the lit band with the eyeshine, which is the
+       * correct hierarchy: on a cat you read the ears and the eyes first.
+       */
+      if (hit.part === "ear") step = Math.max(6, step);
       /*
        * ══ THE INNER EAR IS ITS OWN STEP, and this is the v2 detail that most changes the face ══
        *
@@ -3008,7 +1729,16 @@ export function catGrid(
        * value reads as a HOLE through the ear rather than as a hollow in it, which at 24px is the
        * difference between a cat and a cat with a bite taken out of its ear.
        */
-      if (hit.part === "earInner") step = Math.max(2, Math.min(3, step - 2));
+      /*
+       * The inner cone sits at 2 — FOUR steps below the ear's own rim rather than the two it had.
+       * That gap is what makes an ear read as a cone open toward the viewer instead of as a flat
+       * triangle, and widening it was free once the rim moved up: the rim and the hollow now occupy
+       * opposite ends of the ramp, so the dither cannot merge them at any ramp position.
+       *
+       * Floored at 2 rather than 1 so it stays clear of the outline's 0 — an inner ear that reaches
+       * the outline's value reads as a HOLE punched through the ear rather than as a hollow in it.
+       */
+      if (hit.part === "earInner") step = 2;
       /*
        * ══ THE BODY IS FLOORED, NOT DROPPED — measured, and the fix for a dark blob ══
        *
@@ -3027,8 +1757,8 @@ export function catGrid(
        * darker than the chest, which reads as the body turning away underneath. That survives
        * because it is a relative difference INSIDE the body's own floored range.
        */
-      if (hit.part === "body" && y !== neckRow) {
-        const lower = y >= bodyTop + 3;
+      if (hit.part === "body") {
+        const lower = y >= prof.backRow + prof.depth * 0.55;
         // A FED cat is glossy: its lit band reaches a step higher, which is a sheen on the fur
         // rather than a brighter cat. This is `state affects the animal` in the exposure as well as
         // in the geometry.
@@ -3045,10 +1775,9 @@ export function catGrid(
          * Floored at 2 rather than 1: a stripe that reaches the outline's neighbourhood reads as a
          * hole punched in the cat, not as a marking on it.
          */
-        const hw = bodyHalfWidthAt(y, geom, state);
-        step = Math.max(2, step - coatDrop(geom.coat, x, y, bodyTop, hw));
+        step = Math.max(2, step - profileCoatDrop(geom.coat, x, y, prof));
         // The ribs, on a starving cat only. Applied after the coat so a starving tabby shows both.
-        if (state === "starving") step = Math.max(2, step - ribDrop(x, y, bodyTop, hw));
+        if (state === "starving") step = Math.max(2, step - profileRibDrop(x, y, prof));
       }
       /*
        * The tail brightens toward the TIP. Backwards from every other part, and deliberately: the
@@ -3099,17 +1828,6 @@ export function catGrid(
        * is the third distinct bug rule 2 has had, and all three were the same shape — the break
        * being computed somewhere the final value was not yet known.
        */
-      if (hit.part === "body" && y === neckRow && state !== "dead") {
-        const above = headStepAbove.get(x);
-        if (above !== undefined) {
-          finalStep = Math.max(1, Math.min(finalStep, above - NECK_STEP_DROP));
-        }
-      }
-
-      // Remember the head's own EMITTED value per column, so the neck row below breaks against the
-      // value a viewer will actually see rather than against a pre-exposure intermediate.
-      if (hit.part === "head" || hit.part === "muzzle") headStepAbove.set(x, finalStep);
-
       out.push({ x, y, step: finalStep, part: hit.part });
       filled.add(key);
       outlineSeed.add(key);
