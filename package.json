@@ -8,7 +8,7 @@
     "test": "turbo run test",
     "check-types": "turbo run check-types",
     "build": "pnpm --filter @strays/cat build && pnpm --filter @strays/hunt build && pnpm --filter @strays/web build && pnpm --filter @strays/indexer build",
-    "start": "node apps/web/.next/standalone/apps/web/server.js"
+    "start": "node $(find apps/web/.next/standalone -name server.js -maxdepth 4 | head -1)"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",
