@@ -26,9 +26,16 @@
  * are supplied by this file. In observe mode they are functions that throw. There is no second
  * path that could quietly keep acting, and `observeModeCannotSpend` in the tests asserts it.
  */
+import {
+  DEFAULT_ELIGIBILITY,
+  DEFAULT_RISK,
+  createMemorySpendLedger,
+  decide as strategyDecide,
+} from "@strays/hunt";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { fetchCandidates } from "./discovery.js";
+import { historyFor, quoteBuy, recordPrice } from "./quote.js";
 import { TICK_MS, runTick, type DecisionRecord, type StrayState, type TickDeps } from "./tick.js";
 
 const RPC_URL = process.env.STRAYS_RPC_URL ?? "";
@@ -76,6 +83,10 @@ async function main(): Promise<void> {
   const wallet = live
     ? createWalletClient({ account: privateKeyToAccount(KEEPER_KEY as `0x${string}`), transport: http(RPC_URL), chain })
     : null;
+
+  // In-memory for OBSERVE mode only. See the note on `decide` — going live needs a durable one,
+  // and `assertDurableLedger` from @strays/hunt throws on this to stop it happening by accident.
+  const ledger = createMemorySpendLedger();
 
   const refuse = (what: string) => async (): Promise<never> => {
     throw new Error(`refusing to ${what}: keeper is in OBSERVE mode`);
@@ -173,9 +184,138 @@ async function main(): Promise<void> {
       );
     },
 
-    // The strategy is supplied by @strays/hunt. Wired in the next pass; until then the keeper
-    // observes and holds, which is stated rather than dressed up as a working strategy.
-    decide: () => ({ kind: "hold", reason: "strategy not yet wired to the keeper" }),
+    /**
+     * THE STRATEGY, actually called.
+     *
+     * openhood's recorded failure is a flag that said `AUTOMATIC_EXECUTION_WIRED = true` while the
+     * engine never called the evaluator. The equivalent lie here would be leaving this as a stub
+     * returning `hold` while claiming a strategy exists — so it calls `@strays/hunt`'s `decide`,
+     * and `tick.test.ts` fails if the executor is ever unreached.
+     *
+     * ⚠ THE LEDGER IS IN-MEMORY, AND THAT IS A REAL LIMITATION, NOT A DETAIL.
+     *
+     * meridian's daily cap "only reset on process restart, so the 'daily' cap was really 'spend
+     * since last boot': long uptime falsely blocked, frequent redeploys never enforced."
+     * `@strays/hunt` exports `assertDurableLedger`, which THROWS on an in-memory one, precisely so
+     * this cannot be shipped live by accident. It is tolerable only because the process runs in
+     * OBSERVE mode; going live requires a Postgres-backed ledger first, and `assertDurableLedger`
+     * is what will stop anyone forgetting.
+     */
+    decide: async ({ stray, candidates, gasPriceWei, currentValueWei, block }) => {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+
+      /*
+       * ══ BUILDING A CANDIDATE THE STRATEGY CAN ACTUALLY REASON ABOUT ══
+       *
+       * The first version of this mapped API rows straight across with an `as never` cast and
+       * crashed on the live chain with "Cannot read properties of undefined (reading 'taxPct')".
+       * The cast was the bug: `@strays/hunt`'s Candidate is NESTED — {token, history, quotedOut} —
+       * and it needs two things an API row cannot supply.
+       *
+       *   1. PRICE HISTORY. The signal measures a move over a 60-minute window off real timestamps.
+       *   2. A REAL QUOTE. `quotedOut` must come from the v4 quoter, never from size x price.
+       *
+       * A cast that silences a type error is a type error that reaches production. This builds the
+       * real shape instead, and a token we cannot quote is simply not a candidate this tick.
+       */
+      const sizeProbeWei = 1_200_000_000_000_000n; // ~$2.3, the size we would actually trade
+      const huntCandidates = [];
+      for (const c of candidates) {
+        // priceEth is a float from the API and is used ONLY to record history, never to size a
+        // trade — the trade size comes from the quoter below, in bigint.
+        const ethPerTokenWei = BigInt(Math.round(c.priceEth * 1e18));
+        if (ethPerTokenWei > 0n) recordPrice(c.address, ethPerTokenWei, nowSeconds);
+
+        const quotedOut = await quoteBuy({
+          client: pub,
+          token: c.address,
+          tickSpacing: c.tickSpacing,
+          amountInWei: sizeProbeWei,
+        });
+        if (quotedOut === null) continue; // unquotable is untradeable. Never estimated.
+
+        huntCandidates.push({
+          token: {
+            address: c.address,
+            taxPct: c.taxPct,
+            marketCapWei: BigInt(Math.round(c.marketCapEth * 1e18)),
+            holders: c.holders,
+            volumeAllTimeWei: BigInt(Math.round(c.volume24hEth * 1e18)),
+            ageSeconds: Math.max(0, nowSeconds - Math.floor(c.launchedAt / 1000)),
+            tickSpacing: c.tickSpacing,
+          },
+          history: historyFor(c.address),
+          quotedOut,
+        });
+      }
+
+      const d = await strategyDecide(
+        {
+          strayId: stray.id,
+          compartmentWei: stray.stakeWei,
+          highWaterMarkWei: stray.stakeWei + (currentValueWei ?? 0n),
+          equityWei: stray.stakeWei + (currentValueWei ?? 0n),
+          position:
+            stray.holding === null
+              ? undefined
+              : {
+                  token: stray.holding,
+                  entryWei: stray.costBasisWei,
+                  entryPriceWei: 0n,
+                  // Full precision, never a number — a real 18-decimal balance needs ~22
+                  // significant digits and float64 holds ~15-17 (RESEARCH §7d).
+                  tokenBalance: stray.holdingUnits,
+                  openedAtSeconds: 0,
+                },
+        },
+        {
+          // Built in the tick body below, because each one needs a real quoter call and a real
+          // price history — neither of which a `map` over the API rows can produce.
+          candidates: huntCandidates,
+          gasPriceWei,
+          markPriceWei: currentValueWei ?? undefined,
+          nowSeconds,
+        },
+        {
+          eligibility: DEFAULT_ELIGIBILITY,
+          risk: DEFAULT_RISK,
+          ledger,
+          slippageBps: 500n,
+          idempotencyKey: `${stray.id}:${block.toString()}`,
+          approvalsNeeded: true,
+        },
+      );
+      if (d.kind === "enter") {
+        // `tickSpacing` is NOT part of a Decision, and deliberately so: the strategy reasons about
+        // prices and sizes, and the pool's geometry is an execution detail. It is looked up from
+        // the candidate we are entering — and it is FATAL if absent, because a guessed tickSpacing
+        // builds a PoolKey for a pool that does not exist (RESEARCH §2).
+        const chosen = candidates.find((c) => c.address.toLowerCase() === d.token.toLowerCase());
+        if (chosen === undefined) {
+          return {
+            kind: "hold",
+            reason: `strategy chose ${d.token} but it is no longer among this tick's candidates`,
+          };
+        }
+        return {
+          kind: "enter",
+          token: d.token as `0x${string}`,
+          amountWei: d.sizeWei,
+          minOut: d.minOut,
+          tickSpacing: chosen.tickSpacing,
+          reason: d.reason,
+        };
+      }
+      if (d.kind === "exit") {
+        // The strategy's exit carries NO minOut, and that is correct: a floor computed at decision
+        // time is stale by the time the transaction lands. It is derived here from the mark read
+        // this tick, and it is never zero — a zero floor is an unbounded MEV sandwich (§7c).
+        const mark = currentValueWei ?? 0n;
+        const minOut = mark > 0n ? (mark * 9500n) / 10_000n : 1n;
+        return { kind: "exit", minOut, reason: d.reason };
+      }
+      return { kind: "hold", reason: d.reason };
+    },
 
     now: () => Date.now(),
   };

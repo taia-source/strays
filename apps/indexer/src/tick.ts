@@ -84,7 +84,7 @@ export type TickDeps = {
   /** Quote the current value of a holding, for exit decisions. */
   readonly quoteExitWei: (token: `0x${string}`, units: bigint, tickSpacing: number) => Promise<bigint>;
   readonly record: (r: DecisionRecord) => Promise<void>;
-  readonly decide: (input: DecideInput) => Decision;
+  readonly decide: (input: DecideInput) => Decision | Promise<Decision>;
   readonly now: () => number;
 };
 
@@ -148,7 +148,7 @@ export async function runTick(deps: TickDeps): Promise<readonly DecisionRecord[]
               .catch(() => null)
           : null;
 
-      const decision = deps.decide({ stray, candidates, gasPriceWei, currentValueWei, block });
+      const decision = await deps.decide({ stray, candidates, gasPriceWei, currentValueWei, block });
 
       const base = { strayId: stray.id, block, at: deps.now() } as const;
 

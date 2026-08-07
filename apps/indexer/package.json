@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "viem": "^2.55.10",
-    "pg": "8.13.1"
+    "pg": "8.13.1",
+    "@strays/hunt": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
