@@ -29,8 +29,21 @@ import { useEffect } from "react";
  * An allowlist of scrollers rather than an allowlist of locked routes, deliberately: a new route is
  * far more likely to be another world-like panel view than another essay, and the failure mode of
  * getting it wrong is milder (an unnecessary scrollbar, versus a clipped page).
+ *
+ * ══ `/` CAME OFF THIS LIST ══
+ *
+ * Ibrahim: *"didn't i tell you no scroll on the frontend? have you checked the landing page?"* It
+ * was on this list, and the argument for it — that the risk disclosure could not fit a fixed
+ * viewport — assumed the word count was immovable. It was not. The copy was cut to fit and every
+ * risk claim survived intact; the risk panel scrolls INTERNALLY on a short viewport rather than
+ * the document scrolling. See the header of `app/page.tsx`.
+ *
+ * `/docs` stays: it is a genuine reference document (the mechanism, the fee maths, the custody
+ * model, the full unaudited disclosure) and there is no honest word budget that fits it in one
+ * viewport. It is a fixed SHELL with an internally-scrolling body — see `.doc` in `globals.css` —
+ * so the DOCUMENT still does not scroll, which is the property the rule is actually about.
  */
-const SCROLLS = ["/", "/docs"];
+const SCROLLS: readonly string[] = [];
 
 export function RouteShell() {
   const pathname = usePathname();

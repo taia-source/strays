@@ -29,6 +29,11 @@ export default function Docs() {
         <h1>How it works</h1>
       </header>
 
+      {/*
+        The DOCUMENT does not scroll — this body does. See `.doc` / `.doc-body` in `globals.css`
+        for why this route kept its full text instead of being cut to one viewport like `/`.
+      */}
+      <div className="doc-body">
       <section>
         <h2>The loop</h2>
         <ol className="steps">
@@ -180,6 +185,8 @@ export default function Docs() {
           nothing has happened yet.
         </p>
       </section>
+
+      </div>
 
       <footer className="doc-foot stamp">
         <Link href="/logs">every decision, with its transaction →</Link>

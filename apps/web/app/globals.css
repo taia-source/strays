@@ -256,10 +256,245 @@ img[data-pixel] {
    floor the track that must not vanish (fixed px, never %); declare BOTH rows and
    columns; a floor is only safe on a track whose container scrolls. Mobile first. */
 
-.landing, .doc, .colony, .board, .logs {
+.colony, .board, .logs {
   max-width: 780px;
   margin-inline: auto;
   padding: var(--s4) var(--s3) var(--s5);
+}
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ * THE LANDING PAGE AND THE DOCS — FIXED VIEWPORT, NOT DOCUMENTS.
+ *
+ * Ibrahim: "didn't i tell you no scroll on the frontend? have you checked the landing page?"
+ * Both routes are now `position: fixed; inset: 0`, exactly like `.world-root` and `.panel-route`.
+ * The page itself has no scroll to give at any width or height.
+ *
+ * ══ THE PART THAT IS ACTUALLY HARD ══
+ *
+ * `/` has to carry the FULL risk disclosure — "you can lose all of it", "the contract is not
+ * audited", "two of the launchpad's own contracts are unverified" — and unitick recorded exactly
+ * what goes wrong here: on a cramped no-scroll layout the tempting fix is `display: none` on the
+ * help text, which trades a layout defect for a DISCLOSURE defect. Its lesson, followed literally:
+ * BUDGET THE WORDS BEFORE THE BOXES. The copy in `page.tsx` was cut ~40% and every risk CLAIM
+ * survived; this file then gets the remaining words to fit with tighter leading and smaller type,
+ * and where they still do not fit the RISK PANEL scrolls itself.
+ *
+ * There is no `display: none` on any content in this block. There is no `max-height` with hidden
+ * overflow on a prose element. Both are grep-able absences and both are deliberate.
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+.landing, .doc {
+  position: fixed;
+  /* Below the nav, not under it — the nav is `fixed` too, so this is the only way they compose. */
+  top: calc(var(--nav-h) + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* The ROUTE never scrolls. Only a designated panel inside it may. */
+  overflow: hidden;
+}
+
+/*
+ * The landing page's own grid: six rows, and the RISKS row is the flexible one.
+ *
+ * `minmax(0, auto)` on the risks track, with `1fr` reserved for it, is the whole trick. Every other
+ * row is intrinsically sized and gets exactly what it needs; the risks take the remainder and, if
+ * the remainder is smaller than their content, scroll INSIDE that remainder. unitick's rule about
+ * floored tracks applies in reverse here: a `1fr` track is only safe to squeeze if the thing in it
+ * can scroll, and `.landing-risks` can.
+ */
+.landing-grid {
+  height: 100%;
+  max-width: 780px;
+  margin-inline: auto;
+  padding: var(--s2) var(--s3) var(--s2);
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  gap: var(--s2);
+  /* Belt and braces: `minmax(0, …)` above already permits the shrink, and this stops any child
+     with a long unbroken string (an address) from forcing the whole grid wider than the viewport. */
+  min-height: 0;
+}
+
+.landing-head { min-height: 0; }
+
+.landing .wordmark {
+  /* Smaller and tighter than the document version: the hero type was 28/52px of pure decoration
+     and every pixel it gave back went to the risk panel. */
+  font-size: clamp(26px, 7vw, 40px);
+  line-height: 1;
+  margin: 0 0 var(--s0);
+}
+
+.landing .tagline {
+  font-size: var(--t-body);
+  line-height: 1.3;
+  margin: 0;
+  max-width: 52ch;
+}
+
+.landing .explain { margin-bottom: 0; min-height: 0; }
+
+.landing .explain h2 {
+  margin: 0 0 var(--s1);
+  padding-bottom: var(--s0);
+  font-size: var(--t-micro);
+}
+
+.landing .explain p {
+  margin: 0;
+  line-height: 1.35;
+  font-size: var(--t-body);
+  max-width: 66ch;
+}
+
+.landing .costs { gap: var(--s1); }
+.landing .costs > div { padding: var(--s1) var(--s2); }
+.landing .costs dd.fig { font-size: var(--t-figure); line-height: 1.1; }
+.landing .costs dd.stamp { line-height: 1.25; }
+
+/* Four cost cells go two-up early and four-up on a wide screen — one row of four is much shorter
+   than two rows of two, and height is the scarce resource on this page, not width. */
+@media (min-width: 420px) { .landing .costs { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 760px) { .landing .costs { grid-template-columns: repeat(4, 1fr); } }
+
+/*
+ * ══ THE RISK PANEL — the one element allowed to scroll, and it scrolls ITSELF ══
+ *
+ * `overflow-y: auto` with `overscroll-behavior: contain`: when this panel is at its end the
+ * gesture STOPS rather than chaining to the document, which is what keeps a fixed page fixed on a
+ * touch device. Same pattern as `.panel-body`.
+ *
+ * It is `1fr` in the grid, so on a tall viewport it simply shows everything and never scrolls, and
+ * on a short one it is the single element that gives. That is the correct thing to designate,
+ * because it is the one element whose content may not be cut.
+ */
+.landing-risks {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+  padding: var(--s2);
+  min-height: 0;
+}
+
+.landing-risks ul {
+  margin: 0;
+  padding-left: var(--s3);
+  display: grid;
+  gap: var(--s1);
+}
+
+.landing-risks li {
+  margin: 0;
+  max-width: 70ch;
+  font-size: var(--t-micro);
+  line-height: 1.35;
+}
+
+/* The load-bearing clause of each risk, at full body size while the qualifier around it is micro.
+   This is the opposite of hiding a disclosure: the sentence that states the risk is the LARGEST
+   text in the panel. */
+.landing-risks li strong {
+  font-size: var(--t-body);
+  line-height: 1.3;
+}
+
+.landing .ways-in { margin: 0; gap: var(--s2); }
+.landing .cta { padding: var(--s2); min-height: 44px; line-height: 28px; }
+.landing .landing-foot { padding-top: var(--s1); }
+
+/*
+ * ══ THE HERO CAT ══
+ *
+ * A fixed-size stage with four absolutely-positioned frames stacked on it, so swapping states
+ * cannot reflow the page — a state change that moved the layout would push the risk panel around
+ * every 2.2 seconds.
+ */
+.hero-cat {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "stage label"
+    "stage ticks"
+    "stage note";
+  align-items: center;
+  gap: var(--s0) var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--wash);
+  border-top: var(--px) solid var(--rail);
+  border-bottom: var(--px) solid var(--rail);
+}
+
+.hero-cat-stage {
+  grid-area: stage;
+  position: relative;
+  align-self: center;
+}
+
+.hero-cat-frame {
+  position: absolute;
+  inset: 0;
+  line-height: 0;
+  opacity: 0;
+  /* A cross-fade, not a cut — the states are a continuum in the product and a hard cut reads as a
+     glitch. Opacity only, so it composites on the GPU and never triggers layout. */
+  transition: opacity 380ms ease-in-out;
+}
+
+.hero-cat-frame[data-on="1"] { opacity: 1; }
+.hero-cat-frame svg { width: 100%; height: 100%; display: block; }
+
+.hero-cat-label {
+  grid-area: label;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+/* The state NAME, at figure size. The label is the payload of this widget — for a screen-reader
+   user it is the entire content — so it is typeset as a figure, not as a caption. */
+.hero-cat-state {
+  font-size: var(--t-figure);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
+.hero-cat-ticks {
+  grid-area: ticks;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  font-size: var(--t-micro);
+  color: var(--phos-ghost);
+  letter-spacing: 0.08em;
+}
+
+/* The inactive states stay LEGIBLE, not ghosted to nothing: "there are four of these and one of
+   them is dead" is information a visitor needs whether or not it is the current frame. */
+.hero-cat-ticks li { opacity: 0.55; transition: opacity 380ms ease-in-out; }
+.hero-cat-ticks li[data-on="1"] { opacity: 1; color: var(--phos); }
+
+.hero-cat-note { grid-area: note; margin: 0; }
+
+/* At 320px the cat and the text side by side leave the label ~14 characters. Stack them. */
+@media (max-width: 400px) {
+  .hero-cat {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "stage label"
+      "stage ticks"
+      "note  note";
+    gap: var(--s0) var(--s2);
+    padding: var(--s2);
+  }
 }
 
 .wordmark {
@@ -312,8 +547,55 @@ img[data-pixel] {
   padding-top: var(--s2); border-top: var(--px) solid var(--soot-line);
 }
 
+/*
+ * ══ /docs — A FIXED SHELL WITH AN INTERNALLY-SCROLLING BODY ══
+ *
+ * `/` was cut to fit one viewport. `/docs` was NOT, and the difference is deliberate.
+ *
+ * `/` is a pitch: it has four questions to answer and every word beyond them is padding, so there
+ * was a real word budget to find. `/docs` is a REFERENCE — the mechanism step by step, why only
+ * 1%-tax tokens, the custody model, and the full "what is not audited" section that `DESIGN.md` §3
+ * exists to force onto the page. There is no honest edit that fits that in 100svh, and the
+ * dishonest ones all amount to deleting disclosure to satisfy a layout rule. So nothing was cut.
+ *
+ * Instead the DOCUMENT does not scroll and the BODY does: a fixed shell, a pinned header and
+ * footer, and one `overflow-y: auto` panel between them — the same shape as `/logs` and
+ * `/leaderboard`. That satisfies what the no-scroll rule is actually for (the chrome stays put,
+ * the page is a frame rather than a sheet of paper) without paying for it in content.
+ */
+.doc {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-width: 780px;
+  margin-inline: auto;
+  padding: var(--s3) var(--s3) var(--s2);
+  gap: var(--s2);
+}
+
+.doc-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+  min-height: 0;
+  /* A sliver at the bottom so the last line is not flush to the footer rule, which reads as
+     "the text is cut off" even when it is complete. */
+  padding-bottom: var(--s3);
+}
+
+.doc-body section { margin-bottom: var(--s4); }
+.doc-body h2 {
+  font-size: var(--t-body); text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2);
+  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--soot-line);
+}
+.doc-body p { margin: 0 0 var(--s2); max-width: 66ch; line-height: 1.45; }
+
 .back { color: var(--phos-dim); font-size: var(--t-micro); text-decoration: none; letter-spacing: 0.1em; }
 .colony-head, .doc-head { margin-bottom: var(--s4); }
+/* The doc's header is a pinned row in a fixed grid, so its document-flow margin would be dead
+   space between two rows the grid already spaced with `gap`. */
+.doc .doc-head { margin-bottom: 0; }
 .colony-head h1, .doc-head h1 { font-size: var(--t-figure-lg); margin: var(--s2) 0 var(--s1); letter-spacing: 0.08em; }
 
 .colony-grid { list-style: none; padding: 0; margin: 0;
@@ -769,7 +1051,12 @@ body[data-route="scroll"] {
  * `body`, because the world is `position: fixed; inset: 0` and a body padding would not move it —
  * the world sets its own `top` instead (see `.world-root`).
  */
-.landing, .doc, .colony, .board, .logs {
+/*
+ * `.landing` and `.doc` are ABSENT here on purpose: they are `position: fixed` and already `top`
+ * themselves below the nav (see their block above), exactly as `.world-root` does. Adding padding
+ * on top of that would inset them twice.
+ */
+.colony, .board, .logs {
   padding-top: calc(var(--nav-h) + env(safe-area-inset-top) + var(--s4));
 }
 

@@ -289,7 +289,8 @@ async function main(): Promise<void> {
             action: r.action,
             token: r.token,
             amountWei: r.amountWei,
-            rationale: r.rationale,
+            rationale:
+              "reason" in r.outcome ? `${r.rationale}\n\nFAILED: ${r.outcome.reason}` : r.rationale,
             outcome: r.outcome.kind,
             txHash: "txHash" in r.outcome ? r.outcome.txHash : null,
             block: r.block,
@@ -305,6 +306,16 @@ async function main(): Promise<void> {
           action: r.action,
           outcome: r.outcome.kind,
           rationale: r.rationale,
+          /*
+           * ══ WHY THE FAILURE REASON IS ITS OWN FIELD ══
+           *
+           * It was captured in the outcome and then never printed or persisted, so a live `hunt`
+           * that FAILED logged the decision's reasoning and nothing about why it did not land —
+           * observably "failed" with no cause. That is the silent wrongness this repo treats as
+           * worse than downtime, and it cost a debugging cycle on the first real trade attempt.
+           */
+          error: "reason" in r.outcome ? r.outcome.reason.slice(0, 400) : null,
+          txHash: "txHash" in r.outcome ? r.outcome.txHash : null,
           block: r.block.toString(),
           amountWei: r.amountWei.toString(),
         }),
@@ -502,24 +513,56 @@ async function main(): Promise<void> {
         },
       );
       if (d.kind === "enter") {
-        // `tickSpacing` is NOT part of a Decision, and deliberately so: the strategy reasons about
-        // prices and sizes, and the pool's geometry is an execution detail. It is looked up from
-        // the candidate we are entering — and it is FATAL if absent, because a guessed tickSpacing
-        // builds a PoolKey for a pool that does not exist (RESEARCH §2).
+        /*
+         * ══ RE-QUOTE AT THE SIZE WE ARE ACTUALLY TRADING ══
+         *
+         * THE BUG THIS FIXES, caught on the first live trade attempt. `quotedOut` is measured once
+         * per candidate at a fixed PROBE size, because the market is built before any particular
+         * stray's position is sized. `minOut` was then derived from that probe quote — but the
+         * trade is sized per stray, from its own compartment.
+         *
+         * MEASURED: probe 0.0012 ETH, actual entry 0.00104 ETH, so `minOut` was scaled to a buy
+         * 15.4% larger than the one being made. On chain the call reverted with
+         * `V4TooLittleReceived` (0x8b063d73) — a floor 15.8% above what the pool could deliver,
+         * which is not slippage, it is arithmetic. The bound was doing its job; the number was
+         * wrong.
+         *
+         * A quote is `eth_call` only, so re-quoting at the true size costs nothing and removes the
+         * mismatch entirely rather than papering over it with a wider slippage tolerance — which
+         * would have "fixed" the revert by disabling the protection.
+         */
         const chosen = candidates.find((c) => c.address.toLowerCase() === d.token.toLowerCase());
-        if (chosen === undefined) {
+        const trueQuote =
+          chosen === undefined
+            ? null
+            : await quoteBuy({
+                client: pub,
+                token: chosen.address,
+                tickSpacing: chosen.tickSpacing,
+                amountInWei: d.sizeWei,
+              });
+        if (chosen === undefined || trueQuote === null) {
           return {
             kind: "hold",
-            reason: `strategy chose ${d.token} but it is no longer among this tick's candidates`,
+            reason: `chose ${d.token} but could not re-quote it at the real size ${d.sizeWei} wei`,
           };
         }
+        // Same slippage policy the strategy used, applied to the CORRECT expected output.
+        const scaledMinOut = (trueQuote * 9500n) / 10_000n;
+        if (scaledMinOut <= 0n) {
+          return { kind: "hold", reason: "slippage floor rounded to zero at the real size" };
+        }
+        // `tickSpacing` is an EXECUTION detail, not a strategy one, so it comes from the candidate
+        // rather than the Decision — and a guessed value builds a PoolKey for a pool that does not
+        // exist (RESEARCH §2), which is why `chosen` being undefined is a refusal above.
         return {
           kind: "enter",
           token: d.token as `0x${string}`,
           amountWei: d.sizeWei,
-          minOut: d.minOut,
+          // The RE-QUOTED floor, not `d.minOut` — see the derivation above.
+          minOut: scaledMinOut,
           tickSpacing: chosen.tickSpacing,
-          reason: d.reason,
+          reason: `${d.reason} | minOut re-quoted at the real size: ${scaledMinOut}`,
         };
       }
       if (d.kind === "exit") {

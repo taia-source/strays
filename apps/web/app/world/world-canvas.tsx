@@ -31,10 +31,12 @@
  */
 
 import { catGrid, drawCat as drawCatRaw, type Ctx2D, type CatState, GRID_H, GRID_W } from "@strays/cat";
+import { fnv1a, valueNoise } from "@taia/ui/mechanisms";
 import { useEffect, useRef } from "react";
 import {
   createSim,
   lerpBody,
+  reslot,
   resizeSim,
   setInsets,
   settle,
@@ -44,6 +46,7 @@ import {
   syncBodies,
   syncTokens,
   TICK_MS,
+  walking,
   type AgentInput,
   type TokenInput,
 } from "./sim";
@@ -357,13 +360,50 @@ export function WorldCanvas({
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerleave", onLeave);
 
+    /*
+     * ══ A READ-ONLY PROBE FOR THE SCREENSHOT HARNESS ══
+     *
+     * A screenshot of a static frame cannot show motion, and — more importantly for this rewrite —
+     * it cannot show STILLNESS either. The claim "an idle cat sits at its slot and does not drift"
+     * is exactly the kind of thing that looks fine in one frame and is false over ten seconds, and
+     * it is the entire point of the change, so it has to be measurable rather than eyeballed.
+     *
+     * This exposes the sim's own positions so `scripts/motion-probe.mjs` can sample them over time
+     * and assert that an idle cat's coordinates are IDENTICAL across samples while the canvas as a
+     * whole is still changing (breath, mist, glow). Nothing reads it in production and nothing can
+     * write through it — it returns a fresh plain snapshot, never the live objects.
+     */
+    (window as unknown as { __world?: () => unknown }).__world = () => {
+      const s = simRef.current;
+      if (s === null) return null;
+      const bodies: Record<string, { x: number; y: number; mode: string; walking: boolean }> = {};
+      for (const b of s.bodies.values()) {
+        bodies[b.id] = { x: b.x, y: b.y, mode: b.mode, walking: walking(b) };
+      }
+      return { n: s.bodies.size, tokens: s.tokens.size, bodies };
+    };
+
     const frame = (now: number): void => {
       raf = requestAnimationFrame(frame);
       const sim = simRef.current;
       if (sim === null) return;
 
-      syncTokens(sim, tokensRef.current);
-      syncBodies(sim, agentsRef.current);
+      /*
+       * ══ SYNC, THEN RE-SLOT ONLY IF SOMETHING REALLY CHANGED ══
+       *
+       * Both syncs return whether they altered anything that affects where a cat belongs. On the
+       * overwhelming majority of frames the answer is no — the same one stray and the same fourteen
+       * tokens came back from the same poll — and re-slotting anyway would be harmless but wasteful.
+       *
+       * The reason it would be harmless is worth stating, because it is the property that makes the
+       * whole model safe: `reslot` is IDEMPOTENT. It computes each cat's slot from state alone, and
+       * `setHome` starts a walk only when the slot actually moved more than the re-slot threshold.
+       * So a spurious re-slot is a no-op rather than a jitter — which is exactly the guarantee the
+       * old steering model could not offer, where any extra force application moved a body.
+       */
+      const tokensChanged = syncTokens(sim, tokensRef.current);
+      const bodiesChanged = syncBodies(sim, agentsRef.current);
+      if (tokensChanged || bodiesChanged) reslot(sim);
 
       let alpha = 1;
       if (reducedRef.current) {
@@ -439,6 +479,7 @@ export function WorldCanvas({
       scheme.removeEventListener("change", onScheme);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerleave", onLeave);
+      delete (window as unknown as { __world?: () => unknown }).__world;
     };
   }, []);
 
@@ -459,6 +500,7 @@ export function WorldCanvas({
 
 type Palette = {
   readonly soot: string;
+  readonly sootHi: string;
   readonly rail: string;
   readonly band: string;
   readonly phos: string;
@@ -472,6 +514,7 @@ type Palette = {
 function readPalette(el: HTMLElement): Palette {
   return {
     soot: readVar(el, "--soot", "oklch(0.14 0.014 145)"),
+    sootHi: readVar(el, "--soot-hi", "oklch(0.19 0.02 145)"),
     rail: readVar(el, "--rail", "oklch(0.34 0.075 145)"),
     band: readVar(el, "--band", "oklch(0.24 0.045 145)"),
     phos: readVar(el, "--phos", "oklch(0.9 0.055 145)"),
@@ -501,6 +544,17 @@ type DrawCtx = {
 /** Grid cell size in CSS px. A camera-trap frame has a graticule; this is it. */
 const GRID_CELL = 64;
 
+/**
+ * ══ THE PIXEL QUANTUM ══
+ *
+ * Bloodhorn snaps every atmospheric mark to a multiple of `PX` (its `pixel.ts`), and the reason is
+ * the same one §8 bans anti-aliasing for: a speck drawn at a fractional coordinate is resampled
+ * into a soft grey smudge, and a field of soft grey smudges reads as a dirty screen rather than as
+ * a rendered texture. Whole quanta read as deliberate marks.
+ */
+const PX = 2;
+const snap = (v: number): number => Math.round(v / PX) * PX;
+
 function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
   const { width, height, dpr, alpha, ramp, palette } = d;
 
@@ -508,31 +562,8 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, width, height);
 
-  // ── The ground ───────────────────────────────────────────────────────────────────────
-  ctx.fillStyle = palette.soot;
-  ctx.fillRect(0, 0, width, height);
-
-  /*
-   * THE GRATICULE. Not decoration — it is what makes motion legible.
-   *
-   * A cat walking across a flat field has nothing to be measured against and reads as drifting. A
-   * fixed grid gives the eye a reference, so the same motion reads as crossing ground. This is the
-   * cheapest possible parallax substitute and it costs one path per frame.
-   */
-  ctx.strokeStyle = palette.sootLine;
-  ctx.globalAlpha = 0.55;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = GRID_CELL; x < width; x += GRID_CELL) {
-    ctx.moveTo(Math.round(x) + 0.5, 0);
-    ctx.lineTo(Math.round(x) + 0.5, height);
-  }
-  for (let y = GRID_CELL; y < height; y += GRID_CELL) {
-    ctx.moveTo(0, Math.round(y) + 0.5);
-    ctx.lineTo(width, Math.round(y) + 0.5);
-  }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+  // ── The ground, and the air above it ─────────────────────────────────────────────────
+  drawAtmosphere(ctx, d);
 
   // ── The den ──────────────────────────────────────────────────────────────────────────
   drawDen(ctx, sim, palette, d.reduced ? 0 : d.now);
@@ -705,6 +736,265 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
 }
 
 const MONO = `"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace`;
+
+/**
+ * ══ THE ATMOSPHERE — what makes the field a place rather than a background ══
+ *
+ * The field this replaces was a flat `--soot` fill with a 64px graticule ruled over it, and
+ * Ibrahim's assessment of the result was that it looked empty. It did. The diagnosis is worth
+ * writing down because "add some texture" is the wrong lesson:
+ *
+ * A FLAT FILL IS NOT A SURFACE. It carries no information about depth, distance or material, so the
+ * eye reads it as the absence of a background rather than as a background. The graticule did not
+ * fix that — a perfectly regular lattice at one alpha is *also* uniform, so the field was two
+ * uniform layers instead of one, and a lattice specifically reads as a DIAGRAM, which is the thing
+ * the world is trying not to be.
+ *
+ * Bloodhorn's `atmosphere.ts` builds its page in three passes and the structure transfers directly,
+ * even though the referent does not (a grimoire page is flat and lit from nowhere; a camera-trap
+ * field has ground and air). What transfers is the PRINCIPLE: a background needs uneven,
+ * deterministic, quantised detail at more than one scale.
+ *
+ *   1. THE GROUND    the base fill, with a broad `valueNoise` unevenness over it, so the surface
+ *                    has slow variation instead of being one value.
+ *   2. THE GRATICULE kept, but demoted hard and interrupted by the noise field — it is a faint
+ *                    survey reference now, not the dominant mark. It earns its place: a cat
+ *                    crossing a truly featureless field has nothing to be measured against, and
+ *                    the same walk reads as drifting.
+ *   3. THE DUST      slow drifting flecks, on incommensurate rates so the field never visibly
+ *                    loops, plus a settled scatter that does not move at all.
+ *
+ * Plus a VIGNETTE, which does the same two jobs it does in bloodhorn: it focuses the eye on the
+ * middle of the field, and it implies the world continues past the edge of the canvas instead of
+ * stopping at it. A hard canvas edge is one of the strongest "this is a widget" signals there is.
+ *
+ * Everything here is deterministic — `valueNoise` over fixed lattice coordinates, never
+ * `Math.random()` — so the field looks the SAME on every reload. A background whose stains moved
+ * between loads is a rendering bug wearing a texture, and it also makes every screenshot
+ * comparison meaningless.
+ */
+function drawAtmosphere(ctx: CanvasRenderingContext2D, d: DrawCtx): void {
+  const { width, height, palette } = d;
+  // Time in seconds, frozen under reduced motion so the whole layer becomes a still image.
+  const t = d.reduced ? 0 : d.now / 1000;
+
+  // ── 1. THE GROUND ────────────────────────────────────────────────────────────────────
+  ctx.fillStyle = palette.soot;
+  ctx.fillRect(0, 0, width, height);
+
+  /*
+   * BROAD UNEVENNESS, drawn as a coarse grid of translucent cells.
+   *
+   * ══ Why cells rather than a per-pixel field ══
+   *
+   * A true per-pixel noise field means an `ImageData` write of width*height*4 bytes every frame,
+   * which on a 1440x844 canvas at dpr 2 is ~19MB/frame — that is a guaranteed frame drop for a
+   * texture nobody is looking at directly. Sampling the same noise at a 56px lattice and filling
+   * flat rectangles costs a few hundred `fillRect`s and is visually indistinguishable at this
+   * contrast, because the whole point is that the variation is SLOW.
+   *
+   * The alpha is deliberately tiny (max ~0.05). Atmosphere you can point at is not atmosphere, it
+   * is a pattern; the target is a field that looks uneven without any individual patch being
+   * visible as a patch.
+   */
+  const CELL = 56;
+  const cols = Math.ceil(width / CELL);
+  const rows = Math.ceil(height / CELL);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      // Two octaves. One alone gives a field with a single obvious blob size; adding a finer,
+      // weaker octave is what stops the unevenness reading as a lava lamp.
+      const n =
+        valueNoise(cx * 0.17, cy * 0.17) * 0.7 + valueNoise(cx * 0.53 + 11.3, cy * 0.53 + 7.1) * 0.3;
+      if (n < 0.42) continue;
+      ctx.fillStyle = palette.sootHi;
+      ctx.globalAlpha = (n - 0.42) * 0.09;
+      ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // ── 2. THE GRATICULE, demoted ────────────────────────────────────────────────────────
+  //
+  // At 0.55 alpha this was the loudest thing on an empty field. At 0.16 it is a reference the eye
+  // uses without looking at, which is what a survey graticule is for.
+  ctx.strokeStyle = palette.sootLine;
+  ctx.globalAlpha = 0.16;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = GRID_CELL; x < width; x += GRID_CELL) {
+    ctx.moveTo(Math.round(x) + 0.5, 0);
+    ctx.lineTo(Math.round(x) + 0.5, height);
+  }
+  for (let y = GRID_CELL; y < height; y += GRID_CELL) {
+    ctx.moveTo(0, Math.round(y) + 0.5);
+    ctx.lineTo(width, Math.round(y) + 0.5);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  /*
+   * THE SETTLED SCATTER — grit on the ground that does not move.
+   *
+   * Bloodhorn calls this "foxing" and places it by `valueNoise` at a derived density: one fleck per
+   * N world px², never a chosen count, so the field is equally textured at 320px and at 1440px.
+   * Same rule here — density is per-area, so a phone does not get a sparse field and a desktop a
+   * crowded one.
+   *
+   * Two DECORRELATED noise lookups per fleck. Using one for both axes puts every fleck on a
+   * diagonal, which is the classic tell of a lazily-sampled noise field.
+   */
+  const grit = Math.round((width * height) / 5200);
+  ctx.fillStyle = palette.sootLine;
+  for (let i = 0; i < grit; i++) {
+    const nx = valueNoise(i * 1.7, 0.5);
+    const ny = valueNoise(0.5, i * 2.3);
+    const x = snap(nx * width);
+    const y = snap(ny * height);
+    // Whole quanta only: 1x1 or 2x2. Anything larger stops being a stain and becomes a mark, and a
+    // mark on a field means something — it would read as an entity.
+    const big = valueNoise(i * 3.1, i * 0.7) > 0.62;
+    const s = big ? PX * 2 : PX;
+    ctx.globalAlpha = 0.1 + valueNoise(i * 4.1, i * 1.9) * 0.22;
+    ctx.fillRect(x, y, s, s);
+  }
+  ctx.globalAlpha = 1;
+
+  // ── 3. THE DUST ──────────────────────────────────────────────────────────────────────
+  /*
+   * Drifting motes. This is the layer that guarantees the field is never a still image, which
+   * matters more here than in most products: the world's real events are minutes apart, so the
+   * overwhelming majority of frames anyone sees contain no event at all. If nothing moves in those
+   * frames the world is a diagram however good the event animations are — bloodhorn's `juice.ts`
+   * makes exactly this argument and it is the reason the motes survived its own rebrand.
+   *
+   * ══ THE RATES ARE INCOMMENSURATE, AND THAT IS THE WHOLE CRAFT ══
+   *
+   * Each mote's horizontal and vertical speeds come from different noise lookups scaled by an
+   * irrational-ish ratio, so its path never closes into a loop. Ambient motion built on
+   * commensurate rates (2s/4s/8s) re-syncs, and the eye catches the re-sync — which is precisely
+   * what makes ambience read as one animation played many times.
+   *
+   * The wrap is on the modulus of the drift rather than on a stored position, so there is no state
+   * to keep and no per-frame allocation: a mote is a pure function of (index, time).
+   */
+  const motes = Math.round((width * height) / 9000);
+  for (let i = 0; i < motes; i++) {
+    const bx = valueNoise(i * 1.3, 0.9) * width;
+    const by = valueNoise(0.9, i * 3.9) * height;
+    const vx = 2 + valueNoise(i * 6.1, 0.2) * 4;
+    const vy = -1.2 - valueNoise(0.2, i * 7.3) * 2.4;
+    // `+ height` before the modulus because `vy` is negative and JS `%` keeps the sign.
+    const x = snap((((bx + vx * t) % width) + width) % width);
+    const y = snap((((by + vy * t) % height) + height) % height);
+    /*
+     * The mote FADES on its own clock as well as drifting.
+     *
+     * A fleck at a constant alpha travelling in a straight line reads as a dead pixel sliding
+     * across the screen. Coupling brightness to a slow, per-mote oscillator makes it read as
+     * something catching the light as it turns.
+     */
+    const tw = 0.55 + Math.sin(t * (0.5 + valueNoise(i * 2.7, 4.4) * 0.7) + i) * 0.45;
+    ctx.globalAlpha = (0.08 + valueNoise(i * 4.7, 0.3) * 0.16) * tw;
+    ctx.fillStyle = palette.phosGhost;
+    ctx.fillRect(x, y, PX, PX);
+  }
+  ctx.globalAlpha = 1;
+
+  /*
+   * ══ THE VIGNETTE ══
+   *
+   * ART-DIRECTION bans decorative gradients, and this is not one — which is a claim that has to be
+   * defended rather than asserted. It carries a real meaning (DEPTH OF ATTENTION: the middle of the
+   * field is where the subject is), it sits behind nothing and carries no data, so it cannot reduce
+   * the contrast of any figure, and its second job is structural: it implies the world continues
+   * past the canvas edge instead of stopping there.
+   *
+   * `createRadialGradient` per frame is one object allocation and the GPU rasterises the fill; the
+   * alternative (a baked texture) is what bloodhorn does because Pixi wants a Texture, and would be
+   * strictly more machinery here for the same pixels.
+   */
+  const g = ctx.createRadialGradient(
+    width / 2,
+    height / 2,
+    Math.min(width, height) * 0.28,
+    width / 2,
+    height / 2,
+    Math.max(width, height) * 0.72,
+  );
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(0.62, "rgba(0,0,0,0.14)");
+  g.addColorStop(1, "rgba(0,0,0,0.44)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, width, height);
+}
+
+/**
+ * ══ THE GLOW — a lit thing is TWO sprites, never one ══
+ *
+ * Bloodhorn's `glow.ts` states the recipe as data: a wide faint AURA (alpha ~0.09, scale ~4.4)
+ * under a tight bright HALO (alpha ~0.28, scale ~1.35), because *"one sprite at a middling alpha
+ * cannot be both the wide atmospheric bleed and the concentrated source, so it ends up being
+ * neither and reads as fog."*
+ *
+ * ══ AND THE GRADIENT STOP IS THE ACTUAL CRAFT ══
+ *
+ * The stops are `0 → 0.35 (0.42) → 1`, NOT a linear ramp. A linear gradient renders as a flat disc
+ * with a visible edge — its alpha is still ~0.5 halfway out, so the eye reads a CIRCLE. Dropping to
+ * 0.42 alpha by 35% of the radius makes the falloff early and steep, which is how real light
+ * behaves, and the sprite reads as a light source rather than a dot. Bloodhorn's header calls this
+ * one number "the difference between glow and grey circle with soft edges", and it is right.
+ *
+ * Canvas has no additive blend mode as cheap as Pixi's, but `lighter` is exactly it, and it is what
+ * keeps two overlapping glows brightening rather than compositing into a flat wash.
+ */
+function drawGlow(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  colour: string,
+  strength: number,
+): void {
+  if (radius <= 0 || strength <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const prev = ctx.globalAlpha;
+  // Two passes: the wide faint bleed, then the tight bright core. This is the two-sprite recipe.
+  ctx.globalAlpha = prev * strength * 0.09;
+  ctx.fillStyle = radial(ctx, x, y, radius, colour);
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = prev * strength * 0.28;
+  ctx.fillStyle = radial(ctx, x, y, radius * 0.36, colour);
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.36, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * A radial fill whose alpha falls off early and steeply.
+ *
+ * The stops encode the non-linear falloff described above: full at the centre, already down to 42%
+ * by a third of the way out, gone at the rim. `color-mix` is used to attach an alpha to a palette
+ * colour that arrives as an `oklch()` string — the one portable way to do that without parsing the
+ * colour ourselves, and supported everywhere `oklch()` itself is.
+ */
+function radial(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  colour: string,
+): CanvasGradient {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(0.01, r));
+  g.addColorStop(0, colour);
+  g.addColorStop(0.35, `color-mix(in oklab, ${colour} 42%, transparent)`);
+  g.addColorStop(1, `color-mix(in oklab, ${colour} 0%, transparent)`);
+  return g;
+}
 
 /**
  * THE DEN — where a cat brings back what it kills.

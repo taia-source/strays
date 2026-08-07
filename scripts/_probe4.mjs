@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 const b = await chromium.launch();
 const p = await b.newPage({ viewport:{width:1440,height:900}, colorScheme:"dark" });
-await p.goto("http://127.0.0.1:3000/app",{waitUntil:"load"});
+await p.goto("http://localhost:3101/app",{waitUntil:"load"});
 await p.waitForTimeout(10000);
 console.log(await p.evaluate(()=>({
   reactRoot: !!document.querySelector("#__next, [data-reactroot]"),

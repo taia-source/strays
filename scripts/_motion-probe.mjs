@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
 const SD = process.argv[2];
-const BASE = process.argv[3] ?? "http://127.0.0.1:3000";
+const BASE = process.argv[3] ?? "http://localhost:3101";
 const WIDTHS = process.argv[4] ? process.argv[4].split(",").map(Number) : [390, 1440];
 mkdirSync(SD, { recursive: true });
 

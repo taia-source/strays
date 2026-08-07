@@ -161,6 +161,61 @@ async function api<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+type RpcLog = {
+  data: string;
+  blockNumber: string;
+  blockTimestamp?: string;
+  logIndex: string;
+};
+
+/**
+ * Every `Swap` for one pool, from genesis to `head`.
+ *
+ * Alchemy serves an unbounded block range but caps the RESPONSE at 10,000 logs. Most pools on this
+ * pad are far under that and come back in a single call; the busiest do not. Rather than guess a
+ * safe window up front — which would multiply the request count for the ~95% of pools that need
+ * one call — this asks for everything and BISECTS only on the specific overflow error. The busiest
+ * pool in the sample needed 3 calls.
+ *
+ * The overflow is detected on the error STRING, which is brittle by nature, so the split is also
+ * guarded: if a range of one block still overflows the data is genuinely unfetchable and we throw
+ * rather than silently return a truncated series. A truncated series is the worst possible outcome
+ * here — it would look like a quiet pool and be replayed as one.
+ */
+async function fetchAllSwaps(
+  rpcUrl: string,
+  poolId: string,
+  head: number,
+  from = 0,
+  to?: number,
+): Promise<RpcLog[]> {
+  const hi = to ?? head;
+  try {
+    return (await rpc(rpcUrl, "eth_getLogs", [
+      {
+        address: POOL_MANAGER,
+        topics: [SWAP_TOPIC, poolId],
+        fromBlock: `0x${from.toString(16)}`,
+        toBlock: `0x${hi.toString(16)}`,
+      },
+    ])) as RpcLog[];
+  } catch (e) {
+    const msg = String(e);
+    if (!/response size|10K logs|10,000|limit/i.test(msg)) throw e;
+    if (hi - from < 2) {
+      throw new Error(
+        `pool ${poolId} has >10k swaps inside a single block range [${String(from)}, ` +
+          `${String(hi)}] and cannot be split further. Refusing to return a partial series — ` +
+          `a truncated history replays as a quiet pool, which is a silent lie. (${msg})`,
+      );
+    }
+    const mid = Math.floor((from + hi) / 2);
+    const left = await fetchAllSwaps(rpcUrl, poolId, head, from, mid);
+    const right = await fetchAllSwaps(rpcUrl, poolId, head, mid + 1, hi);
+    return [...left, ...right];
+  }
+}
+
 type ApiToken = {
   address: string;
   symbol: string;
@@ -194,17 +249,15 @@ async function main(): Promise<void> {
   }
   process.stdout.write(`universe: ${String(universe.size)} unique tokens\n`);
 
+  // Pin the head block ONCE. Collecting against `latest` would give later tokens a longer
+  // history than earlier ones purely because the chain advanced mid-run.
+  const head = Number(BigInt((await rpc(rpcUrl, "eth_blockNumber", [])) as string));
+  process.stdout.write(`head block: ${String(head)}\n`);
+
   const out: TokenSeries[] = [];
   let done = 0;
   for (const token of universe.values()) {
-    const logs = (await rpc(rpcUrl, "eth_getLogs", [
-      {
-        address: POOL_MANAGER,
-        topics: [SWAP_TOPIC, token.pool],
-        fromBlock: "0x0",
-        toBlock: "latest",
-      },
-    ])) as { data: string; blockNumber: string; blockTimestamp?: string; logIndex: string }[];
+    const logs = await fetchAllSwaps(rpcUrl, token.pool, head);
 
     const swaps: RawSwap[] = [];
     for (const log of logs) {
