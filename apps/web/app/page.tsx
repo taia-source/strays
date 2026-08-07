@@ -68,16 +68,21 @@ export default function Landing() {
           <HeroCat size={112} />
         </section>
 
+        {/*
+          The product, in one sentence and a consequence. This section was three sentences longer
+          and every cut word went to the risk panel — the trade unitick's lesson prescribes. What
+          survives is load-bearing: who trades (the cat, not you), where (letscash), and what
+          happens when it loses (it starves out). Nothing that a visitor needs to decide is gone.
+        */}
         <section className="explain landing-what">
           <h2>What it is</h2>
           <p>
-            You fund a cat with ETH. It prowls new launches on{" "}
+            You fund a cat with ETH. It picks its own targets on{" "}
             <a href="https://www.letscash.fun/" target="_blank" rel="noreferrer noopener">
               letscash
             </a>
-            , picks its own targets, trades them on Uniswap v4, and drops the proceeds back in your
-            vault. You do not pick the trades and you do not approve them. After you fund it, the
-            cat is on its own. Cats that stop eating starve out and disappear.
+            , trades them on Uniswap v4, and drops the proceeds back in your vault. You do not pick
+            or approve the trades. Cats that stop eating starve out and disappear.
           </p>
         </section>
 
@@ -128,16 +133,15 @@ export default function Landing() {
               investing and there is no floor under it.
             </li>
             <li>
-              <strong>The contract holding your money is not audited.</strong> It is{" "}
+              <strong>The contract holding your money is not audited.</strong>{" "}
               <a
                 href={`${EXPLORER}/address/${VAULT_ADDRESS}`}
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                source-verified
+                Source-verified
               </a>{" "}
-              and tested against twelve sabotages and live pools — but no external auditor has seen
-              it.
+              and tested — but no external auditor has seen it.
             </li>
             <li>
               <strong>Two of the launchpad&apos;s own contracts are unverified.</strong> Its fee

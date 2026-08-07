@@ -310,8 +310,49 @@ img[data-pixel] {
   margin-inline: auto;
   padding: var(--s2) var(--s3) var(--s2);
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  /*
+   * ══ WHY THE RISKS TRACK IS FLOORED AND EVERY OTHER TRACK IS `auto` ══
+   *
+   * The first version of this grid gave the risks `minmax(0, 1fr)` and the rest `auto`. Screenshot
+   * at 390px showed the result: `auto` tracks are sized FIRST and take whatever they ask for, so
+   * with a hero, a paragraph and four cost cells above it the `1fr` remainder collapsed to about
+   * four pixels — the risk panel rendered as a red sliver with the entire disclosure inside it,
+   * scrollable in theory and invisible in practice. At 320px the tracks overflowed the fixed
+   * container outright and the CTA painted on top of the cost cells.
+   *
+   * That is unitick's `display: none` failure reached by a different road, and it is worse than
+   * the original bug because the automated assertion PASSED — the page did not scroll, it just
+   * did not show the risks. A no-scroll check cannot see a crushed track. Only the screenshot did.
+   *
+   * So the risk panel now has a FLOOR — `minmax(13rem, auto)` — which is unitick's own recorded
+   * rule ("floor the track that must not vanish; fixed units, never %") applied to the one track
+   * on this page that must never vanish. It cannot be squeezed below a readable height by anything
+   * above it. What gives instead is `.landing-what`, which is prose about the product and is the
+   * correct thing to lose when something has to go.
+   */
+  grid-template-rows:
+    auto                      /* head    */
+    auto                      /* hero    */
+    minmax(0, auto)           /* what    — the flexible one; scrolls itself if squeezed */
+    min-content               /* costs   — see below; must never be clipped */
+    minmax(13rem, auto)       /* RISKS   — floored. Never crushed. */
+    auto                      /* ways-in */
+    auto;                     /* foot    */
   gap: var(--s2);
+  /*
+   * ══ `min-content` ON THE COSTS ROW IS A BUG FIX, NOT A REFINEMENT ══
+   *
+   * With `auto` the fee panel was CLIPPED at 320, 390 and 1440 — the screenshots showed the row
+   * cut off mid-cell ("ON PROFIT" with its value sliced in half, "EVERY TRADE" missing entirely).
+   * An `auto` track in an over-subscribed fixed-height grid is allowed to be shrunk below its
+   * content and simply overflow-hidden away, which is the silent-truncation failure mode: the fee
+   * schedule is a material term and half of it had quietly stopped rendering.
+   *
+   * `min-content` refuses to go below the cells' own height, so the row either fits or forces the
+   * flexible tracks above it to yield. Combined with the floored risks track, the two things on
+   * this page a visitor must not miss — WHAT IT COSTS and WHAT CAN GO WRONG — are now the two
+   * tracks that cannot be squeezed, and `.landing-what` is the only one that gives.
+   */
   /* Belt and braces: `minmax(0, …)` above already permits the shrink, and this stops any child
      with a long unbroken string (an address) from forcing the whole grid wider than the viewport. */
   min-height: 0;
@@ -347,6 +388,18 @@ img[data-pixel] {
   line-height: 1.35;
   font-size: var(--t-body);
   max-width: 66ch;
+}
+
+/* The track that YIELDS. If the viewport cannot hold everything, the product explanation is what
+   gives — it scrolls itself rather than pushing on the risk panel below it. Choosing the victim
+   explicitly is the point: left to the browser, the thing that gets crushed is whatever happens
+   to be last, and on this page that was the disclosure. */
+.landing-what {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+  min-height: 0;
 }
 
 .landing .costs { gap: var(--s1); }
@@ -391,6 +444,24 @@ img[data-pixel] {
   max-width: 70ch;
   font-size: var(--t-micro);
   line-height: 1.35;
+}
+
+/*
+ * ══ TWO COLUMNS ON A WIDE, SHORT VIEWPORT ══
+ *
+ * At 1440x900 the first version showed risks 1 and 2 and scrolled the other two out of sight —
+ * technically reachable, and a visitor who never scrolls a landing page never learns that the
+ * launchpad contracts are unverified. A desktop window is WIDE and SHORT, so the fix is to spend
+ * the axis there is a surplus of: four risks in two columns are half as tall and all four are on
+ * screen at once. This is the "budget the words before the boxes" rule's other half — when the
+ * words are already minimal, re-shape the box rather than cut further.
+ */
+@media (min-width: 900px) {
+  .landing-risks ul {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s1) var(--s4);
+  }
+  .landing-risks li { max-width: 52ch; }
 }
 
 /* The load-bearing clause of each risk, at full body size while the qualifier around it is micro.
@@ -495,6 +566,53 @@ img[data-pixel] {
     gap: var(--s0) var(--s2);
     padding: var(--s2);
   }
+}
+
+/*
+ * ══ SHORT VIEWPORTS — where the words have to get smaller, not fewer ══
+ *
+ * A 320x844 phone with a 48px nav has ~780px of usable height, and the measured content wanted
+ * more. Every rule below buys height by tightening TYPE and SPACE. There is no `display: none`
+ * and no `max-height` clipping anything in this block — the difference between "smaller" and
+ * "hidden" is the entire lesson from unitick, and the risk panel is the last thing that shrinks.
+ */
+@media (max-height: 960px), (max-width: 480px) {
+  .landing-grid {
+    gap: var(--s1);
+    padding: var(--s1) var(--s2) var(--s1);
+  }
+
+  /* Spacing comes out of the hero and the cost cells at every short viewport, including a wide
+     desktop window — 1440x900 was clipping the fee row before this. Type size is handled
+     separately below, because a desktop has the width to keep body type readable. */
+  .landing .costs > div { padding: var(--s1) var(--s2); }
+  .landing .costs dd.stamp { line-height: 1.2; }
+  .hero-cat { padding: var(--s1) var(--s3); }
+
+  .landing .wordmark { font-size: clamp(22px, 6.5vw, 34px); }
+
+  /*
+   * The hero drops to a compact strip. The cat shrinks and the caption is SHORTENED BY ITS OWN
+   * TEXT (see the `<span>` split in `hero-cat.tsx`), not hidden: it is a provenance stamp, and
+   * referent rule 2 says no figure on this page floats free of what it is. "portrait, not a live
+   * stray" is the load-bearing half and it survives at every size. The four STATE NAMES stay too —
+   * they are the information the widget exists to convey.
+   */
+  .hero-cat { padding: var(--s1) var(--s2); gap: 0 var(--s2); }
+  .hero-cat-stage { width: 72px !important; height: 72px !important; }
+  .hero-cat-state { font-size: var(--t-body); }
+  /* The QUALIFIER goes; the claim ("a portrait, not a live stray") stays. */
+  .hero-cat-note-long { display: none; }
+
+  .landing .explain h2 { margin-bottom: 0; }
+  .landing .explain p { font-size: var(--t-micro); line-height: 1.3; }
+  .landing .costs { gap: var(--s0); }
+  .landing .costs > div { padding: var(--s0) var(--s1); }
+  .landing .costs dd.fig { font-size: var(--t-body); }
+  .landing-risks { padding: var(--s1) var(--s2); }
+  .landing-risks li { font-size: 10.5px; line-height: 1.3; }
+  .landing-risks li strong { font-size: var(--t-micro); }
+  .landing .cta { padding: var(--s1); min-height: 40px; line-height: 24px; }
 }
 
 .wordmark {

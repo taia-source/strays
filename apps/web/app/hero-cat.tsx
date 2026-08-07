@@ -133,8 +133,18 @@ export function HeroCat({ size = 128 }: { readonly size?: number }) {
         ))}
       </ol>
 
+      {/*
+        The provenance stamp. Referent rule 2: nothing on this page floats free of what it is, and
+        a plausible-looking cat that a visitor might read as a LIVE stray is exactly the invented-
+        data defect this corpus is most careful about.
+
+        Two spans rather than one sentence, so a short viewport can drop the QUALIFIER and keep the
+        CLAIM. That is the difference between shortening a caption and hiding one — at every size,
+        the page still says this is a portrait and not a live stray.
+      */}
       <p className="stamp hero-cat-note">
-        one cat, cycling its four states — a portrait drawn from an id, not a live stray
+        <span className="hero-cat-note-long">one cat, cycling its four states — </span>
+        <span>a portrait, not a live stray</span>
       </p>
     </div>
   );

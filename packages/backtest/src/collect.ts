@@ -291,13 +291,20 @@ async function main(): Promise<void> {
   writeFileSync(path, JSON.stringify(out));
   const total = out.reduce((n, t) => n + t.swaps.length, 0);
   const withData = out.filter((t) => t.swaps.length >= 2);
-  const times = out.flatMap((t) => t.swaps.map((s) => s.ts));
+  // Fold rather than `Math.min(...times)` — the spread blew the call stack at 394,635 elements.
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = 0;
+  for (const t of out) {
+    for (const s of t.swaps) {
+      if (s.ts < lo) lo = s.ts;
+      if (s.ts > hi) hi = s.ts;
+    }
+  }
   process.stdout.write(
     `\nwrote ${path}\n` +
       `  tokens ${String(out.length)} (${String(withData.length)} with >=2 swaps)\n` +
       `  swaps  ${String(total)}\n` +
-      `  range  ${new Date(Math.min(...times) * 1000).toISOString()} .. ` +
-      `${new Date(Math.max(...times) * 1000).toISOString()}\n`,
+      `  range  ${new Date(lo * 1000).toISOString()} .. ${new Date(hi * 1000).toISOString()}\n`,
   );
   appendFileSync(
     join(DATA_DIR, "provenance.txt"),

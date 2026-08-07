@@ -64,8 +64,20 @@ const VAULT_ABI = parseAbi([
   "function strays(bytes32) view returns (address owner, uint128 stake, uint128 principal, address holding, int24 tickSpacing, uint128 costBasis)",
   "function hunt(bytes32 strayId, address token, uint256 ethIn, uint256 minOut, int24 tickSpacing)",
   "function flee(bytes32 strayId, uint256 minOut)",
+  "function holdingOf(bytes32) view returns (address token, uint256 balance)",
   "event Adopted(bytes32 indexed strayId, address indexed owner, uint256 stake, uint256 energyFee)",
 ]);
+
+/**
+ * The `Adopted` event, resolved BY NAME.
+ *
+ * It was `VAULT_ABI[3]`. Adding `holdingOf` to the ABI shifted that index and silently pointed the
+ * log filter at a function instead of an event — a positional reference into an ABI is a bug with
+ * a delay on it.
+ */
+const ADOPTED_EVENT = VAULT_ABI.find(
+  (e) => e.type === "event" && e.name === "Adopted",
+) as Extract<(typeof VAULT_ABI)[number], { type: "event" }>;
 
 const chain = {
   id: CHAIN_ID,
@@ -86,6 +98,7 @@ export function canSpend(): boolean {
  * never be assumed cheap — that is the direction that loses money.
  */
 const taxCache = new Map<string, number>();
+
 
 /**
  * The built candidate set for ONE tick, shared across every stray in it.
@@ -185,7 +198,7 @@ async function main(): Promise<void> {
       const block = await pub.getBlockNumber();
       const logs = await pub.getLogs({
         address: VAULT,
-        event: VAULT_ABI[3],
+        event: ADOPTED_EVENT,
         /*
          * ══ THE DEPLOY BLOCK, NOT A ROLLING WINDOW ══
          *
@@ -220,12 +233,32 @@ async function main(): Promise<void> {
            * invisible while only 1%-tax tokens were tradeable and total once they were not.
            */
           const holdingTaxPct = held === null ? 0 : ((await padTaxPct(held)) ?? 10);
+          const holdingBalance =
+            held === null
+              ? 0n
+              : (
+                  await pub.readContract({
+                    address: VAULT,
+                    abi: VAULT_ABI,
+                    functionName: "holdingOf",
+                    args: [id],
+                  })
+                )[1];
           return {
             id,
             stakeWei: stake,
             holding: held,
             holdingTaxPct,
-            holdingUnits: 0n,
+            /*
+             * The REAL token balance, read from chain.
+             *
+             * This was hardcoded `0n`, which is the other half of the "cats can enter but never
+             * exit" bug: even with a working exit quote, valuing zero units returns zero, which
+             * reads as an unreadable mark, which means HOLD forever. `holdingOf` returns the
+             * vault's actual balance of the held token, full precision — never a number, because
+             * an 18-decimal balance needs ~22 significant digits (RESEARCH §7d).
+             */
+            holdingUnits: held === null ? 0n : holdingBalance,
             costBasisWei: costBasis,
             entryBlock: 0n,
           } satisfies StrayState;
@@ -279,7 +312,33 @@ async function main(): Promise<void> {
         }
       : (refuse("flee") as TickDeps["executeFlee"]),
 
-    quoteExitWei: async () => 0n,
+    /**
+     * ══ WHAT IS THE OPEN POSITION WORTH RIGHT NOW? ══
+     *
+     * This was `async () => 0n` — a stub — and the consequence was not that exits were slightly
+     * wrong, it was that they were IMPOSSIBLE. `decide()` reads the mark to evaluate the stop and
+     * the take-profit; a zero mark reads as "unreadable", and its (correct) response to an
+     * unreadable mark is to HOLD, because selling on a failed price read is a trade on no
+     * information.
+     *
+     * So the first cat to enter a position could never leave it. Caught the moment a real trade
+     * landed: the very next tick logged *"holding 0x5235709f…: mark price unreadable this tick"*.
+     *
+     * The fix is the sell simulation we already run before every ENTRY, pointed at the position we
+     * already hold. `eth_call` only, so valuing a position costs nothing and risks nothing.
+     */
+    quoteExitWei: async (token, units, tickSpacing) => {
+      if (units <= 0n) return 0n;
+      const sell = await simulateSell({
+        client: pub,
+        token,
+        tickSpacing,
+        amountInTokens: units,
+      });
+      // A failed quote returns 0, which `decide()` reads as "unreadable" and answers by HOLDING.
+      // That is the honest outcome: we could not price it, so we do not act on a price.
+      return sell.ok ? sell.proceedsWei : 0n;
+    },
 
     record: async (r: DecisionRecord) => {
       if (store !== null) {
@@ -484,7 +543,23 @@ async function main(): Promise<void> {
               : {
                   token: stray.holding,
                   entryWei: stray.costBasisWei,
-                  entryPriceWei: 0n,
+                  /*
+                   * ══ DERIVED, NOT STUBBED ══
+                   *
+                   * This was `0n`, and `stopFired` rightly refuses to evaluate a stop against a
+                   * non-positive entry price — so the tick THREW and no stray got a decision. It
+                   * was the third and last of the "a cat can enter but never leave" bugs, after
+                   * `quoteExitWei` returning 0 and `holdingUnits` being hardcoded 0.
+                   *
+                   * Nothing was missing: the vault records `costBasis` (the ETH it actually spent)
+                   * and `holdingOf` returns the units it actually received. Entry price is the
+                   * ratio, scaled by 1e18 to match the mark's units. bigint throughout —
+                   * RESEARCH §7d.
+                   */
+                  entryPriceWei:
+                    stray.holdingUnits > 0n
+                      ? (stray.costBasisWei * 10n ** 18n) / stray.holdingUnits
+                      : 0n,
                   // Full precision, never a number — a real 18-decimal balance needs ~22
                   // significant digits and float64 holds ~15-17 (RESEARCH §7d).
                   tokenBalance: stray.holdingUnits,
@@ -499,7 +574,24 @@ async function main(): Promise<void> {
           // price history — neither of which a `map` over the API rows can produce.
           candidates: huntCandidates,
           gasPriceWei,
-          markPriceWei: currentValueWei ?? undefined,
+          /*
+           * ══ A PER-UNIT PRICE, NOT A TOTAL ══
+           *
+           * `Market.markPriceWei` is documented as "ETH-per-token price for the OPEN position,
+           * scaled 1e18". `quoteExitWei` returns TOTAL PROCEEDS in wei. Passing the total straight
+           * through compared a whole-position value against a per-unit entry price and reported a
+           * gain of **+574,656,667 bps** on a position that had actually moved a few bps.
+           *
+           * That is not a cosmetic bug: the take-profit fires off this comparison, so it would
+           * have closed EVERY position immediately regardless of whether it had gained anything.
+           * The first live round trip happened to be +66bps, so it looked like a success.
+           *
+           * Divide by the units held to get the price the type actually asks for.
+           */
+          markPriceWei:
+            currentValueWei !== null && currentValueWei > 0n && stray.holdingUnits > 0n
+              ? (currentValueWei * 10n ** 18n) / stray.holdingUnits
+              : undefined,
           nowSeconds,
         },
         {

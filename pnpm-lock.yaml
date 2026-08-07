@@ -84,6 +84,9 @@ importers:
       '@strays/cat':
         specifier: workspace:*
         version: link:../../packages/cat
+      '@taia/ui':
+        specifier: workspace:*
+        version: link:../../vendor/ui
       next:
         specifier: 16.2.12
         version: 16.2.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

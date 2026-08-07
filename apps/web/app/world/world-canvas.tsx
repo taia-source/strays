@@ -960,16 +960,49 @@ function drawGlow(
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   const prev = ctx.globalAlpha;
-  // Two passes: the wide faint bleed, then the tight bright core. This is the two-sprite recipe.
-  ctx.globalAlpha = prev * strength * 0.09;
+  /*
+   * ══ THE AMPLITUDES ARE **NOT** BLOODHORN'S 0.09 / 0.28, AND THE REASON IS THE MEDIUM ══
+   *
+   * This was written with bloodhorn's numbers first and the glow was INVISIBLE on the rendered
+   * field — measured by zooming a screenshot to the cat and finding no light around it at all. The
+   * cause is a real difference between the two renderers, not a tuning miss, and it is the kind of
+   * thing that silently wastes an afternoon:
+   *
+   * Pixi tints a WHITE glow texture. Its 0.09 is 9% of full white, which is a bright value on a
+   * near-black ground. Here the gradient is built from the PALETTE colour itself — a dim phosphor
+   * green or amber — and the alpha is applied TWICE: once by `globalAlpha` and again by the
+   * gradient's own stops (0.42 at the mid stop). So bloodhorn's 0.09 arrives on screen as roughly
+   * 0.09 × 0.42 ≈ 0.04 of an already-dark colour against a dark field: mathematically present,
+   * optically nothing.
+   *
+   * The generalisable lesson: an alpha constant is only meaningful together with the COLOUR it
+   * multiplies and the number of times it is applied. Copying it across renderers copies the
+   * number and not the brightness.
+   *
+   * 0.5 / 0.85 restores the intended ratio (a wide faint bleed well under a tight bright core)
+   * at a brightness that is actually visible on this ground. The RATIO is what carries the
+   * two-sprite reading; the absolute values belong to the medium.
+   */
+  ctx.globalAlpha = prev * strength * 0.62;
   ctx.fillStyle = radial(ctx, x, y, radius, colour);
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.globalAlpha = prev * strength * 0.28;
-  ctx.fillStyle = radial(ctx, x, y, radius * 0.36, colour);
+  /*
+   * ══ THE CORE IS WIDE AND MODERATE, NOT TIGHT AND BRIGHT ══
+   *
+   * At `radius * 0.36` and 0.85 alpha the halo rendered as a small, saturated amber BLOB sitting on
+   * the cat — a lamp behind the animal rather than the animal being lit. Zooming the screenshot made
+   * it obvious: the brightest thing in the frame was a disc of light with a cat next to it.
+   *
+   * The failure is that a core much smaller than the body reads as a separate object, because it has
+   * its own visible edge. Widening it to 0.62 of the aura and dropping the alpha makes the two
+   * passes overlap enough to read as ONE falloff, so the light belongs to the cat.
+   */
+  ctx.globalAlpha = prev * strength * 0.55;
+  ctx.fillStyle = radial(ctx, x, y, radius * 0.62, colour);
   ctx.beginPath();
-  ctx.arc(x, y, radius * 0.36, 0, Math.PI * 2);
+  ctx.arc(x, y, radius * 0.62, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -990,10 +1023,56 @@ function radial(
   colour: string,
 ): CanvasGradient {
   const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(0.01, r));
-  g.addColorStop(0, colour);
-  g.addColorStop(0.35, `color-mix(in oklab, ${colour} 42%, transparent)`);
-  g.addColorStop(1, `color-mix(in oklab, ${colour} 0%, transparent)`);
+  /*
+   * ══ MANY STOPS, AND THE COLOUR IS RE-STATED AT EVERY ONE ══
+   *
+   * This function first had three stops using `color-mix(… 0%, transparent)` for the rim, which is
+   * the obvious way to write "this colour, faded out". It produced a hard-edged bright WEDGE rather
+   * than a glow, and the reason took a measurement to find. Sampling the rendered gradient's pixels
+   * along its radius:
+   *
+   *   r0  a252 rgb(232,172,0)     r50 a82 rgb(159,118,0)
+   *   r40 a98  rgb(206,151,0)     r80 a32 rgb( 40, 24,0)   ← the HUE is draining, not just alpha
+   *
+   * `transparent` is transparent BLACK, so interpolating toward it drags the colour toward black at
+   * the same time as the alpha falls. Under `lighter` blending a darkening colour contributes less
+   * and less light, so the falloff collapses much faster than the alpha curve suggests — leaving a
+   * bright, hard-edged core with almost nothing around it.
+   *
+   * Re-stating the SAME colour at every stop and varying only the alpha channel keeps the hue
+   * constant across the whole radius, so the light fades out instead of blackening out. The extra
+   * stops trace the inverse-square-ish curve that makes a sprite read as a light source rather than
+   * as a disc — bloodhorn's `glow.ts` gets the same shape from its `0 → 0.35 (0.42) → 1` bake, and
+   * calls that one number "the difference between glow and grey circle with soft edges".
+   */
+  g.addColorStop(0, alphaOf(colour, 1));
+  g.addColorStop(0.18, alphaOf(colour, 0.62));
+  g.addColorStop(0.35, alphaOf(colour, 0.34));
+  g.addColorStop(0.55, alphaOf(colour, 0.15));
+  g.addColorStop(0.78, alphaOf(colour, 0.05));
+  g.addColorStop(1, alphaOf(colour, 0));
   return g;
+}
+
+/**
+ * Attach an alpha to a palette colour that arrives as an `oklch(...)` string.
+ *
+ * CSS Color 4 relative-alpha syntax — `oklch(L C H / A)` — is the one way to do this without
+ * parsing the colour ourselves, and it is supported everywhere `oklch()` itself is (which the
+ * palette already requires). The `/ A` is spliced in before the closing paren.
+ *
+ * Falls back to wrapping the colour in a `color-mix` against a fully transparent copy of ITSELF for
+ * any other colour syntax, which preserves the hue for the same reason the caller needs it to:
+ * mixing toward bare `transparent` would drag the colour toward black.
+ */
+function alphaOf(colour: string, a: number): string {
+  const c = colour.trim();
+  if (c.endsWith(")") && (c.startsWith("oklch(") || c.startsWith("oklab("))) {
+    // Already carries an alpha? Replace it rather than appending a second one.
+    const body = c.slice(c.indexOf("(") + 1, -1).split("/")[0]?.trim() ?? "";
+    return `${c.slice(0, c.indexOf("("))}(${body} / ${a})`;
+  }
+  return `color-mix(in srgb, ${c} ${Math.round(a * 100)}%, rgba(0,0,0,0))`;
 }
 
 /**
@@ -1036,6 +1115,52 @@ function drawDen(ctx: CanvasRenderingContext2D, sim: Sim, palette: Palette, now:
  * Bayer dither, and doing that for every cat on every frame is ~256 shading evaluations per cat per
  * frame for a result that changes only when the cat's STATE changes. The cache key is the pair.
  */
+/**
+ * ══ WHERE THE CAT'S FEET ARE, IN SPRITE PIXELS FROM THE GRID'S CENTRE ══
+ *
+ * The sprite is drawn centred on the body's position, so the naive place to put a contact shadow is
+ * `cy + h/2` — the bottom edge of the 24x24 cell. That is what this shipped with, and zooming a
+ * screenshot to 220px showed the result plainly: the shadow sat as a detached smear well below and
+ * behind the animal, so the cat read as hovering ABOVE its own shadow. Which is worse than having
+ * no shadow, because a detached shadow actively asserts the thing is airborne.
+ *
+ * The cause is that the grid is not full. `catGrid` occupies rows 4-18 of 24: there is empty
+ * padding under the paws, so the cell's bottom edge is ~5 sprite-pixels below where the cat is
+ * actually standing. `h / 2` measures the CELL; a contact shadow has to measure the BODY.
+ *
+ * +6 from centre (row 18 of a 24-row grid, whose centre is row 12) puts the ellipse under the paws.
+ * It is a constant rather than a per-frame scan of the grid because the silhouette's footprint is a
+ * property of the sprite design, not of any individual cat — every cat `catGrid` produces stands on
+ * the same baseline, which is what makes the sprites look like one species.
+ */
+const FEET_Y = 6;
+
+/**
+ * The four whole-pixel offsets the silhouette pass is drawn at.
+ *
+ * Four (not eight) because the diagonals are already covered by the union of the two axes they lie
+ * between, and drawing them as well doubles the cost of the pass for pixels that are already dark.
+ */
+const OUTLINE_OFFSETS: readonly (readonly [number, number])[] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
+
+/**
+ * A ramp where every step is the same near-black, used for the silhouette pass.
+ *
+ * `drawCat` picks a colour per pixel by shading step; feeding it a ramp whose every entry is
+ * identical makes it paint a flat mask of the sprite's occupied cells — a silhouette — without
+ * needing a second code path inside `@strays/cat`, which another agent owns and the brief puts
+ * out of bounds.
+ *
+ * Not pure `#000`: the ground is `--soot`, a near-black with a green cast, and a pure-black
+ * outline on it reads as a hole punched in the field rather than as the animal's own edge.
+ */
+const DARK_RAMP: readonly string[] = Array.from({ length: 6 }, () => "oklch(0.09 0.012 145)");
+
 const gridCache = new Map<string, ReturnType<typeof catGrid>>();
 function cachedGrid(id: string, state: CatState): ReturnType<typeof catGrid> {
   const key = `${id}:${state}`;
@@ -1081,48 +1206,231 @@ function drawStray(
   const cx = Math.round(p.x);
   const cy = Math.round(p.y);
 
-  // ── The ground shadow. Without it a cat floats; with it, it stands on the field. ──────
-  ctx.fillStyle = palette.sootLine;
-  ctx.globalAlpha = 0.5;
+  /*
+   * ══ BREATH — THE MOST IMPORTANT ANIMATION HERE, AND THE WHOLE REASON A STILL CAT IS ALIVE ══
+   *
+   * This rewrite took away the cat's wander. That is the correct change, and on its own it would
+   * have made things WORSE: a sprite parked at a fixed coordinate with nothing moving is a
+   * rendering failure, not a resting animal. Everything that used to be carried by drift has to be
+   * carried by an idle instead, which is exactly the trade bloodhorn's `agents.ts` header describes
+   * — its world changes twice an hour, and *"with [a continuous idle], twenty sprites read as alive
+   * in the gaps."*
+   *
+   * ══ OWN PHASE **AND** OWN RATE ══
+   *
+   * Both come from `fnv1a` of the cat's id, in `sim.ts`. The rate is the part that is easy to skip
+   * and impossible to do without: with a shared rate and only a phase offset, every cat completes
+   * its cycle in the same period, so the colony re-syncs into a travelling wave and the eye
+   * immediately reads "one animation, N copies". Different rates drift apart forever.
+   *
+   * ══ AND IT IS LAYERED, NON-HARMONIC SINES ══
+   *
+   * A single sine reads as PULSING — a mechanical throb. Three sines at non-harmonic frequency
+   * ratios (1.1 / 2.3 / 0.37) never re-sync into a visible loop, so the motion reads as BREATHING.
+   * Integer ratios would repeat, and a repeat the eye can catch is the thing that makes ambience
+   * look cheap.
+   */
+  const ts = d.reduced ? 0 : d.now / 1000;
+  const phase = body.phase;
+  const rate = body.rate;
+  const s = ts * rate;
+  const sway =
+    Math.sin(s * 1.1 + phase) + Math.sin(s * 2.3 + phase * 1.7) * 0.4 + Math.sin(s * 0.37 + phase * 0.6) * 0.25;
+  // ~0.3Hz — 18 breaths a minute, the middle of the relaxed human range. Faster reads as panicked,
+  // slower reads as broken.
+  const breath = (Math.sin(ts * rate * 1.9 + phase) + 1) / 2;
+
+  /*
+   * The cat only breathes when it is AT REST.
+   *
+   * A walking body is already in motion, and layering an idle on top of a walk is how a character
+   * ends up looking like it is being dragged while flailing. Bloodhorn gates its idle the same way
+   * (`update(dt, worldFrozen, idle)`).
+   */
+  const idle = !walking(body) && !d.reduced;
+
+  /*
+   * THE BOB IS COMPUTED IN WHOLE SPRITE PIXELS.
+   *
+   * Quantised to `scale` (one sprite pixel) rather than left as a smooth sine, so the bob lands on
+   * the pixel grid. A sub-pixel bob is a SHIMMER, not an animation — it resamples the sprite every
+   * frame and reads as the cat vibrating, which is the exact opposite of the calm this is for.
+   */
+  const bob = idle ? Math.round(breath * 1.6 - 0.8) * scale : 0;
+  // A slow lean from foot to foot. This is the thing that reads as a body standing rather than a
+  // sprite parked, and it is deliberately tiny — visible only as a change of weight.
+  const lean = idle ? Math.sin(ts * 0.9 * rate + phase) * 0.03 : 0;
+  // Micro-drift, well under one sprite pixel, so a standing cat is never mathematically static.
+  const driftX = idle ? sway * 0.5 : 0;
+
+  /*
+   * ══ TWITCH — a rare, sharp head-turn on a long per-cat timer ══
+   *
+   * Idle personality. Without it a resting cat is a loop; with it, the loop is occasionally
+   * interrupted by something that looks like a decision. `twitchAt` is 12-30s per cat, from its own
+   * hash, so no two cats ever twitch together — a scheduled twitch reads as a metronome, which is
+   * worse than no twitch at all.
+   *
+   * Computed from absolute time rather than accumulated, so it costs no state and cannot drift.
+   */
+  const twitching = idle && d.now % body.twitchAt < 220;
+  const facing = twitching ? (body.facing === 1 ? -1 : 1) : body.facing;
+
+  /*
+   * ══ THE THREE-PART BODY ══
+   *
+   * Bloodhorn's `agents.ts` builds every agent as SHADOW → AURA+HALO → SPRITE, drawn in that order,
+   * and states why the order is not negotiable: *"Additive glow with no dark backing produces mush
+   * — the glow washes over the body and the silhouette disappears."* The sprite goes LAST so it
+   * sits on top of its own light.
+   *
+   *   1. SHADOW — a dark ellipse on the ground. Without it the cat FLOATS. This is the single
+   *               cheapest cue that a thing is standing on a surface rather than pasted over one.
+   *   2. GLOW   — aura and halo at DECORRELATED rates, so their sum never repeats exactly.
+   *   3. SPRITE — the cat, on top.
+   */
+
+  // ── 1. SHADOW ────────────────────────────────────────────────────────────────────────
+  /*
+   * The shadow TIGHTENS as the body rises.
+   *
+   * A grounded object's contact shadow is coupled to its height; decoupling them is what makes a
+   * bobbing sprite look like it is sliding on glass. So the shadow shrinks and fades by the same
+   * `bob` that lifted the body — one value, two uses, and they cannot disagree.
+   */
+  /*
+   * The shadow is drawn in near-BLACK at high alpha, not in `--soot-line`.
+   *
+   * `--soot-line` is a separator token — it is LIGHTER than the ground it would be cast on, so the
+   * "shadow" was a pale smudge, and once the additive glow went in on top it disappeared entirely.
+   * Bloodhorn is explicit that this is the failure to avoid: *"Additive glow with no dark backing
+   * produces mush"*, and its own shadow is a glow sprite tinted `0x000000` at 0.6.
+   *
+   * A shadow is an ABSENCE OF LIGHT, so it has to be darker than the surface. Black at 0.5 survives
+   * the glow being added over it, which is the entire job — it is what keeps the cat standing on
+   * the field instead of floating in front of it.
+   */
+  const lift = idle ? breath : 0;
+  ctx.fillStyle = "#000";
+  ctx.globalAlpha = 0.5 - lift * 0.1;
   ctx.beginPath();
-  ctx.ellipse(cx, cy + h / 2, w * 0.42, Math.max(2, scale), 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    cx,
+    cy + FEET_Y * scale,
+    w * (0.34 - lift * 0.03),
+    Math.max(2, scale * (1 - lift * 0.1)),
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   ctx.globalAlpha = 1;
 
+  // ── 2. AURA + HALO ───────────────────────────────────────────────────────────────────
   /*
-   * ══ THE BOB IS THE `idle-world` AXIS, AND IT IS COMPUTED IN WHOLE PIXELS ══
+   * The cat's own light, and it CARRIES STATE rather than being decoration — which is the only
+   * reason a glow is allowed on a field whose art direction is otherwise ink, not neon.
    *
-   * §5d: the world moves whether or not anyone is watching, because that is the product. A cat
-   * standing perfectly still between hunts is the thing Ibrahim did not see.
+   * A cat that is fed glows amber; a starving cat glows ember and DIMMER, because losing your light
+   * is the visible cost of neglect (bloodhorn drains its dormant agents to grey for the same
+   * reason). A hunting cat carries the field's own phosphor. Nothing about a loss is dressed up.
    *
-   * Quantised to `scale` (one SPRITE pixel) rather than a smooth sine, so the bob lands on the
-   * pixel grid — a sub-pixel bob is a shimmer, not an animation. `Math.round(sin)` gives exactly
-   * three values: -1, 0, +1 sprite-pixels, which is the `steps(2)` keyframe the CSS version uses,
-   * expressed on a canvas.
-   *
-   * The period is derived from the cat's own id so a colony NEVER moves in lockstep — §5d's rule,
-   * and the reason it is a hash rather than an index is that an index changes when the colony is
-   * re-sorted, which would make every cat's rhythm jump on a poll.
+   * The two oscillators run at 0.8 and 1.7 — non-harmonic, so they drift in and out of alignment
+   * and the combined brightness never repeats. Driving both from one oscillator collapses it into a
+   * single throb, which is what looks mechanical.
    */
-  const seed = hashSeed(body.id);
-  const period = 1500 + (seed % 900);
-  const bob = d.reduced ? 0 : Math.round(Math.sin((d.now / period) * Math.PI * 2)) * scale;
+  /*
+   * `--phos-dim` for a hunting cat, NOT `--rail`.
+   *
+   * `--rail` is a border colour: it sits at L 0.34, barely above the `--soot` ground, so a light
+   * built from it is a light you cannot see — which is what the first version of this shipped. A
+   * light has to be LIGHTER than the thing it falls on or it is not a light. `--phos-dim` (L 0.63)
+   * is the dimmest token in the ramp that still reads as emitted rather than as a surface.
+   */
+  const glowColour =
+    state === "starving" ? palette.starve : state === "fed" ? palette.fed : palette.phosDim;
+  const glowStrength = state === "starving" ? 0.5 : state === "fed" ? 1 : 0.62;
+  /*
+   * The light is centred on the BODY, not on the sprite cell.
+   *
+   * Same correction as the shadow's, from the same measurement: the occupied rows are 4-18 of 24,
+   * so the animal's mass sits slightly ABOVE the cell's centre once the empty rows under the paws
+   * are accounted for. Lighting the cell centre put the halo's bright core on the cat's back, which
+   * read as a lamp behind it rather than as the animal being lit.
+   */
+  const glowY = cy + bob - scale;
+  if (!d.reduced) {
+    const auraScale = 1 + Math.sin(ts * rate * 0.8 + phase) * 0.06;
+    const haloScale = 1 + Math.sin(ts * rate * 1.7 + phase * 1.3) * 0.045;
+    drawGlow(ctx, cx, glowY, w * 0.95 * auraScale, glowColour, glowStrength * (0.85 + breath * 0.3));
+    drawGlow(ctx, cx, glowY, w * 0.34 * haloScale, glowColour, glowStrength * (0.8 + breath * 0.4));
+  } else {
+    // Settled: the light is present but perfectly steady. A reduced-motion user gets the same
+    // world, not a different one — the only thing removed is the movement.
+    drawGlow(ctx, cx, glowY, w * 0.95, glowColour, glowStrength * 0.9);
+    drawGlow(ctx, cx, glowY, w * 0.34, glowColour, glowStrength);
+  }
 
   /*
-   * The LUNGE stretch. During a pounce the sprite is drawn one pixel-row taller and shifted
-   * forward, which reads as a body extending mid-leap. It is deliberately crude: at 16x16 there is
-   * no room for a leap POSE, so the leap is carried by the transform.
+   * The LUNGE stretch. During a pounce the sprite is drawn taller and shifted forward, which reads
+   * as a body extending mid-leap. It is deliberately crude: at 24x24 there is no room for a leap
+   * POSE, so the leap is carried by the transform.
    */
   const lunge = d.reduced ? 0 : body.lunge;
   const stretch = Math.round(lunge * scale);
 
+  // ── 3. THE SPRITE, drawn LAST so it sits on top of its own light ─────────────────────
   ctx.save();
-  ctx.translate(cx, cy + bob);
+  ctx.translate(cx + Math.round(driftX), cy + bob);
+  if (lean !== 0) ctx.rotate(lean);
   // Facing. A negative x-scale rather than a mirrored grid: one sprite, both directions, no second
   // code path that could disagree with the first.
-  if (body.facing === -1) ctx.scale(-1, 1);
+  if (facing === -1) ctx.scale(-1, 1);
   ctx.imageSmoothingEnabled = false;
-  drawCat(ctx, cachedGrid(body.id, state), -w / 2, -h / 2 - stretch, scale, { ramp, state });
+  /*
+   * The BREATH SQUASH, applied to the sprite's own transform.
+   *
+   * ±3.5% on the vertical axis only — a chest expanding, not a ball bouncing. Applied here rather
+   * than folded into `scale` because `drawCat` quantises `scale` to whole pixels internally, so a
+   * fractional breath would be rounded straight back out and produce nothing at all.
+   */
+  if (idle) ctx.scale(1, 1 + (breath - 0.5) * 0.07);
+
+  /*
+   * ══ THE DARK BACKING — what turns a lit smear back into an animal ══
+   *
+   * Bloodhorn states the failure and its fix in one sentence: *"Additive glow with no dark backing
+   * produces mush — the glow washes over the body and the silhouette disappears… the shadow and the
+   * near-black chassis outline are what keep the machine readable while still being genuinely
+   * luminous."*
+   *
+   * That is exactly what happened here, and it was only visible by zooming a screenshot to 220px:
+   * with the aura and halo behind it, the cat rendered as a pale horizontal smudge in which no ear,
+   * leg or tail could be picked out. §5b calls the ears and tail the two axes that carry a cat's
+   * identity, and both were being dissolved by the light meant to make it beautiful.
+   *
+   * The fix is a silhouette pass: the SAME grid drawn first in near-black, one sprite-pixel out in
+   * each of four directions, which lays a dark rim under every lit edge. The lit sprite then covers
+   * the centre and only the rim survives — so the cat sits in a thin dark outline that separates it
+   * from its own glow.
+   *
+   * ══ Why four offsets and not a scale-up ══
+   *
+   * Scaling the silhouette by ~1.1 and drawing it behind is the cheaper trick and it is wrong for
+   * pixel art: a non-integer scale resamples the grid, so the outline lands on fractional pixels and
+   * comes out as a grey fringe — the exact anti-aliased blur §8 bans. Four whole-pixel offsets keep
+   * every mark on the quantum.
+   */
+  const grid = cachedGrid(body.id, state);
+  const dark: readonly string[] = DARK_RAMP;
+  for (const [ox, oy] of OUTLINE_OFFSETS) {
+    drawCat(ctx, grid, -w / 2 + ox * scale, -h / 2 - stretch + oy * scale, scale, {
+      ramp: dark,
+      state,
+    });
+  }
+
+  drawCat(ctx, grid, -w / 2, -h / 2 - stretch, scale, { ramp, state });
   ctx.restore();
 
   /*
@@ -1165,12 +1473,12 @@ function drawStray(
   }
 }
 
-/** FNV-1a. `Math.random()` is banned in rendering (§5b) — every rhythm derives from the id. */
-function hashSeed(id: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+/*
+ * `hashSeed` used to live here — a hand-rolled FNV-1a, duplicating the one in
+ * `@taia/ui/mechanisms`. It is gone rather than kept, because a second copy of an identity hash is
+ * a latent divergence: the moment the two disagree by a constant, a cat's sprite (hashed by the
+ * package) and a cat's rhythm (hashed here) are seeded from different values, and the bug presents
+ * as "the animation does not match the animal" with nothing obviously wrong at either site.
+ *
+ * Every rhythm now derives from `fnv1a` in `sim.ts`, from one hash, once.
+ */

@@ -248,11 +248,18 @@ export function denSlot(sim: Sim, index: number, radius: number): Vec {
   const withinRing = index % PER_RING;
   // Ring 0 sits just clear of the den mark; each further ring clears the largest possible cat.
   const r = 46 + ring * (radius + 34);
-  // Spread across a 120° arc. A single cat sits dead centre of it rather than at one end, so a
-  // colony of one does not look like a colony of many with the others missing.
+  /*
+   * Spread across a 120° arc.
+   *
+   * The slot's position within the arc is `(withinRing + 0.5) / PER_RING` rather than
+   * `withinRing / (PER_RING - 1)`. The difference matters for the colony we actually have: the
+   * second form puts cat 0 at the arc's extreme END, so a colony of ONE — which is the real state
+   * of the vault today — renders a single cat pinned to the top edge of the arc, reading as a
+   * colony of five with four missing. Cell-centred placement puts a lone cat in the middle of the
+   * space it occupies, which is what "one cat resting at the den" should look like.
+   */
   const spread = Math.PI * (2 / 3);
-  const t = PER_RING === 1 ? 0.5 : withinRing / (PER_RING - 1);
-  const angle = -spread / 2 + t * spread;
+  const angle = -spread / 2 + ((withinRing + 0.5) / PER_RING) * spread;
   return clampToField(sim, { x: sim.den.x + Math.cos(angle) * r, y: sim.den.y + Math.sin(angle) * r }, radius);
 }
 
