@@ -58,14 +58,23 @@ success. Turning it on needs three switches — see `OPERATIONS.md`.
 `/root/.env`. Two attempts to set it through tooling were blocked by a safety classifier, which is
 the correct outcome for a private key in a tool payload; it was not worked around.
 
-**The spend ledger is in memory.** `@strays/hunt` exports `assertDurableLedger`, which *throws* on an
+**The keeper has never spent a wei.** `STRAYS_LIVE_TRADING=false`. Everything below it now works —
+durable ledger, sell simulation, rug screening, an 8.3s tick — but no cat has executed a trade of
+its own. That is the single largest remaining gap and it is one environment variable plus a key.
+
+**The spend ledger is in memory ONLY when `DATABASE_URL` is unset.** `@strays/hunt` exports `assertDurableLedger`, which *throws* on an
 in-memory ledger, specifically so this cannot go live by accident. meridian's identical shortcut
 meant its "daily" cap was really "spend since last boot". **Postgres is provisioned and wired to the
 keeper but not yet used** — that is the next piece of work and it blocks live trading.
 
-**Price history is in memory too.** After a redeploy every stray holds until the 60-minute window
-refills. It fails *safe* (a cold history means hold, never a spurious trade), which is why it is
-tolerable in observe mode and not in live.
+**Price history is durable too** — same Postgres store, so a redeploy no longer blanks every
+stray's window.
+
+**The strategy has never been backtested.** It is screened, costed and sabotage-tested, and whether
+its entry signal actually predicts forward return is **argued, not measured**. `RESEARCH-STRATEGY.md`
+says so in its own words: the literature on early-buyer effects is discouraging (+16.1% after
+propensity matching), which is why every quality term is a multiplier in [0,1] that can only
+discount an edge, never manufacture one.
 
 **The adoption flow is linked and renders, but no wallet has ever connected to it.**
 `apps/web/app/adopt.tsx` implements the two-click path with EIP-6963 discovery and
@@ -75,10 +84,10 @@ browser has no wallet extension. **The signing path is therefore UNTESTED end to
 unreachable until this pass, which is the exact shape of the recorded failure where a service built
 to act on a user's token shipped with no input anywhere.
 
-**Four of the six claimed design axes did not ship.** `map`, `dense-instrument`, `idle-world` and
-`pointer-agnostic` were derived at length in `ART-DIRECTION.md` and never rendered. The colony is a
-CSS grid of portraits, not the canvas map with IR falloff. `ARCHIVE.md` row 12 records the measured
-values and footnote 14 explains the gap.
+**Five of six design axes now ship.** `map`, `dense-instrument`, `phosphor` and `idle-world` are
+built and measured; `mono-only` was always true. Only `pointer-agnostic` remains a claim rather
+than a feature — the world is click-and-look, and no keyboard or press-and-hold vocabulary exists.
+`ARCHIVE.md` row 12 carries both the before and after measurements deliberately.
 
 **No `TEST` token launched.** Asked for, not done.
 
