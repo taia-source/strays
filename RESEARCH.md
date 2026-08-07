@@ -458,6 +458,41 @@ built continuous Reynolds wander. Reading
 **The transferable point:** "alive" came from a per-entity idle with decorrelated phase AND rate,
 not from movement. Wander is what an entity does when nothing has been designed for it to do.
 
+## 7c. THE SAME BUG TWICE, IN TWO COMPONENTS — and only a user caught the second one
+
+`sort=newest` was fixed in the KEEPER (§7b's neighbouring finding: the scanner and the strategy were
+looking at disjoint sets, so every candidate was refused "age < 3600s"). It was **not** fixed in the
+WEB app, which fetches its quarry from the same API in `apps/web/app/lib/quarry.ts`.
+
+The consequence was visible on the deployed page and I did not see it. Ibrahim did:
+
+> *"how can the strategy say the 14 huntable targets are viable? they are all dead tokens that
+> rugged?"*
+
+He was right. Measured on the live pad, merging `sort=mcap` + `sort=trending` + `sort=newest` and
+applying the seed-cap prefilter gives 69 tokens, and the real ones are unmistakable:
+
+```
+Seriouscat   382Ξ 24h vol    513 holders   +1406%
+LEVCAT       308Ξ           1178 holders
+CASHBIRD     219Ξ            767 holders    +659%
+INTERN       172Ξ           1252 holders
+```
+
+while **7 of 69 have under 0.5Ξ of 24h volume** — effectively dead. The world was showing the
+newborns and calling them "huntable"; the strategy was scanning the mature ones. **Two components
+reading the same API through different queries and disagreeing about reality.**
+
+**The transferable lesson is not "fix it in both places".** It is that a shared data source deserves
+a shared accessor: `discovery.ts` and `quarry.ts` each implemented their own fetch against the same
+endpoint, so fixing one could not fix the other and nothing failed when they diverged. A duplicated
+query is a duplicated bug with independent lifetimes.
+
+And the detection lesson: **no test caught this and no test could have.** Both components were
+internally consistent and both rendered plausible output. What caught it was a person looking at the
+page and asking whether the names on it were real — which is the same class of failure as the
+"green gate, dead palette" one already recorded at §7i.
+
 ## 8. Creature generation — the method to port from openhood
 
 `openhood/apps/web/lib/creature-grid.ts` (847 lines). The method, not the artwork:
