@@ -82,8 +82,8 @@
   --soot-hi: oklch(0.225 0.048 285); /* raised surface */
   --soot-line: oklch(0.32 0.06 288); /* separator */
   --phos: oklch(0.925 0.045 150); /* primary type. NEAR-white-green, never #fff */
-  --phos-dim: oklch(0.7 0.06 175); /* secondary type, drifting to teal */
-  --phos-ghost: oklch(0.68 0.055 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
+  --phos-dim: oklch(0.775 0.055 175); /* secondary type, drifting to teal */
+  --phos-ghost: oklch(0.755 0.05 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
 
   /* ── The STRUCTURAL tier. LOW CHROMA — see below. ── */
   /*
@@ -98,7 +98,7 @@
    * (headings, marks, the cats) and not to the boxes around it.
    */
   --rail: oklch(0.42 0.045 290);
-  --band: oklch(0.29 0.062 290);
+  --band: oklch(0.255 0.055 290);
   --wash: oklch(0.195 0.042 295);
 
   /* ── The two EVENT hues. One hue means exactly one thing. ── */
@@ -150,10 +150,10 @@
     --soot-hi: oklch(0.92 0.026 300);
     --soot-line: oklch(0.82 0.045 300);
     --phos: oklch(0.255 0.07 285);
-    --phos-dim: oklch(0.43 0.08 290);
-    --phos-ghost: oklch(0.455 0.075 300);
+    --phos-dim: oklch(0.375 0.075 290);
+    --phos-ghost: oklch(0.395 0.07 300);
     --rail: oklch(0.68 0.05 295);
-    --band: oklch(0.862 0.052 300);
+    --band: oklch(0.895 0.042 300);
     --wash: oklch(0.928 0.032 300);
     --fed: oklch(0.47 0.14 65);
     --starve: oklch(0.47 0.195 25);
@@ -169,10 +169,10 @@
   --soot-hi: oklch(0.225 0.048 285); /* raised surface */
   --soot-line: oklch(0.32 0.06 288); /* separator */
   --phos: oklch(0.925 0.045 150); /* primary type. NEAR-white-green, never #fff */
-  --phos-dim: oklch(0.7 0.06 175); /* secondary type, drifting to teal */
-  --phos-ghost: oklch(0.68 0.055 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
+  --phos-dim: oklch(0.775 0.055 175); /* secondary type, drifting to teal */
+  --phos-ghost: oklch(0.755 0.05 300); /* tertiary. VIOLET, so a stamp reads as its own voice */
   --rail: oklch(0.42 0.045 290);
-  --band: oklch(0.29 0.062 290);
+  --band: oklch(0.255 0.055 290);
   --wash: oklch(0.195 0.042 295);
   --fed: oklch(0.8 0.17 85); /* AMBER — the cat ate. A closed WINNING trade. Nothing else. */
   --starve: oklch(0.68 0.19 25); /* EMBER — the cat is starving. A LOSS. Nothing else. */
@@ -187,10 +187,10 @@
   --soot-hi: oklch(0.92 0.026 300);
   --soot-line: oklch(0.82 0.045 300);
   --phos: oklch(0.255 0.07 285);
-  --phos-dim: oklch(0.43 0.08 290);
-  --phos-ghost: oklch(0.455 0.075 300);
+  --phos-dim: oklch(0.375 0.075 290);
+  --phos-ghost: oklch(0.395 0.07 300);
   --rail: oklch(0.68 0.05 295);
-  --band: oklch(0.862 0.052 300);
+  --band: oklch(0.895 0.042 300);
   --wash: oklch(0.928 0.032 300);
   --fed: oklch(0.47 0.14 65);
   --starve: oklch(0.47 0.195 25);
@@ -1930,22 +1930,36 @@ body[data-route="scroll"] {
 /*
  * ══ AN ALL-DEAD COLONY YIELDS THE TOP OF THE PANEL ══
  *
- * `data-lead="quarry"` is set only when NO stray is alive. The quarry heading and list are lifted
- * above the colony list; the dead cats keep their own heading and stay fully listed underneath.
- * This is `order` and not `display: none` — the losses are visible, they are simply not the first
- * thing in a panel headed "on the field" when the field is empty.
+ * `data-lead="quarry"` is set only when NO stray is alive. The quarry heading and its list are
+ * lifted above the colony's heading and list; the dead cats stay fully listed underneath, under
+ * their own heading. This is `order`, never `display: none` — the losses are visible, they are
+ * simply not the first thing in a panel headed "on the field" when the field is empty.
+ *
+ * ══ EACH HEADING CARRIES ITS OWN LIST, WHICH IS WHY THE ORDERS ARE PAIRED ══
+ *
+ * The first version gave the quarry heading `order: -2` and its list `order: -1`, which put BOTH
+ * headings at the top with the colony's heading floating above the quarry's list. Screenshotting
+ * 390px showed it plainly: "THE COLONY — all starved out" sat directly above "THE QUARRY", with an
+ * empty gap where its rows should have been and its actual rows far below.
+ *
+ * A heading and the list it introduces are one unit. They therefore share an order value, and the
+ * two units are ordered against each other rather than the four elements being ordered
+ * individually. DOM order stays colony-then-quarry so a screen reader's heading structure is
+ * unaffected by the visual swap.
  */
-.world-roster-body[data-lead="quarry"] > .world-roster-sub { order: -2; }
+.world-roster-body[data-lead="quarry"] > .world-roster-sub:not(.world-roster-colony-sub),
 .world-roster-body[data-lead="quarry"] > .world-quarry-list,
-.world-roster-body[data-lead="quarry"] > .stamp { order: -1; }
+.world-roster-body[data-lead="quarry"] > .stamp {
+  order: -1;
+}
 
-/* The colony list gets its own heading so the two sections are never ambiguous. It is `order: 0`
-   in both modes; only the quarry moves. */
-.world-roster-colony-sub { order: 0; }
-/* The colony list follows its own heading. Without this it defaults to `order: 0` too, which is
-   correct — stated explicitly so a future reorder cannot separate a heading from its list. */
-.world-roster-body[data-lead="quarry"] > .world-list:not(.world-quarry-list) { order: 1; }
-/* The first-child margin collapse rule keyed off DOM adjacency, which `order` does not change. */
+.world-roster-body[data-lead="quarry"] > .world-roster-colony-sub,
+.world-roster-body[data-lead="quarry"] > .world-list:not(.world-quarry-list) {
+  order: 0;
+}
+
+/* Promoted to the top of the panel, the quarry heading must not carry the separator rule that only
+   makes sense when something precedes it. */
 .world-roster-body[data-lead="quarry"] > .world-roster-sub:not(.world-roster-colony-sub) {
   margin-top: 0;
   border-top: 0;

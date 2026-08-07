@@ -156,8 +156,45 @@ take-profit at `cost × multiple / position` while `evaluateEntry` defines
 `expectedGain = position × takeProfitBps` — the bar compares a number against itself. **0 refusals
 across 72 combinations of tax tier, size and multiple**, now pinned by a test.
 
-**What would have to be true to win:** cost falling to ≤145bps (the measured held-out edge), which is
-not reachable on this venue — The one untested direction is **selectivity** — p75/p90 of net returns are +655/+1125bps, so
+### THE VENUE IS THE CONSTRAINT — and openhood already measured the alternative
+
+A 0%-tax tier does not exist on letscash in practice: **zero** of the top 48 by market cap and
+**one** of 461 in the backtest corpus (WINLOSE, two swaps). That path is closed.
+
+But `openhood/TRADING.md` measured a venue on **this same chain 4663** with a real read-only probe
+(`probe/perpbook.mjs`, 2026-08-07): **Lighter**, the orderbook deployment Robinhood's own docs name
+for the chain.
+
+| | letscash (Uniswap v4 + hook) | Lighter (measured) |
+|---|---|---|
+| round trip at our size | **218 bps** | **~3.2 bps** |
+| fees | 200bps hook tax + pool | **0 maker / 0 taker** |
+| cost vs size | flat in bps (tax dominates) | **flat $50 → $5000** |
+| books | one pool per token | 15 equity perps + **26 USDG spot** |
+
+Arcus (dYdX team, $19.8M TVL) is a second independent venue on the same chain at ~4.5bps.
+
+**The two projects have exactly complementary problems.** openhood's cost objection died on Lighter
+and it was then foreclosed by SIGNAL SUPPLY — RWA equity pools fire 0.42 signals/day with no
+measured serial dependence. STRAYS has the opposite: **1,723 trades in 28 days and a held-out edge
+at t = 4.65**, foreclosed by COST.
+
+```
+measured held-out edge   +145 bps
+  at letscash's toll     −218  =>   −73 bps   LOSS
+  at Lighter's toll      −3.2  =>  +142 bps   PROFIT
+```
+
+**The honest caveat, which matters as much as the number.** That edge was measured on *memecoin*
+price series on letscash. Lighter lists equity perps and USDG spot books — **a different asset
+class**, and openhood measured precisely that class to have no exploitable intraday serial
+dependence. So this is **not** "move the code and it prints money". It is: the signal is real and
+this venue's toll is what kills it, and there exists a venue on the same chain where a signal of
+this size would survive — *if* a signal of this size exists there, which is unmeasured and is the
+next thing to test.
+
+**What would have to be true to win here:** cost falling to ≤145bps (the measured held-out edge),
+which is not reachable on this venue — The one untested direction is **selectivity** — p75/p90 of net returns are +655/+1125bps, so
 a profitable subset exists; whether it is identifiable *in advance* is unknown and must be run on
 held-out data. Retuning lookback, stop or drawdown will not work: all three were swept and lose
 across their entire range.

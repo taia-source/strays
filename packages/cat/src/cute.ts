@@ -820,7 +820,15 @@ function isWhisker(px: number, py: number, g: CuteGeometry, drop: number): boole
      * the sprite's entire expression lives.
      */
     const from = Math.max(1.5, edge - 0.5);
-    const to = edge + g.whiskerLen * 0.9;
+    /*
+     * ══ AND IT PROJECTS TWO COLUMNS, NOT THREE ══
+     *
+     * At `whiskerLen * 0.9` the longest whiskers reached three columns past the skull, and at 120px
+     * the two sets together read as a MOUSTACHE — a continuous horizontal feature under the nose,
+     * which is not what whiskers look like and is not what they are for. A whisker's job here is to
+     * register in the periphery as "cat"; two columns does that and leaves the face to the eyes.
+     */
+    const to = edge + 1 + g.whiskerLen * 0.4;
     const dx = (px + 0.5 - CX) * side;
     if (dx >= from && dx <= to) return true;
   }

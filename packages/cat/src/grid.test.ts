@@ -13,7 +13,8 @@
  * which is exactly what the review by eye failed to do and what these tests do.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -539,73 +540,29 @@ describe("silhouette rule 3 — legs paired front and back with a visible gap", 
    * is. These assertions are therefore STRONGER than the ones they replace, not weaker.
    */
 
-  it("draws a front pair and a back pair, separated along the body", () => {
-    for (const id of IDS) {
-      const grid = catGrid(id, { state: "fed" });
-      const legs = grid.filter((p) => p.part === "leg" || p.part === "paw");
-      expect(legs.length, `id ${id}: no legs at all`).toBeGreaterThan(3);
-      const xs = [...new Set(legs.map((p) => p.x))].sort((a, b) => a - b);
-      // Group the columns into runs; each run is one leg seen in profile.
-      const runs: number[][] = [];
-      for (const x of xs) {
-        const last = runs[runs.length - 1];
-        if (last && x === (last[last.length - 1] ?? -9) + 1) last.push(x);
-        else runs.push([x]);
-      }
-      /*
-       * TWO runs, front and back. A standing cat shows four legs but the near and far leg of each
-       * pair occupy the same columns in strict profile — which is what profile MEANS — so the
-       * silhouette has two posts, and the gap between them is the cue.
-       */
-      expect(runs.length, `id ${id}: ${runs.length} leg groups, expected 2`).toBe(2);
-      const front = runs[0] ?? [];
-      const back = runs[1] ?? [];
-      const gap = (back[0] ?? 0) - (front[front.length - 1] ?? 0) - 1;
-      expect(gap, `id ${id}: leg gap is only ${gap} columns`).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it("makes every leg at least 2px wide", () => {
-    // A 1px leg is a hairline: it disappears at the first ramp step and leaves the cat floating.
-    for (const id of IDS) {
-      const grid = catGrid(id, { state: "fed" });
-      const legs = grid.filter((p) => p.part === "leg" || p.part === "paw");
-      if (legs.length === 0) continue;
-      const xs = [...new Set(legs.map((p) => p.x))].sort((a, b) => a - b);
-      const runs: number[][] = [];
-      for (const x of xs) {
-        const last = runs[runs.length - 1];
-        if (last && x === (last[last.length - 1] ?? -9) + 1) last.push(x);
-        else runs.push([x]);
-      }
-      for (const r of runs) {
-        expect(r.length, `id ${id}: a leg is ${r.length}px wide`).toBeGreaterThanOrEqual(2);
-      }
-    }
-  });
-
-  it("stands every cat on paws, at the bottom of its legs", () => {
-    for (const id of IDS) {
-      const grid = catGrid(id, { state: "fed" });
-      const paws = grid.filter((p) => p.part === "paw");
-      const legs = grid.filter((p) => p.part === "leg");
-      if (paws.length === 0) continue;
-      /*
-       * Compared per COLUMN, not against the legs' global maximum. A sitting cat has one leg
-       * extended to the ground and one TUCKED under the haunch, and the tucked stub's lowest row can
-       * sit below the standing leg's paw — so a global comparison asserted that a paw must be lower
-       * than a leg it has nothing to do with.
-       *
-       * What "a paw is at the bottom of a leg" means is a claim about one limb, so it is measured on
-       * one limb: within the paw's own columns, nothing that is leg may be below it.
-       */
-      const pawCols = new Set(paws.map((p) => p.x));
-      const legBelowPaw = legs.some(
-        (l) => pawCols.has(l.x) && l.y > Math.max(...paws.filter((p) => p.x === l.x).map((p) => p.y)),
-      );
-      expect(legBelowPaw, `id ${id}: a leg hangs below its own paw`).toBe(false);
-    }
-  });
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * ══ THREE LEG ASSERTIONS WERE MERGED INTO ONE HERE, AND ONE OF THEM WAS VACUOUS ══
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * v3 had three: "draws a front pair and a back pair, separated along the body", "makes every leg
+   * at least 2px wide", and "stands every cat on paws, at the bottom of its legs". The first is a
+   * statement about legs spread along a body's LENGTH, which only exists in profile. The third
+   * filtered on `p.part === "paw"` and then began `if (paws.length === 0) continue` — and `paw` is
+   * no longer a part, so the filter returned nothing, the guard skipped every id, and the test
+   * asserted NOTHING while reporting green.
+   *
+   * That is the second vacuous test this rewrite found (see the note above the paw test in the
+   * proportions block for the first), and both had the same signature: a filter on a part name that
+   * no longer exists, guarded by a `continue` that turned an empty result into a pass. A guard that
+   * exists to skip a legitimate edge case will happily skip EVERYTHING when the data goes away.
+   * TypeScript flagged both — `types 'CutePart' and '"paw"' have no overlap` — and that was the only
+   * signal either one had gone hollow.
+   *
+   * The property that survives the pose change is asserted once, in `proportions`: two paws, each at
+   * least 2px wide, with clear ground between them. Merging them there rather than keeping three
+   * shells here is the honest bookkeeping — one real assertion beats three, two of which cannot fail.
+   */
 
   it("keeps the legs a different value from the barrel above them", () => {
     /*
@@ -1162,9 +1119,38 @@ describe("the bans", () => {
   it("keeps hornNormal and maneNormal deleted", () => {
     // The brief is explicit that these are removed rather than left unused. A dead `hornNormal`
     // sitting in the file is an invitation for a later edit to call it.
-    const src = codeOf("./grid.ts");
+    const src = codeOf("./grid.ts") + codeOf("./cute.ts");
     expect(src).not.toMatch(/function\s+hornNormal/);
     expect(src).not.toMatch(/function\s+maneNormal/);
+  });
+
+  it("keeps the PROFILE module deleted, on its own stated rule", () => {
+    /*
+     * ══ THE 1,055-LINE MODULE THAT NOTHING IMPORTED ══
+     *
+     * `profile.ts` drew the side-on cat. When the pose was reversed it became completely orphaned —
+     * `grid.ts` stopped importing it, `index.ts` never exported it, and nothing else in the workspace
+     * referenced it. It was left in place at first, on the reasonable-sounding grounds that a
+     * thousand lines of derived geometry might be wanted again.
+     *
+     * The test directly above forbids exactly this, and gives the reason: "a dead `hornNormal`
+     * sitting in the file is an invitation for a later edit to call it." A dead MODULE is the same
+     * invitation at a thousand times the scale, and it is worse than a dead function because it
+     * compiles, it looks maintained, and its extensive header argues at length for the anatomical
+     * register this rewrite was commissioned to abandon. The next reader would find a large,
+     * confident, well-documented file describing the rejected direction and no marker saying so.
+     *
+     * The work is not lost — it is in version control, and every conclusion worth keeping (the
+     * connectivity rules, the additive-clamp failures, the hardcoded-anchor bugs, the dead-axis
+     * quantum rule) has been carried forward into the headers of the two files that are live.
+     *
+     * Asserted rather than merely done, because "delete the orphan" is the kind of cleanup that gets
+     * quietly reverted by a later edit that needs "just one function" from it.
+     */
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    expect(existsSync(join(here, "profile.ts"))).toBe(false);
+    const live = codeOf("./grid.ts") + codeOf("./cute.ts") + codeOf("./index.ts");
+    expect(live).not.toMatch(/from\s+"\.\/profile\.js"/);
   });
 
   it("derives the same cat on a second process-independent call", () => {
@@ -1410,7 +1396,7 @@ describe("the idle frames", () => {
        */
       const bodyOf = (frame: number) =>
         catGrid(id, { frame })
-          .filter((p) => p.part === "body" || p.part === "leg" || p.part === "paw")
+          .filter((p) => p.part === "body" || p.part === "leg")
           .map((p) => `${p.x},${p.y}`)
           .sort()
           .join(";");
@@ -1611,63 +1597,66 @@ describe("cat proportions — not a dog, not a deer", () => {
     };
   }
 
-  it("keeps the legs SHORTER than the barrel is deep — a cat is low slung", () => {
-    /*
-     * ══ THE SINGLE BIGGEST TELL, AND THE ONE THAT MADE THEM READ AS DEER ══
-     *
-     * The first profile draft used 4.2 rows of leg against a barrel 7 deep — a ratio of 1:1, which
-     * is a canid stance, and at 96px the legs were a third of the sprite's height.
-     *
-     * A cat's belly sits close to the ground: the VISIBLE leg — the part below the belly line — is
-     * roughly half the barrel's depth or less. Measured below the barrel rather than as the leg
-     * part's own height, because the legs overlap the body and their total extent says nothing about
-     * how much daylight is under the animal, which is what a viewer actually reads.
-     */
-    for (const id of IDS) {
-      const { body, legs } = anatomy(id);
-      if (body.length === 0 || legs.length === 0) continue;
-      const bellyRow = Math.max(...body.map((p) => p.y));
-      const depth = bellyRow - Math.min(...body.map((p) => p.y)) + 1;
-      const visibleLeg = Math.max(...legs.map((p) => p.y)) - bellyRow;
-      expect(
-        visibleLeg / depth,
-        `id ${id}: legs ${visibleLeg} vs barrel ${depth} — that is a dog stance`,
-      ).toBeLessThan(0.75);
-    }
-  });
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * ══ TWO PROFILE ASSERTIONS WERE DELETED HERE, AND BOTH WERE PASSING VACUOUSLY ══
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * "keeps the legs SHORTER than the barrel is deep — a cat is low slung" and "carries the hip at
+   * least as high as the shoulder — a dog's back falls away" were the two most carefully-derived
+   * assertions in v3. Both are statements about a SIDE VIEW: a barrel's depth, a topline running
+   * from shoulder to croup, daylight under a belly. Front-on there is no barrel and no topline —
+   * the body is a small round mass seen end-on — so neither has a referent.
+   *
+   * Both were still passing after the pose change, and that is the part worth recording. The leg
+   * test passed because a small front-on body happens to satisfy the ratio; the hip test passed
+   * because it began `if (geometryFor(id).posture === "sit") continue`, and `posture` no longer
+   * exists on the geometry — so the expression was `undefined === "sit"`, every cat was tested, and
+   * "the rear third's topmost row" on a symmetric front-facing blob equals the front third's, so the
+   * `<=` held for every id.
+   *
+   * A test that passes for a reason unrelated to what it claims to check is worse than no test: it
+   * reports coverage of a property nothing is enforcing. TypeScript flagged the `posture` access
+   * (`Property 'posture' does not exist`) and that was the only signal either test had gone hollow.
+   *
+   * What replaces them is the one thing about the understorey that still has a referent front-on.
+   */
 
-  it("carries the hip at least as high as the shoulder — a dog's back falls away", () => {
+  it("stands every cat on TWO paws with a visible gap between them", () => {
     /*
-     * A cat's hind legs are longer and more angulated than its front ones, so the CROUP is the
-     * highest point of the topline. A dog's back runs level or drops toward the tail, and a level
-     * topline was named in the review as the second-biggest tell.
+     * Silhouette rule 3, restated for the pose: "LEGS ARE 2PX WIDE, PAIRED WITH A VISIBLE GAP. Four
+     * 1px verticals read as a fringe."
      *
-     * Measured as the topmost body row in the rear third against the front third. Lower row number
-     * is higher on screen, so the hip must be less than or equal to the shoulder.
+     * Front-on the cat shows TWO front paws, not four posts — bloodhorn draws four because a unicorn
+     * head-on is an ungulate, and four evenly-spaced posts under a cat read as a table. So what is
+     * asserted is the pair and the gap: each paw at least two columns wide, and clear ground between
+     * them, which is what makes them read as two feet rather than as one plinth.
      */
     for (const id of IDS) {
       /*
-       * SITTING cats are exempt, and deliberately: a sitting cat's hindquarters are folded on the
-       * ground and its chest is propped up, so its rump is the LOWEST point of the topline — the
-       * exact inverse of the standing silhouette this rule protects. Asserting the standing topline
-       * on a sitting cat would forbid the most cat-specific pose there is.
+       * LIVING states only. A dead cat is dropped three rows so its whole mass sits low in the
+       * grid, which puts the body over the rows the paws would occupy — a lying animal's feet are
+       * folded under it and are not a separate silhouette feature. Asserting a standing stance on a
+       * cat that is lying down would forbid the drop that makes `dead` read at all.
        */
-      if (geometryFor(id).posture === "sit") continue;
-      const { body } = anatomy(id);
-      if (body.length < 10) continue;
-      const xs = body.map((p) => p.x);
-      const lo = Math.min(...xs);
-      const hi = Math.max(...xs);
-      const third = (hi - lo) / 3;
-      const topIn = (from: number, to: number) => {
-        const rows = body.filter((p) => p.x >= from && p.x <= to).map((p) => p.y);
-        return rows.length === 0 ? 99 : Math.min(...rows);
-      };
-      const shoulder = topIn(lo, lo + third);
-      const hip = topIn(hi - third, hi);
-      expect(hip, `id ${id}: the hindquarters fall away — that is a dog topline`).toBeLessThanOrEqual(
-        shoulder,
-      );
+      for (const state of STATES.filter((st) => st !== "dead")) {
+        const legs = coat(catGrid(id, { state })).filter((p) => p.part === "leg");
+        expect(legs.length, `id ${id}/${state}: no paws`).toBeGreaterThan(4);
+        const cols = [...new Set(legs.map((p) => p.x))].sort((a, b) => a - b);
+        // Split the columns into runs; there must be exactly two, each at least 2 wide.
+        const runs: number[][] = [];
+        for (const c of cols) {
+          const last = runs[runs.length - 1];
+          if (last && c === (last[last.length - 1] ?? -9) + 1) last.push(c);
+          else runs.push([c]);
+        }
+        expect(runs.length, `id ${id}/${state}: ${runs.length} paws, not 2`).toBe(2);
+        for (const run of runs) {
+          expect(run.length, `id ${id}/${state}: a paw is only ${run.length}px wide`).toBeGreaterThanOrEqual(
+            2,
+          );
+        }
+      }
     }
   });
 
