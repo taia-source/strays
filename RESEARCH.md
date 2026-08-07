@@ -410,6 +410,32 @@ or a single inline SVG.
 
 ---
 
+## 7b. BLOODHORN'S MOTION MODEL — measured from source, because both guesses were wrong
+
+Ibrahim: *"bloodhorn mascots they don't move around, they teleport to different places."* I had
+built continuous Reynolds wander. Reading
+`openhood/apps/web/components/game/engine/agents.ts` settles it, and it is **neither**:
+
+1. **Agents have a HOME derived from the fixed BLOCK they occupy.** The world is laid-out slots,
+   not free space. An agent does not roam.
+2. **`const WALK_MS = 1400`.** When a tick moves an agent to a different block it WALKS a path over
+   1400ms and then stops. So: mostly still, occasionally a deliberate traversal.
+3. **The life between ticks is BREATHING IN PLACE**, and the file's own header calls it *"the most
+   important animation in the project"*:
+
+   > "Ticks are five minutes apart. Without a continuous idle the city is a diagram that changes
+   > twice an hour; with it, twenty sprites read as alive in the gaps. Every agent gets its own
+   > phase AND its own rate from its id, so they never breathe in unison — **synchronised breathing
+   > reads as one animation played twenty times, which is the single most life-killing artifact
+   > possible in a crowd scene.**"
+
+4. **A three-part body keeps a lit sprite legible**: a dark SHADOW ellipse on the ground (*"without
+   it the machine floats"*), AURA+HALO additive glow at decorrelated rates, and the SPRITE drawn
+   LAST so it sits on top of its own light. *"Additive glow with no dark backing produces mush."*
+
+**The transferable point:** "alive" came from a per-entity idle with decorrelated phase AND rate,
+not from movement. Wander is what an entity does when nothing has been designed for it to do.
+
 ## 8. Creature generation — the method to port from openhood
 
 `openhood/apps/web/lib/creature-grid.ts` (847 lines). The method, not the artwork:
