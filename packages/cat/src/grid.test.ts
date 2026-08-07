@@ -33,6 +33,19 @@ import {
   ROWS,
 } from "./grid.js";
 
+/**
+ * A source file with its comments stripped.
+ *
+ * The ban tests grep for `Math.random`, and this file's own headers DISCUSS `Math.random` at
+ * length — so a naive grep over the raw source fails on the very comment that documents the ban.
+ * That is not a false positive to be silenced with a cleverer regex: the thing being asserted is
+ * that no CODE calls it, so the correct fix is to strip what is not code and grep the rest.
+ */
+function codeOf(rel: string): string {
+  const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
 /** A spread of ids wide enough that a rule holding on all of them is not luck. */
 const IDS = [
   "stray-1",
@@ -307,14 +320,18 @@ describe("silhouette rule 2 — a shaded separator between head and body", () =>
    */
 
   it("draws the neck row at least NECK_STEP_DROP steps below the head above it", () => {
+    /*
+     * Compared against the HEAD PIXEL DIRECTLY ABOVE, and only where both exist. The head's lower
+     * edge is a superellipse, so on the outermost columns of the neck there is no head above at
+     * all — those columns are the shoulder, and a shoulder has no neck break to make.
+     */
     for (const id of IDS) {
       const at = index(catGrid(id));
-      const headRow = ROWS.head[1] - 1;
       for (let x = 0; x < GRID_W; x++) {
         const neck = at.get(NECK_ROW * GRID_W + x);
-        const head = at.get(headRow * GRID_W + x);
+        const head = at.get((NECK_ROW - 1) * GRID_W + x);
         if (neck?.part !== "body") continue;
-        if (head === undefined || head.part === "outline") continue;
+        if (head === undefined || head.part !== "head") continue;
         expect(
           head.step - neck.step,
           `id ${id}: column ${x} has no neck break (head ${head.step}, neck ${neck.step})`,
@@ -324,16 +341,26 @@ describe("silhouette rule 2 — a shaded separator between head and body", () =>
   });
 
   it("keeps the neck row darker than the body below it too", () => {
-    // A separator that is darker than the head but the same as the body is not a separator, it is
-    // just the top of the body. It has to be a local MINIMUM to read as a break.
+    /*
+     * A separator that is darker than the head but the same as the body is not a separator, it is
+     * just the top of the body. It has to be a local MINIMUM to read as a break.
+     *
+     * Asserted on the BRIGHTEST body pixel of the row below rather than column by column: a tabby
+     * cat's bands are deliberately dark, so an individual column below the neck may legitimately
+     * match it. What must hold is that the neck is darker than the body's own general level, and
+     * the row's maximum is that level.
+     */
     for (const id of IDS) {
-      const at = index(catGrid(id));
+      const grid = catGrid(id);
+      const at = index(grid);
+      const below = grid.filter((p) => p.y === NECK_ROW + 1 && p.part === "body");
+      if (below.length === 0) continue;
+      const brightestBelow = Math.max(...below.map((p) => p.step));
       for (let x = 0; x < GRID_W; x++) {
         const neck = at.get(NECK_ROW * GRID_W + x);
-        const below = at.get((NECK_ROW + 1) * GRID_W + x);
-        if (neck?.part !== "body" || below?.part !== "body") continue;
+        if (neck?.part !== "body") continue;
         expect(neck.step, `id ${id}: column ${x} neck not darker than body`).toBeLessThan(
-          below.step,
+          brightestBelow,
         );
       }
     }
@@ -347,12 +374,24 @@ describe("silhouette rule 2 — a shaded separator between head and body", () =>
      */
     for (const id of IDS) {
       const grid = catGrid(id);
-      const width = (row: number): number => {
-        const xs = grid.filter((p) => p.y === row && p.part !== "outline").map((p) => p.x);
+      /*
+       * BODY pixels only. Measuring the whole row would include the tail, which on a low-slung cat
+       * exits at the haunch and on a raised-tail cat passes beside the neck — so a row's full
+       * extent says as much about the tail as about the body, and the pinch being asserted is a
+       * property of the BODY's outline.
+       */
+      const bodyWidth = (row: number): number => {
+        const xs = grid.filter((p) => p.y === row && p.part === "body").map((p) => p.x);
         return xs.length === 0 ? 0 : Math.max(...xs) - Math.min(...xs) + 1;
       };
-      const haunch = width(ROWS.legs[0] - 1);
-      expect(width(NECK_ROW), `id ${id}: no pinch at the neck`).toBeLessThan(haunch);
+      /*
+       * The WIDEST body row, wherever it is. Posture moves the body's last row, so a fixed
+       * `ROWS.legs[0] - 1` measured an empty row on a standing cat and the test compared the neck
+       * against zero. The pinch is a claim about the neck versus the body's widest point, so the
+       * test has to find that point rather than assume it.
+       */
+      const haunch = Math.max(...Array.from({ length: GRID_H }, (_, r) => bodyWidth(r)));
+      expect(bodyWidth(NECK_ROW), `id ${id}: no pinch at the neck`).toBeLessThan(haunch);
     }
   });
 });
@@ -404,12 +443,21 @@ describe("silhouette rule 3 — legs 2px wide, paired with a visible gap", () =>
     // body. The rule is about legibility, and legibility here is value as much as width.
     for (const id of IDS) {
       const at = index(catGrid(id));
+      // The body's LOWEST row, wherever posture put it — the pixels the legs actually sit under.
+      const bodies = [...at.values()].filter((p) => p.part === "body");
+      const lowest = Math.max(...bodies.map((p) => p.y));
+      const haunchSteps = new Set(bodies.filter((p) => p.y === lowest).map((p) => p.step));
       const leg = [...at.values()].find((p) => p.part === "leg");
-      const body = [...at.values()].find((p) => p.part === "body" && p.y === ROWS.legs[0] - 1);
       expect(leg).toBeDefined();
-      expect(body).toBeDefined();
-      if (!leg || !body) continue;
-      expect(leg.step, `id ${id}: legs do not separate from the haunch`).not.toBe(body.step);
+      if (!leg) continue;
+      /*
+       * The legs must differ from the haunch's GENERAL level. A tabby's bands mean the haunch row
+       * can contain a dark pixel that coincides with the leg value, so the assertion is against the
+       * row's brightest — which is the value the leg has to read against.
+       */
+      expect(leg.step, `id ${id}: legs do not separate from the haunch`).toBeLessThan(
+        Math.max(...haunchSteps),
+      );
     }
   });
 });
@@ -463,8 +511,16 @@ describe("the state tints AT MOST TWO PIXELS", () => {
   });
 
   it("dims the coat monotonically from fed to dead", () => {
-    // The state has to be readable at a glance, which means the ordering must hold in total
-    // luminance and not merely per-pixel.
+    /*
+     * The state has to be readable at a glance, which means the ordering must hold in total
+     * luminance and not merely per-pixel.
+     *
+     * `starving` vs `dead` is asserted as "not brighter" rather than "brighter", because `dead` is
+     * a FLAT fill at `DEAD_STEP` rather than a gain (see `applyState`): on a cat whose starving
+     * coat happens to average below that flat value, the totals can tie. The ordering that matters
+     * is that death never reads as MORE alive, and the flatness — asserted separately below — is
+     * what actually carries the state.
+     */
     for (const id of IDS) {
       const lum = (state: CatState) =>
         coat(catGrid(id, { state }))
@@ -472,7 +528,24 @@ describe("the state tints AT MOST TWO PIXELS", () => {
           .reduce((a, p) => a + p.step, 0);
       expect(lum("fed")).toBeGreaterThan(lum("hunting"));
       expect(lum("hunting")).toBeGreaterThan(lum("starving"));
-      expect(lum("starving")).toBeGreaterThan(lum("dead"));
+      expect(lum("starving")).toBeGreaterThanOrEqual(lum("dead"));
+    }
+  });
+
+  it("draws a dead cat FLAT — one value, never a fade toward the background", () => {
+    /*
+     * A review of the render found `dead` "so dim it reads as a rendering failure rather than a
+     * state". §8 requires losses to be drawn honestly and openhood's rule forbids a state that
+     * looks like a fault. The fix was to collapse the coat to a single mid step rather than lower
+     * it, so this asserts exactly that: every non-eye coat pixel shares one value, and that value
+     * is clear of the outline.
+     */
+    for (const id of IDS) {
+      const body = coat(catGrid(id, { state: "dead" })).filter((p) => p.part !== "eye");
+      const steps = new Set(body.map((p) => p.step));
+      expect(steps.size, `id ${id}: a dead cat should be flat, saw ${steps.size} values`).toBe(1);
+      const only = [...steps][0] ?? 0;
+      expect(only, `id ${id}: a dead cat has merged with its outline`).toBeGreaterThan(1);
     }
   });
 
@@ -560,19 +633,17 @@ describe("the bans", () => {
      * Greps the real source file off disk rather than trusting the import graph, because a
      * `Math.random()` inside a branch that no test exercises would never show up behaviourally.
      */
-    const src = readFileSync(fileURLToPath(new URL("./grid.ts", import.meta.url)), "utf8");
-    expect(src).not.toMatch(/Math\s*\.\s*random/);
+    expect(codeOf("./grid.ts")).not.toMatch(/Math\s*\.\s*random/);
   });
 
   it("contains no Math.random in the renderer either", () => {
-    const src = readFileSync(fileURLToPath(new URL("./render.ts", import.meta.url)), "utf8");
-    expect(src).not.toMatch(/Math\s*\.\s*random/);
+    expect(codeOf("./render.ts")).not.toMatch(/Math\s*\.\s*random/);
   });
 
   it("keeps hornNormal and maneNormal deleted", () => {
     // The brief is explicit that these are removed rather than left unused. A dead `hornNormal`
     // sitting in the file is an invitation for a later edit to call it.
-    const src = readFileSync(fileURLToPath(new URL("./grid.ts", import.meta.url)), "utf8");
+    const src = codeOf("./grid.ts");
     expect(src).not.toMatch(/function\s+hornNormal/);
     expect(src).not.toMatch(/function\s+maneNormal/);
   });

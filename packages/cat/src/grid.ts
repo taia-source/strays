@@ -62,6 +62,20 @@
  *      fringe. Here: exactly two posts of exactly 2px, with at least 2 empty columns between them.
  *      Two, not four — see `LEG_X` for why a 16px cat cannot have four.
  *
+ * ══ AND A FOURTH RULE THIS FILE ADDED, BECAUSE THE FIRST THREE WERE NOT SUFFICIENT ══
+ *
+ * 4. NOTHING MAY BE ORTHOGONALLY DISCONNECTED FROM THE CAT. Rule 1 as unitick stated it is about
+ *    an appendage meeting the BODY, and every one of this file's connectivity bugs slipped past
+ *    that wording: a tail that met the body but was cut in half by a diagonal step; an ear that
+ *    met the head but whose tip had detached from its own base; a whisker that met a head pixel
+ *    that was not there on that row. A flood fill over the whole coat catches all of them at once
+ *    and is the single most valuable assertion in `grid.test.ts` — it found 250 broken cats out of
+ *    300 the first time it ran, on geometry that looked correct at 96px.
+ *
+ *    The generalisation worth carrying forward: when two pieces of geometry must meet, DERIVE one
+ *    from the other. Every gap bug here was a hardcoded number that agreed with its neighbour
+ *    until the neighbour became a variable.
+ *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * ══ THE HASH BUDGET IS BIASED TOWARD EAR ANGLE AND TAIL CURL ══
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -74,30 +88,50 @@
  * Colour is banned, so silhouette is not merely the preferred lever — it is the ONLY lever. The
  * budget is therefore deliberately lopsided:
  *
- *   | axis        | range                      | effect on silhouette                          |
- *   |-------------|----------------------------|-----------------------------------------------|
- *   | earAngle    | CONTINUOUS, -1..1          | LARGE — moves the ear tips up to 2px apart    |
- *   | earHeight   | 2 or 3 rows                | LARGE — changes the cat's total height        |
- *   | tailCurl    | CONTINUOUS, -1..1          | LARGE — sweeps the tip across 5 columns       |
- *   | tailLift    | CONTINUOUS, 0..1           | LARGE — tail high like a greeting, or low     |
- *   | eyeShape    | 3 discrete                 | none — interior detail only                   |
- *   | whiskerLen  | 2 or 3 px                  | small — 1px lines at the cheek                |
+ *   | axis        | range                | effect on the silhouette AT 32px                    |
+ *   |-------------|----------------------|-----------------------------------------------------|
+ *   | posture     | 3 discrete           | LARGEST — sit / stand / crouch. Gross proportion.   |
+ *   | earHeight   | 2, 3 or 4 rows       | LARGE — a fold to a lynx. Changes total height.     |
+ *   | earWidth    | CONTINUOUS 1.15..1.95| LARGE — broad triangle to narrow spike.             |
+ *   | build       | CONTINUOUS -1..1     | LARGE — haunch from 4.4 to 5.4. Where mass sits.    |
+ *   | tailLift    | CONTINUOUS 0..1      | LARGE — low drag to vertical greeting.              |
+ *   | tailCurl    | CONTINUOUS -1..1     | LARGE — sweeps the tip across ~5 columns.           |
+ *   | headWidth   | CONTINUOUS 3.2..4.3  | MEDIUM — wedge to round, and it moves the ears too. |
+ *   | earAngle    | CONTINUOUS -1..1     | MEDIUM — leans the tips in or out.                  |
+ *   | coat        | 3 discrete           | MEDIUM — solid / tabby / patched, luminance only.   |
+ *   | eyeShape    | 3 discrete           | none — interior detail, 96px only.                  |
+ *   | whiskerLen  | 2 or 3               | none — 1px marks at the cheek, 96px only.           |
  *
- * Four of the six axes are continuous and all four move the OUTLINE. Two agents looking alike
- * requires collision on all four continuous axes at once, which is what a colony needs.
+ * ══ THE RULE THIS TABLE ENCODES, LEARNED THE HARD WAY ══
+ *
+ * The first version of this budget had six axes, four of them continuous, and it produced a colony
+ * that a reviewer described as "effectively the same" at 32px. Every axis was live; the budget was
+ * still wrong. Two reasons, and both are now rules:
+ *
+ *   1. AN AXIS MUST MOVE ITS FEATURE BY AT LEAST TWO PIXELS ACROSS ITS RANGE, or rasterisation
+ *      eats it. `earAngle` moved the ear tip by less than one pixel over its entire −1..1 span, so
+ *      most of the range produced the identical ear. A continuous parameter quantised onto a small
+ *      integer grid does nothing unless its effect exceeds the quantum. The same defect appeared
+ *      twice more in different dimensions — a 0.9 state gain that was the identity on a 6-step
+ *      ramp, and a 2.6 tail curl that moved the tip two columns — so it is asserted for the ear in
+ *      `grid.test.ts` rather than trusted to a constant.
+ *   2. VARIATION MUST BE BUDGETED AT THE SCALE THE SPRITE IS VIEWED AT. Ear angle and tail curl
+ *      are DETAIL axes: they change a few pixels at the edge, which is exactly what disappears
+ *      first when a sprite is shrunk. `posture` and `build` change gross proportion — where the
+ *      mass sits — and gross proportion is all a 32px sprite has. A budget spent entirely on
+ *      detail is a budget spent on nothing on the map, which is the only place it matters.
  *
  * REJECTED as variation axes, and recorded so they are not re-tried:
- *   - COAT MARKINGS (tabby stripes, a bib, socks). Tempting: it is the most cat-like variation
- *     there is. At 16x16 a stripe is one pixel, and one pixel of a different ramp step is
- *     indistinguishable from the Bayer dither already running underneath it. It would read as
- *     noise, not as a marking. It also risks §8's "no invented data — including GEOMETRY": a
- *     marking that looks like it encodes something and encodes nothing is exactly the defect
- *     unitick shipped with its hash-sized teaching brackets.
- *   - BODY MASS (a fat cat / a thin cat). Changing the body ellipse by ±1px either collides with
- *     the leg posts or leaves the tail root floating off the hip, breaking rule 1. The body is the
- *     one part that must stay fixed so the appendages have something reliable to meet.
+ *   - A ONE-STEP COAT MARKING. Tabby stripes were rejected outright at first, on the grounds that
+ *     "at 16x16 a stripe is one pixel and one ramp step is indistinguishable from the dither".
+ *     That was right about a ONE PIXEL, ONE STEP stripe and wrong in general: a band spanning a
+ *     whole body row at a TWO step delta is not dither-sized in either dimension. The axis is now
+ *     live — see `Coat` — and the original rejection stands only for the subtle version of it.
  *   - HEAD TILT. Rotating the head by a hash angle desynchronises the ears from the skull, and at
  *     16px the resampling turns both ears into 2px blobs. Reads as damage, not as posture.
+ *   - MIRRORING THE WHOLE CAT on a hash bit. It doubles the apparent variety for free and it is
+ *     wrong: half a colony facing each way reads as two species rather than one with variation,
+ *     and it would put half the tails on the side the body's taper was not designed to root.
  */
 
 import { fnv1a, quantise, shadeSphere } from "@taia/ui/mechanisms";
@@ -492,12 +526,21 @@ function postureRows(posture: Posture): {
     case "stand":
       return { bodyTop, bodyEnd: ROWS.legs[0] - 1, legEnd: GRID_H };
     /*
-     * CROUCHED — the body runs a row LOWER over the leg rows and the legs get one row only, folded
-     * under it. The lowest, heaviest silhouette: a cat flattened to the ground with no daylight
-     * beneath it. The extra mass comes off the LEGS, not off the neck.
+     * CROUCHED — the body runs one row LOWER over the leg rows, and the legs keep both of their
+     * rows underneath it. The lowest, heaviest silhouette: a cat flattened to the ground.
+     *
+     * The first version gave the body every row down to 15 and left the legs a single row. Rule 3
+     * requires two 2px posts with a visible gap, and one row of them is not a leg — the test found
+     * `0xbeef` with ZERO leg pixels on row 14. Posture is allowed to change how much daylight
+     * there is under the cat; it is NOT allowed to delete a feature the silhouette rules require.
+     * A rule that a posture can switch off is not a rule.
+     *
+     * So crouch keeps the sitting cat's rows and distinguishes itself by SPREAD instead — see
+     * `postureSpread`. That is the better encoding anyway: a crouching cat is not shorter so much
+     * as WIDER, its mass pushed out sideways against the ground.
      */
     case "crouch":
-      return { bodyTop, bodyEnd: GRID_H - 1, legEnd: GRID_H };
+      return { bodyTop, bodyEnd: ROWS.legs[0], legEnd: GRID_H };
     default:
       return { bodyTop, bodyEnd: ROWS.legs[0], legEnd: GRID_H };
   }
@@ -513,6 +556,27 @@ function postureRows(posture: Posture): {
  */
 function neckRowFor(posture: Posture): number {
   return postureRows(posture).bodyTop;
+}
+
+/**
+ * How much wider the haunch runs for a given posture.
+ *
+ * Posture has to change the silhouette without moving the body's top row (which is welded to the
+ * head) and without stealing rows from the legs (which rule 3 requires). Width is what is left,
+ * and it is the honest cue: a crouching cat spreads against the ground, a standing one draws its
+ * mass up and in. At 16px a full pixel on each side is a large, legible difference.
+ */
+function postureSpread(posture: Posture): number {
+  switch (posture) {
+    // Drawn up and narrow — a cat on its feet is taller and slimmer through the body.
+    case "stand":
+      return -0.7;
+    // Flattened and spread wide against the ground.
+    case "crouch":
+      return 1.0;
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -762,11 +826,50 @@ function earNormal(
      * relationship anyway: a 2-row ear leaning 3 columns is not a leaning ear, it is a fallen one.
      */
     const maxShear = height;
-    const shear = Math.max(-maxShear, Math.min(maxShear, angle * EAR_SHEAR)) * t;
+    const lean = Math.max(-maxShear, Math.min(maxShear, angle * EAR_SHEAR));
+    const shear = lean * t;
     const centre = baseCx + side * shear;
-    const halfWidth = width * (1 - t) + 0.3;
+    /*
+     * ══ THE TAPER IS WIDENED IN PROPORTION TO THE LEAN, and that is what closes rule 1 ══
+     *
+     * Capping the shear alone left 17 cats with detached ear tips. The cap bounds how far the
+     * centre travels in TOTAL, but the taper is narrowing at the same time — so on a short ear
+     * with a hard lean, the centre still moves further between two rows than the (already
+     * shrinking) half-width can span, and the rows stop overlapping.
+     *
+     * Adding `|lean| / height / 2` to the half-width makes the ear thicker exactly in proportion
+     * to how fast it is moving sideways, which guarantees consecutive rows overlap at every angle
+     * and every height. It also happens to be what a leaning ear looks like: an ear seen at an
+     * angle presents a WIDER profile than one seen edge-on, so the correction is physical as well
+     * as topological. That is usually the sign a fix is the right one — the geometry that keeps
+     * the silhouette connected is the geometry that was correct to begin with.
+     */
+    const halfWidth = width * (1 - t) + 0.3 + Math.abs(lean) / height / 2;
     const dx = px + 0.5 - centre;
     if (Math.abs(dx) > halfWidth) continue;
+
+    /*
+     * ══ THE EAR MAY NOT OVERHANG THE SKULL — rule 1 at the ear's BASE ══
+     *
+     * Every fix so far kept the ear connected to ITSELF. This keeps it connected to the HEAD, and
+     * the two are different failures: an ear whose base column sits outside the skull's own
+     * silhouette has nothing beneath it, so it reads as a horn floating off the corner of the
+     * head. The per-column assertion in `grid.test.ts` found it on `stray-1` after the ear taper
+     * was widened to fix the self-connectivity bug — one fix opening the next, which is why both
+     * are asserted rather than reasoned about.
+     *
+     * Solving the head's superellipse for its half-width at the ear's BASE row gives the columns
+     * the skull actually occupies there. An ear pixel outside them is refused. That trims the
+     * outer corner of a hard-leaning ear, which is also what a real ear does — it is hinged at the
+     * skull and cannot slide off it.
+     */
+    const headCy = (ROWS.head[0] + ROWS.head[1]) / 2;
+    const headNy = (baseY + 0.5 - headCy) / 2.75;
+    const headRemain = 1 - Math.abs(headNy) ** 2.8;
+    if (headRemain > 0) {
+      const headHw = headWidth * headRemain ** (1 / 2.8);
+      if (Math.abs(px + 0.5 - CX) > headHw) continue;
+    }
 
     /*
      * THE INNER SURFACE. `side` is −1 for the left ear, so `-side` points inward: the inner half of
@@ -837,6 +940,43 @@ const BODY_HW_TOP = 2.6;
 const BODY_HW_HAUNCH_MIN = 4.4;
 const BODY_HW_HAUNCH_MAX = 5.4;
 
+/**
+ * The haunch's half-width for a given build. The widest the body ever gets.
+ *
+ * Extracted because THREE callers need it and every one of them must agree: `bodyNormal` draws the
+ * taper, `tailPixels` roots the tail half a pixel outside it, and `coatDrop` insets the tabby
+ * bands from it. When the tail's root was a hardcoded 11.6 that agreed with a hardcoded haunch of
+ * 4.0, making the haunch a variable silently detached the tail on every stocky cat. Deriving all
+ * three from one function is what stops that whole class of bug.
+ */
+function haunchHalfWidth(build: number, posture: Posture): number {
+  const w =
+    BODY_HW_HAUNCH_MIN +
+    ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN) +
+    postureSpread(posture);
+  /*
+   * CAPPED so the tail always has somewhere to go.
+   *
+   * The tail roots half a pixel outside the haunch and needs at least two columns beyond that to
+   * read as a tail at all. Uncapped, a stocky crouching cat's haunch reached column 13 and the
+   * tail was clipped against the grid edge — the flood-fill test caught 340 truncated tails at
+   * once. `CX` is 7.5 and the grid is 16 wide, so 5.6 leaves the last two columns free.
+   *
+   * The cap binds only on the widest combination of build and posture, so it costs nothing
+   * anywhere else. It is a clamp rather than a smaller range because the range is what carries the
+   * variation and shrinking it to satisfy the worst case would flatten every other cat.
+   */
+  return Math.min(5.6, w);
+}
+
+/** The body's half-width at one row: the taper from shoulder to haunch. */
+function bodyHalfWidthAt(py: number, geom: CatGeometry): number {
+  const { bodyTop, bodyEnd } = postureRows(geom.posture);
+  // 0 at the shoulder, 1 at the haunch.
+  const t = (py + 0.5 - bodyTop) / Math.max(1, bodyEnd - bodyTop);
+  return BODY_HW_TOP + (haunchHalfWidth(geom.build, geom.posture) - BODY_HW_TOP) * t;
+}
+
 function bodyNormal(
   px: number,
   py: number,
@@ -850,9 +990,7 @@ function bodyNormal(
   if (py < bodyTop || py >= bodyEnd) return null;
   // 0 at the shoulder, 1 at the haunch.
   const t = (py + 0.5 - bodyTop) / Math.max(1, bodyEnd - bodyTop);
-  const haunch =
-    BODY_HW_HAUNCH_MIN + ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN);
-  const hw = BODY_HW_TOP + (haunch - BODY_HW_TOP) * t;
+  const hw = BODY_HW_TOP + (haunchHalfWidth(build, posture) - BODY_HW_TOP) * t;
   const dx = px + 0.5 - CX;
   if (Math.abs(dx) > hw) return null;
   // `nx` across the taper, so the body takes light as a cylinder. `ny` leans slightly forward at
@@ -941,9 +1079,7 @@ function tailPixels(geom: CatGeometry): Map<number, number> {
    * pixel outside the widest body column at every combination of the axes. That is rule 1 held by
    * construction rather than by a constant that happened to work.
    */
-  const haunch =
-    BODY_HW_HAUNCH_MIN + ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN);
-  const rootX = CX + haunch - 0.4;
+  const rootX = CX + haunchHalfWidth(build, posture) - 0.4;
   const rootY = bodyEnd - 1.2;
 
   /** pixel key -> `t` at the sample that claimed it, so the tip can be shaded lighter. */
@@ -1073,12 +1209,31 @@ function legNormal(px: number, py: number, posture: Posture): { nx: number; ny: 
  *             ASYMMETRIC: a symmetric patch reads as shading, and the entire value of this axis is
  *             that it is obviously a MARKING rather than a light effect.
  */
-function coatDrop(coat: Coat, px: number, py: number, bodyTop: number): number {
+function coatDrop(
+  coat: Coat,
+  px: number,
+  py: number,
+  bodyTop: number,
+  bodyHalfWidth: number,
+): number {
   switch (coat) {
-    // Every other row, starting one row below the neck so the neck break stays the darkest line on
-    // the body and cannot be confused with a stripe.
-    case "tabby":
-      return (py - bodyTop) % 2 === 1 ? 2 : 0;
+    /*
+     * Every other row — but INSET from both edges, which is the correction.
+     *
+     * The first version banded the full width of the body. Rendered at 96px the bands read as
+     * horizontal SLOTS cut through the cat, like louvres in a vent, because a dark line that runs
+     * from one edge of a shape to the other is read as a gap in the shape rather than as a mark on
+     * it. The silhouette appeared to be sliced into layers.
+     *
+     * Leaving the outermost column lit on each side keeps the body's edge continuous, so the band
+     * is plainly ON the cat. That is also how a tabby's markings actually sit — they wrap toward
+     * the belly and stop, they do not cut the animal in half.
+     */
+    case "tabby": {
+      if ((py - bodyTop) % 2 !== 1) return 0;
+      const edge = Math.abs(px + 0.5 - CX) > bodyHalfWidth - 1.2;
+      return edge ? 0 : 2;
+    }
     // The left flank only, and only the upper half of the body.
     case "patched":
       return px + 0.5 < CX - 0.5 && py < bodyTop + 3 ? 2 : 0;
@@ -1346,8 +1501,20 @@ function shadeStep(nx: number, ny: number, px: number, py: number): number | nul
 const STATE_GAIN: Readonly<Record<CatState, number>> = {
   /** Fed: full range, the reference exposure. A cat that has eaten is fully lit. */
   fed: 1,
-  /** Hunting: a touch under. Alert and lean, and plainly at full health. */
-  hunting: 0.9,
+  /**
+   * Hunting: a step and a half down at the top of the range.
+   *
+   * 0.78, not the 0.9 it was. At 0.9 `Math.round(step * gain)` is the IDENTITY on every value a
+   * 6-step ramp can hold — 1→1, 2→2, 3→3, 4→4, 5→5 — so `fed` and `hunting` rendered as byte-
+   * identical cats. A dead axis that looked live in the source, and the total-luminance assertion
+   * is what caught it: both states summed to exactly the same number on all fifteen test ids.
+   *
+   * This is the same defect as the ear shear moving less than a pixel, in a different dimension:
+   * a continuous parameter quantised onto a small integer range does nothing unless its effect
+   * exceeds the quantum. 0.78 moves steps 3, 4 and 5 down by one and leaves the shadows alone,
+   * which is the intended read — a hunting cat is lit a little less, not shaded differently.
+   */
+  hunting: 0.78,
   /** Starving: two thirds. Visibly sinking toward the noise floor, which is the honest read. */
   starving: 0.66,
   /**
@@ -1388,6 +1555,18 @@ const STATE_GAIN: Readonly<Record<CatState, number>> = {
  * one at a glance. It sits at `--phos-ghost`, §3's declared noise floor, which is the correct
  * register — present, and at the bottom of the range the sensor can still resolve.
  *
+ * ══ AND THE FLAT FILL OVERRIDES RULE 2 ══
+ *
+ * A dead cat has no neck break, because it has no internal modelling at all — that is the whole
+ * point of the flat fill. The neck clamp is therefore skipped in this state, which is the one
+ * deliberate exemption from a silhouette rule anywhere in this file.
+ *
+ * It is safe precisely because rule 2 exists to stop head and body fusing into an amoeba, and a
+ * uniformly flat sprite has already given up internal shape on purpose: there is no partial fusion
+ * to prevent when NOTHING is modelled. The silhouette still reads, because the outline still runs
+ * at full contrast around the whole animal — including into the neck's notch, which `bodyNormal`'s
+ * pinch puts there geometrically rather than tonally.
+ *
  * REJECTED: drawing the dead cat as an OUTLINE ONLY, hollow. It was tried first, since "outline
  * only" is the obvious reading of "a flat silhouette". At 16px a hollow shape loses the ears
  * entirely — a 1px ear outline with a 1px interior is just two adjacent pixels — and the sprite
@@ -1412,8 +1591,31 @@ function applyState(step: number, part: Part, state: CatState): number {
     return step;
   }
   if (state === "dead") return DEAD_STEP;
+  /*
+   * ══ THE GAIN IS ORDER-PRESERVING, AND THAT IS WHAT KEEPS THE SILHOUETTE RULES INTACT ══
+   *
+   * `Math.round(step * gain)` is NOT injective on a 6-step ramp: at 0.78 both 1 and 2 map to 1
+   * and both 5 and 6 would map to 4. Anywhere it collapsed two adjacent steps onto one it erased
+   * a break that a silhouette rule had just established — the tests found `stray-1` losing its
+   * NECK (rule 2) and its LEG separation (rule 3) in the `hunting` state alone, on a cat whose
+   * geometry was correct. The state was quietly undoing the rules.
+   *
+   * That is the deeper version of the mistake this file already made twice (a flat subtraction
+   * crushing the range, a 0.9 gain doing nothing): the exposure must not be able to destroy
+   * information the geometry encoded. So the mapping is FLOORED rather than rounded and then
+   * offset — floor with a `+1` bias moves the whole ramp down while keeping distinct inputs
+   * distinct wherever the ramp has room, and the `Math.max(1, ...)` only ever binds at the very
+   * bottom where the outline already provides the contrast.
+   *
+   * The result is that a hunting cat is a dimmer fed cat with every break it had, which is what
+   * "the same animal, less lit" has to mean.
+   */
   const gain = STATE_GAIN[state] ?? 1;
-  return Math.max(1, Math.round(step * gain));
+  if (gain >= 1) return step;
+  // Map 1..RAMP_STEPS-1 onto a compressed but strictly increasing range.
+  const top = RAMP_STEPS - 1;
+  const scaled = 1 + ((step - 1) * (Math.round(top * gain) - 1)) / (top - 1);
+  return Math.max(1, Math.min(top, Math.round(scaled)));
 }
 
 /**
@@ -1434,6 +1636,14 @@ export function catGrid(
   // reference them follow the body rather than a constant. See `neckRowFor`.
   const { bodyTop } = postureRows(geom.posture);
   const neckRow = neckRowFor(geom.posture);
+  /**
+   * The head's ramp step per column, filled in as the scan passes the head's rows.
+   *
+   * The scan runs top-down, so by the time it reaches the neck row every head column above it has
+   * already been written. That ordering is load-bearing and is why this is a plain map rather than
+   * a second pass: rule 2's break is defined against the pixel directly above.
+   */
+  const headStepAbove = new Map<number, number>();
   const out: GridPixel[] = [];
   /** Which cells the cat occupies, so the outline pass can find its edge. */
   const filled = new Set<number>();
@@ -1456,9 +1666,27 @@ export function catGrid(
           y,
           step,
           part: hit.part,
-          // THE ONE OR TWO TINTED PIXELS. Only an eye is ever an accent, and there are at most two
-          // eye pixels lit at once by construction of the masks in `eyeStepAt`.
-          ...(hit.part === "eye" ? { accent: true } : {}),
+          /*
+           * ══ THE ONE OR TWO TINTED PIXELS — exactly two, and this was a caught violation ══
+           *
+           * §8 permits state to tint "one or two pixels". This flagged EVERY eye pixel, and once
+           * the eye masks all became 2px wide (see `eyeStepAt`) that was FOUR — a direct breach of
+           * the ban, introduced by a change to an unrelated part. The comment here even asserted
+           * the old invariant ("at most two by construction of the masks") and went stale silently.
+           * The test caught it; the comment did not.
+           *
+           * Exactly ONE pixel per eye is flagged now — the INNER one, nearest the nose bridge.
+           * Inner rather than outer because the bridge beside it is forced dark, so the tint lands
+           * against the strongest local contrast and reads at 32px, where the outer pixel sits
+           * against the lit cheek and muddies.
+           *
+           * That this is a hard count and not a rule of thumb is the point: the ban is on the
+           * NUMBER of coloured pixels, so the code has to count them, and `grid.test.ts` asserts
+           * the count rather than the intent.
+           */
+          ...(hit.part === "eye" && (x === EYE_L_X + EYE_W - 1 || x === EYE_R_X)
+            ? { accent: true }
+            : {}),
         });
         filled.add(key);
         if (hit.part !== "whisker") outlineSeed.add(key);
@@ -1482,7 +1710,27 @@ export function catGrid(
        * was an amoeba." A cat with no neck does not read as a cat; it reads as a bowling pin.
        */
       if (hit.part === "body" && y === neckRow) {
-        step = Math.max(1, step - NECK_STEP_DROP);
+        /*
+         * ══ THE BREAK IS MEASURED AGAINST THE HEAD, NOT SUBTRACTED FROM THE BODY ══
+         *
+         * This was `step - NECK_STEP_DROP`, and the test found `stray-1` with a one-step break.
+         * The reason is that subtracting from the BODY says nothing about the HEAD: the head's own
+         * floor is 3, so where the lighting left a head pixel at exactly 3 and the body beneath it
+         * at 3, subtracting two gave 1 — but where the body pixel was already 2, subtracting two
+         * clamped at 1 and the difference from the head above was only 2... and where the head was
+         * 3 and the body 4, the result was 2 and the break was 1. The size of the break depended on
+         * a value the expression never looked at.
+         *
+         * Rule 2 is a statement about the DIFFERENCE between two rows, so the code has to compute
+         * that difference. Clamping against the head pixel directly above makes the break exactly
+         * `NECK_STEP_DROP` wherever there is a head to break from, at every lighting value and
+         * every posture — which is what the assertion checks and what the eye actually reads.
+         */
+        const above = headStepAbove.get(x);
+        step =
+          above === undefined
+            ? Math.max(1, step - NECK_STEP_DROP)
+            : Math.max(1, Math.min(step, above - NECK_STEP_DROP));
       }
       /*
        * ══ THE FLOORS — measured by rendering to PNG and looking, per openhood's method ══
@@ -1569,7 +1817,7 @@ export function catGrid(
          * Floored at 2 rather than 1: a stripe that reaches the outline's neighbourhood reads as a
          * hole punched in the cat, not as a marking on it.
          */
-        step = Math.max(2, step - coatDrop(geom.coat, x, y, bodyTop));
+        step = Math.max(2, step - coatDrop(geom.coat, x, y, bodyTop, bodyHalfWidthAt(y, geom)));
       }
       /*
        * The tail brightens toward the TIP. Backwards from every other part, and deliberately: the
@@ -1600,7 +1848,35 @@ export function catGrid(
        */
       if (hit.part === "leg") step = 2;
 
-      out.push({ x, y, step: applyState(step, hit.part, state), part: hit.part });
+      let finalStep = applyState(step, hit.part, state);
+
+      /*
+       * ══ RULE 2 IS RE-ASSERTED AFTER THE EXPOSURE, AND THAT IS THE ONLY PLACE IT CAN LIVE ══
+       *
+       * The neck break is computed above in geometry space, and it has to be, because that is
+       * where the head's and body's values are decided. But the state gain then compresses the
+       * whole ramp, and a compression can bring two steps that differed by two back to within one
+       * — the test found `stray-1` losing the break in `hunting` even after the gain was made
+       * order-preserving, because order-preserving is not gap-preserving.
+       *
+       * So the break is clamped a second time against the head's POST-STATE value. Asserting an
+       * invariant at the point the pixel is actually emitted is the only way it holds under every
+       * later transformation; asserting it earlier only holds until something downstream moves.
+       * This is the third distinct bug rule 2 has had, and all three were the same shape — the
+       * break being computed somewhere the final value was not yet known.
+       */
+      if (hit.part === "body" && y === neckRow && state !== "dead") {
+        const above = headStepAbove.get(x);
+        if (above !== undefined) {
+          finalStep = Math.max(1, Math.min(finalStep, above - NECK_STEP_DROP));
+        }
+      }
+
+      // Remember the head's own EMITTED value per column, so the neck row below breaks against the
+      // value a viewer will actually see rather than against a pre-exposure intermediate.
+      if (hit.part === "head" || hit.part === "muzzle") headStepAbove.set(x, finalStep);
+
+      out.push({ x, y, step: finalStep, part: hit.part });
       filled.add(key);
       outlineSeed.add(key);
     }

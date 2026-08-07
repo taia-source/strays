@@ -48,7 +48,9 @@
   --soot-line: oklch(0.25 0.026 145); /* separator */
   --phos: oklch(0.9 0.055 145); /* primary type. NEAR-white-green, never #fff */
   --phos-dim: oklch(0.63 0.045 145); /* secondary type */
-  --phos-ghost: oklch(0.4 0.03 145); /* tertiary — the noise floor */
+  --phos-ghost: oklch(0.58 0.038 145); /* tertiary. RAISED from 0.40 after looking at it
+     at 390px: stamp text at 11px was barely legible on --band, and a provenance stamp nobody can
+     read defeats referent rule 2. Contrast on --band is now ~5.4:1. */
 
   /* ── The STRUCTURAL tier. Same hue, low chroma. This is what stops the page reading as
      a black rectangle, and it can never be confused for an event. ── */
@@ -118,7 +120,7 @@
   --soot-line: oklch(0.25 0.026 145);
   --phos: oklch(0.9 0.055 145);
   --phos-dim: oklch(0.63 0.045 145);
-  --phos-ghost: oklch(0.4 0.03 145);
+  --phos-ghost: oklch(0.58 0.038 145);
   --rail: oklch(0.34 0.075 145);
   --band: oklch(0.24 0.045 145);
   --wash: oklch(0.19 0.028 145);
@@ -248,3 +250,97 @@ img[data-pixel] {
   outline: var(--px) solid var(--fed);
   outline-offset: var(--px);
 }
+
+/* ── Layout ──────────────────────────────────────────────────────────────────
+   unitick's five recorded grid failures, all of which PASSED automated checks:
+   floor the track that must not vanish (fixed px, never %); declare BOTH rows and
+   columns; a floor is only safe on a track whose container scrolls. Mobile first. */
+
+.landing, .doc, .colony, .board, .logs {
+  max-width: 780px;
+  margin-inline: auto;
+  padding: var(--s4) var(--s3) var(--s5);
+}
+
+.wordmark {
+  font-size: var(--t-hero);
+  letter-spacing: 0.16em;
+  margin: 0 0 var(--s2);
+  font-weight: 700;
+}
+
+.tagline { font-size: var(--t-body); color: var(--phos-dim); margin: 0 0 var(--s4); max-width: 46ch; }
+
+.colony-strip {
+  display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end;
+  padding: var(--s4) var(--s3) var(--s3); background: var(--wash);
+  border-top: var(--px) solid var(--rail); border-bottom: var(--px) solid var(--rail);
+  margin-bottom: var(--s4);
+}
+.strip-note { flex-basis: 100%; margin: 0; }
+
+.explain { margin-bottom: var(--s4); }
+.explain h2 {
+  font-size: var(--t-body); text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2);
+  padding-bottom: var(--s1); border-bottom: var(--px) solid var(--soot-line);
+}
+.explain p { margin: 0 0 var(--s2); max-width: 62ch; }
+.explain ul, .steps { margin: 0; padding-left: var(--s4); }
+.explain li, .steps li { margin-bottom: var(--s2); max-width: 60ch; }
+
+.costs { display: grid; grid-template-columns: 1fr; gap: var(--s2); margin: 0; }
+@media (min-width: 560px) { .costs { grid-template-columns: 1fr 1fr; } }
+.costs > div { background: var(--band); padding: var(--s2) var(--s3); border-left: var(--px) solid var(--rail); }
+.costs dt { font-size: var(--t-micro); color: var(--phos-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+.costs dd { margin: 0; }
+
+.risks { background: var(--wash); padding: var(--s3); border-left: calc(2 * var(--px)) solid var(--starve); }
+
+.ways-in { display: grid; grid-template-rows: auto auto; gap: var(--s3); margin: var(--s5) 0 var(--s4); }
+.cta {
+  display: block; text-align: center; padding: var(--s3);
+  background: var(--fed); color: var(--soot); text-decoration: none;
+  font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  min-height: 44px; /* pointer-agnostic: a thumb target, not a mouse target */
+}
+.secondary { display: flex; flex-wrap: wrap; gap: var(--s3); justify-content: center; }
+.secondary a { color: var(--phos-dim); font-size: var(--t-micro); }
+
+.landing-foot, .doc-foot {
+  display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: space-between;
+  padding-top: var(--s2); border-top: var(--px) solid var(--soot-line);
+}
+
+.back { color: var(--phos-dim); font-size: var(--t-micro); text-decoration: none; letter-spacing: 0.1em; }
+.colony-head, .doc-head { margin-bottom: var(--s4); }
+.colony-head h1, .doc-head h1 { font-size: var(--t-figure-lg); margin: var(--s2) 0 var(--s1); letter-spacing: 0.08em; }
+
+.colony-grid { list-style: none; padding: 0; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--s3); }
+.colony-grid a { display: grid; grid-template-rows: auto auto auto; justify-items: center;
+  gap: var(--s0); text-decoration: none; padding: var(--s2); background: var(--wash); }
+
+.empty { background: var(--wash); padding: var(--s4); border-left: var(--px) solid var(--rail); }
+.empty p { margin: 0 0 var(--s1); max-width: 56ch; }
+
+.rank, .tiers { width: 100%; border-collapse: collapse; font-size: var(--t-body); }
+.rank th, .tiers th { text-align: left; font-weight: 400; font-size: var(--t-micro);
+  color: var(--phos-dim); text-transform: uppercase; letter-spacing: 0.1em;
+  border-bottom: var(--px) solid var(--rail); padding: var(--s1); }
+.rank td, .tiers td { padding: var(--s1); border-bottom: var(--px) solid var(--soot-line); }
+
+.log-list { list-style: none; padding: 0; margin: 0; }
+.log-list li { display: grid; grid-template-columns: auto auto 1fr auto; gap: var(--s2);
+  align-items: baseline; padding: var(--s1) 0; border-bottom: var(--px) solid var(--soot-line);
+  font-size: var(--t-micro); }
+.log-list .act { color: var(--fed); text-transform: uppercase; letter-spacing: 0.08em; }
+.log-list .why { color: var(--phos-dim); }
+.log-list li[data-outcome="failed"] .act { color: var(--starve); }
+
+.warn { background: var(--wash); padding: var(--s3); border-left: calc(2 * var(--px)) solid var(--starve); }
+.doc section { margin-bottom: var(--s5); }
+.doc h2 { font-size: var(--t-body); text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--phos-dim); font-weight: 400; margin: 0 0 var(--s2); }
+.doc p, .doc li { max-width: 64ch; }
+code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
