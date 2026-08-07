@@ -159,8 +159,14 @@ node scripts/shoot.mjs <output-dir>
 - **No external audit** of the vault. Stated on `/` and in `/docs`.
 - **The pad's `hook` and `revenueSplitter` are unverified on Blockscout.** Every trade routes
   through them. Unmitigable; bounded by `MAX_POSITION_WEI`.
-- **The strategy is not yet wired into the keeper's `decide`.** `main.ts` currently returns
-  `hold` with the reason `"strategy not yet wired to the keeper"`, which is stated in the decision
-  record rather than dressed up. `@strays/hunt` is complete and tested; the wiring is one function.
+- **The spend ledger and price history are IN MEMORY.** `@strays/hunt` exports
+  `assertDurableLedger`, which throws on an in-memory one so this cannot go live by accident.
+  Postgres is provisioned and referenced into the keeper but not yet used. **This blocks live
+  trading** and is the next piece of work.
 - **`quoteExitWei` returns 0**, so exit decisions cannot yet be priced. Same pass as above.
 - **No `TEST` token launched yet.**
+- **`quoteExitWei` returns 0**, so exit decisions cannot price a position. The buy-side quoter works
+  and is verified against a real fill to within 0.01%; the sell side is the same call with the
+  direction flipped and is not wired.
+- **No wallet has ever connected to the adoption flow.** It renders correctly and its selector is
+  derived from the ABI (after a hardcoded one was found wrong), but the signing path is untested.
