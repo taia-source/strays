@@ -361,3 +361,52 @@ code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
 .wallets button:disabled { opacity: 0.45; cursor: not-allowed; border-style: dashed; }
 .adopt .err { color: var(--starve); font-size: var(--t-micro); margin: 0; }
 .adopt.done { border-left: calc(2 * var(--px)) solid var(--fed); padding-left: var(--s2); }
+
+/*
+ * THE CAT RAMP. Six steps, inverted per theme.
+ *
+ * A sprite drawn with hardcoded dark-theme values renders as a flat silhouette on light paper —
+ * it loses every internal shading step. The dark ramp runs dark-to-light (a lit animal on a dark
+ * ground); the light ramp runs light-to-dark, so the cat stays a shaded animal rather than
+ * becoming a hole in the page.
+ */
+:root {
+  --cat-0: oklch(0.25 0.026 145);
+  --cat-1: oklch(0.34 0.03 145);
+  --cat-2: oklch(0.44 0.034 145);
+  --cat-3: oklch(0.55 0.04 145);
+  --cat-4: oklch(0.68 0.047 145);
+  --cat-5: oklch(0.86 0.055 145);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --cat-0: oklch(0.30 0.05 145);
+    --cat-1: oklch(0.42 0.055 145);
+    --cat-2: oklch(0.54 0.06 145);
+    --cat-3: oklch(0.66 0.055 145);
+    --cat-4: oklch(0.78 0.045 145);
+    --cat-5: oklch(0.90 0.035 145);
+  }
+}
+
+:root[data-theme="dark"] {
+  --cat-0: oklch(0.25 0.026 145);
+  --cat-1: oklch(0.34 0.03 145);
+  --cat-2: oklch(0.44 0.034 145);
+  --cat-3: oklch(0.55 0.04 145);
+  --cat-4: oklch(0.68 0.047 145);
+  --cat-5: oklch(0.86 0.055 145);
+}
+
+:root[data-theme="light"] {
+  --cat-0: oklch(0.30 0.05 145);
+  --cat-1: oklch(0.42 0.055 145);
+  --cat-2: oklch(0.54 0.06 145);
+  --cat-3: oklch(0.66 0.055 145);
+  --cat-4: oklch(0.78 0.045 145);
+  --cat-5: oklch(0.90 0.035 145);
+}
+
+/* The stake figure was wrapping mid-value ("0.00000 / ETH"). A money figure must not break. */
+.colony-grid .fig { white-space: nowrap; }

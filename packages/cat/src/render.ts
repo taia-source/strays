@@ -54,13 +54,29 @@ export type Ramp = readonly string[];
  * NOT a gradient and never rendered as one — §8 bans gradients-as-decoration. These are six
  * discrete values indexed by a quantised step, which is the opposite operation.
  */
+/**
+ * ══ THE RAMP IS CSS VARIABLES, NOT LITERALS — AND THAT IS A FIX, NOT A STYLE CHOICE ══
+ *
+ * These were six hardcoded `oklch()` literals tuned for the dark theme. Rendered on the LIGHT
+ * theme the cat lost every internal shading step and read as a flat dark blob on pale paper —
+ * a silhouette, not an animal. Caught by screenshotting the deployed page in both themes.
+ *
+ * unitick recorded the identical defect one level up: its canvas fallbacks were "the DARK theme's
+ * hex values hardcoded", so a frame that hit the fallback drew the dark theme's colour on light
+ * paper. Its conclusion generalises to any sprite: **a semantic colour must never fall back to
+ * the wrong theme's copy of itself.**
+ *
+ * Using `var()` hands the inversion to `globals.css`, which already restates every token three
+ * times. The fallbacks after the comma are the dark values, so a context with no CSS variables
+ * at all (a bare SVG file, an email) still renders a correct dark-theme cat.
+ */
 export const PHOSPHOR_RAMP: Ramp = [
-  "oklch(0.25 0.026 145)", // --soot-line. The outline and the deepest shadow.
-  "oklch(0.34 0.030 145)",
-  "oklch(0.44 0.034 145)", // near --phos-ghost, the noise floor
-  "oklch(0.55 0.040 145)",
-  "oklch(0.68 0.047 145)", // near --phos-dim
-  "oklch(0.86 0.055 145)", // near --phos. The lit crown and the eyeshine.
+  "var(--cat-0, oklch(0.25 0.026 145))", // outline and deepest shadow
+  "var(--cat-1, oklch(0.34 0.030 145))",
+  "var(--cat-2, oklch(0.44 0.034 145))", // the noise floor
+  "var(--cat-3, oklch(0.55 0.040 145))",
+  "var(--cat-4, oklch(0.68 0.047 145))",
+  "var(--cat-5, oklch(0.86 0.055 145))", // the lit crown and the eyeshine
 ];
 
 /**
