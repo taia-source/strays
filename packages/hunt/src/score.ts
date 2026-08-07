@@ -95,8 +95,18 @@ export type ScoreInput = {
   /** Read from the chain this tick. No default anywhere — RESEARCH.md §7a. */
   readonly gasPriceWei: bigint;
   /**
-   * The expected move, in bps, from `signal.ts`. AN ESTIMATE and treated as one: it is what the
-   * cost term is subtracted from, and the bar in `bar.ts` remains sceptical of the result.
+   * The expected move, in bps. AN ESTIMATE and treated as one: it is what the cost term is
+   * subtracted from, and the bar in `bar.ts` remains sceptical of the result.
+   *
+   * **SOURCE CHANGED.** It used to be `signal.ts`'s observed momentum move — a quantity RESULTS
+   * §10.7 refuted and STATE.md showed to be INVERTED (the most-run-up quintile has the worst
+   * forward net, −5,999bps). `decide()` now passes `age.ts`'s measured held-out MEDIAN at the
+   * candidate's entry dose: +4,410bps at swap 20, from 72 held-out tokens rather than from this
+   * token's last hour.
+   *
+   * That change is load-bearing here specifically. This module subtracts the token's own round
+   * trip and `decide()` refuses a non-positive result — so passing the momentum reading would
+   * refuse every flat or falling token, which is the refuted gate re-implemented one module down.
    */
   readonly expectedMoveBps: bigint;
   /** Market cap in wei. Compared against the measured seed, not an invented floor. */

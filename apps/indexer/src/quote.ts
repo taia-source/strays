@@ -26,12 +26,38 @@
  * reason naming the shortfall, and `/logs` says so in words. A stray that has not yet seen enough
  * price history is not broken; it is a stray that has not yet seen enough price history.
  */
+import { isKnownHook } from "@strays/hunt";
 import { createPublicClient, http, parseAbi } from "viem";
 
 /** The v4 quoter on chain 4663. Verified on Blockscout. */
 export const V4_QUOTER = "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94" as const;
-export const HOOK = "0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC" as const;
 const NATIVE = "0x0000000000000000000000000000000000000000" as const;
+
+/**
+ * ══ THE HOOK IS AN ARGUMENT NOW, AND THE CONSTANT THAT USED TO LIVE HERE WAS A BUG ══
+ *
+ * This module exported `HOOK = 0x75A54357…` and built every PoolKey with it. RESEARCH §7d measured
+ * what that costs: there are TWO hooks on this pad, 44 of 111 tokens are on the other one, and
+ * **LEVCAT, INTERN and Seriouscat — three of the four highest-volume names — are all on the one
+ * this constant excluded.**
+ *
+ * The failure mode is why it survived a whole build: quoting against the wrong hook addresses a
+ * pool that does not exist, and an uninitialised v4 pool returns an EMPTY inner revert wrapped in
+ * `UnexpectedRevertBytes`. `simulateSell` reported "cannot sell" for a token doing 328Ξ of daily
+ * volume — which is not a plausible fact about the market, and noticing the implausibility of the
+ * NUMBER is what surfaced it. A quoter told the truth about the pool it was asked about; we were
+ * asking about the wrong pool.
+ *
+ * So every quoting function here takes `hook` explicitly. It is deliberately NOT defaulted: a
+ * default is the same wrong assumption with a shorter call site, and a caller that has not resolved
+ * the hook has not resolved the pool. `discovery.ts`'s `resolveHook` produces it and
+ * `Candidate.hook` carries it.
+ *
+ * The value is validated against `@strays/hunt`'s two-entry allowlist before it is encoded. That
+ * costs nothing on a read-only `eth_call`, but it means a hook that could never be traded also
+ * cannot be quoted — so a bad hook surfaces here, at zero cost, rather than as a reverted
+ * transaction with real gas attached.
+ */
 
 const QUOTER_ABI = parseAbi([
   "function quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes) params) returns (uint256 amountOut, uint256 gasEstimate)",
@@ -88,8 +114,12 @@ export async function quoteBuy(args: {
   readonly client: ReturnType<typeof createPublicClient>;
   readonly token: `0x${string}`;
   readonly tickSpacing: number;
+  /** The pool's hook. Required — see the header on why there is no default. */
+  readonly hook: string;
   readonly amountInWei: bigint;
 }): Promise<bigint | null> {
+  // Refuse an unknown hook before spending a request on it. Cheap here, a reverted tx later.
+  if (!isKnownHook(args.hook)) return null;
   try {
     const { result } = await args.client.simulateContract({
       address: V4_QUOTER,
@@ -97,7 +127,7 @@ export async function quoteBuy(args: {
       functionName: "quoteExactInputSingle",
       args: [
         [
-          [NATIVE, args.token, 0, args.tickSpacing, HOOK],
+          [NATIVE, args.token, 0, args.tickSpacing, args.hook as `0x${string}`],
           true, // zeroForOne: ETH (currency0) in, token out
           args.amountInWei,
           "0x",
@@ -141,12 +171,16 @@ export async function simulateSell(args: {
   readonly client: ReturnType<typeof createPublicClient>;
   readonly token: `0x${string}`;
   readonly tickSpacing: number;
+  /** The pool's hook. Required, and for the exit leg it must be the hook the ENTRY used. */
+  readonly hook: string;
   readonly amountInTokens: bigint;
 }): Promise<{ ok: true; proceedsWei: bigint } | { ok: false; selector: string | null }> {
   if (args.amountInTokens <= 0n) {
     // Nothing to sell back is not evidence that selling works. Refuse rather than report success.
     return { ok: false, selector: null };
   }
+  // An unknown hook is refused before the request, not after the revert.
+  if (!isKnownHook(args.hook)) return { ok: false, selector: null };
   try {
     const { result } = await args.client.simulateContract({
       address: V4_QUOTER,
@@ -154,7 +188,7 @@ export async function simulateSell(args: {
       functionName: "quoteExactInputSingle",
       args: [
         [
-          [NATIVE, args.token, 0, args.tickSpacing, HOOK],
+          [NATIVE, args.token, 0, args.tickSpacing, args.hook as `0x${string}`],
           false, // zeroForOne: FALSE — token in, ETH out. This is the whole point.
           args.amountInTokens,
           "0x",

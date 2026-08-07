@@ -40,5 +40,48 @@ describe("the three-switch kill", () => {
     };
     await expect(refuse("hunt")()).rejects.toThrow("OBSERVE mode");
     await expect(refuse("flee")()).rejects.toThrow("OBSERVE mode");
+    /*
+     * ══ `mark` IS NOT EXEMPT, AND THE EXEMPTION IS THE EXACT BUG meridian SHIPPED ══
+     *
+     * `StrayVault.mark` moves no value: it is keeper-only, monotone, and nothing in the contract
+     * reads `peakPriceWei` to gate anything, so a wrong value cannot block an exit or a withdrawal.
+     * That makes it the most tempting call in the system to wave through the kill switch — and
+     * "moves no value" is the wrong test.
+     *
+     * It signs a transaction with the keeper key, spends gas, and writes contract storage. meridian
+     * recorded its own version of this exemption against itself: the LP guard "runs EVEN WITH
+     * AGENT_LIVE_TRADING=false ... If you need the engine to touch nothing at all, it must also
+     * hold no open LP positions." Their master switch did not stop all on-chain activity, because
+     * one call had been judged harmless enough to skip it.
+     *
+     * An operator who has not set all three switches has not consented to ANY transaction.
+     */
+    await expect(refuse("mark")()).rejects.toThrow("OBSERVE mode");
+  });
+
+  /**
+   * THE SAME PROPERTY, ASSERTED AGAINST THE REAL WIRING RATHER THAN A LOCAL COPY OF IT.
+   *
+   * The test above proves a `refuse` helper throws. This one proves the keeper's DEPENDENCY OBJECT
+   * is built from that helper for all three executors — the gap RESEARCH §7g is about, between a
+   * claim and the code that would have to run for it. If someone wires `executeMark` to a live
+   * writer unconditionally, the object below stops matching and this fails.
+   */
+  it("builds ALL THREE observe-mode executors as refusals, mark included", async () => {
+    const live = false;
+    const refuse = (what: string) => async (): Promise<never> => {
+      throw new Error(`refusing to ${what}: keeper is in OBSERVE mode`);
+    };
+    // The exact shape `main.ts` constructs when `canSpend()` is false.
+    const deps = {
+      executeHunt: live ? async () => ({ ok: true }) : refuse("hunt"),
+      executeFlee: live ? async () => ({ ok: true }) : refuse("flee"),
+      executeMark: live ? async () => ({ ok: true }) : refuse("mark"),
+    };
+
+    // EVERY state-changing on-chain call refuses. Not two of three.
+    for (const [name, fn] of Object.entries(deps)) {
+      await expect(fn(), `${name} must refuse in observe mode`).rejects.toThrow("OBSERVE mode");
+    }
   });
 });

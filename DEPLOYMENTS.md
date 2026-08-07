@@ -1,11 +1,104 @@
 # STRAYS — deployments and live-fire record
 
-Everything here is a transaction that landed on **Robinhood Chain mainnet, chain id 4663**, with
-real ETH. Nothing in this file is a simulation or a fork.
+Almost everything here is a transaction that landed on **Robinhood Chain mainnet, chain id 4663**,
+with real ETH. Nothing in this file is a simulation or a fork.
+
+**The one exception is the first section, and it is labelled as such.** StrayVault V2 is built,
+tested and ready, and it has NOT been deployed — the deploy needs a private key and a value
+transfer that the building session was correctly not permitted to use. It is at the top because it
+is the next thing that should happen, not because it happened.
 
 ---
 
-## StrayVault
+## StrayVault V2 — BUILT AND TESTED, **NOT YET DEPLOYED**
+
+**Status: ready to deploy, blocked on a human-approved key use.** Stated plainly and up top rather
+than buried, because the rest of this file is a record of transactions that landed and this is not
+one of them.
+
+V2 supports **multiple concurrent positions (8)** and a **per-trade hook**, neither of which the
+deployed V1 can express. Both changes are forced by measurement, not preference:
+
+| | V1 (deployed) | V2 (built) |
+|---|---|---|
+| positions per stray | 1 | 8 |
+| hook | one immutable | per-trade, allowlisted to the two real ones |
+| exit | −235bps hard stop + take-profit | 50% trailing stop off a per-position watermark |
+| reachable pad | 67 of 111 tokens | **111 of 111** |
+
+### Why it is not deployed
+
+The deploy needs `STRAYS_DEPLOYER_PRIVATE_KEY` and a top-up transfer from the house wallet. The
+agent session that built and tested V2 was **blocked by its permission system** from reading
+`/root/.env` and from sending value — which is the correct outcome. A private key and an outbound
+transfer are exactly the two things a human should approve, and the session did not attempt to
+route around the block.
+
+Everything up to that point is done. The deploy is captured as one reviewed command:
+
+```bash
+cd packages/contracts
+./script/deploy-v2.sh            # dry run: preflight, both hooks' code, full test suite, gas
+./script/deploy-v2.sh --send     # fund deployer (only if short), deploy, read config back, verify
+```
+
+### Measured cost, against the live chain
+
+```
+deploy gas       1,989,300 units     (cast estimate --create, not a guess)
+gas price       ~31,346,000 wei
+cost @2x        ~1.25e14 wei = 0.000125 ETH ~= $0.24
+code size        8,751 bytes         (V1 was 6,500)
+
+deployer balance  1,914,318,000,000 wei  -- SHORT by ~1.23e14, so step 0 tops it up
+house balance    31,141,315,100,185,036 wei
+```
+
+Against the $10 policy cap, `$8.96` of which DEPLOYMENTS already records as spent: this is ~$0.24,
+leaving the cap intact at roughly $9.20. **The vault will not be funded and the keeper stays
+stopped** — that is Ibrahim's standing instruction and this deploy does not change it.
+
+### Constructor arguments the script uses
+
+```
+house         0x1E5A3c8b0120E28Ca3FC554e6a7B7957975ad492
+keeper        0xf4b89Bd912Cdcd7C88b9293cd036C79F4E9F957c
+router        0x8876789976dEcBfCbBbe364623C63652db8C0904   (UniversalRouter)
+permit2       0x000000000022D473030F116dDEE9F6B43aC78BA3
+hookA         0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC   (67 tokens, 5194 Xi/24h)
+hookB         0xEfe669814e5Eec33406Bd50ffa8331618D076aEc   (44 tokens, 1359 Xi/24h)
+poolManager   0x8366a39CC670B4001A1121B8F6A443A643e40951   (Uniswap v4 singleton)
+
+PROFIT_RAKE_BPS    1000    MAX_POSITION_WEI   1e16   (per position)
+ENERGY_FEE_BPS     2000    MIN_ADOPT_WEI      1e15
+MAX_POSITIONS         8
+```
+
+All seven addresses are `immutable` with no setter. `test_SABOTAGE_hooksHaveNoSetter` and
+`test_SABOTAGE_houseAndKeeperHaveNoSetter` probe the ABI to prove it.
+
+The script re-reads **every** immutable off the deployed bytecode after deploying, rather than
+echoing what it sent — `@taia/deploy`'s rule that an address written down is not an address
+deployed. It also asserts `isKnownHook(0x…dEaD) == false` on the live contract.
+
+### Test evidence behind it
+
+```
+forge test --no-match-contract ForkSwap      58 passed, 0 failed, 0 skipped
+forge test --match-contract ForkSwap --fork-url $ROBINHOOD_RPC_URL
+                                              9 passed, 0 failed, 0 skipped
+```
+
+**LEVCAT round-trips at 199bps on hook B against live liquidity — a token the deployed V1 cannot
+trade at all.** `test_fork_hookBTokensWereUnreachableInV1` proves the point directly: on the same
+fork at the same block, the V1 PoolKey for LEVCAT reverts and the V2 PoolKey succeeds.
+
+**19 sabotages applied to the source; all 19 caught.** One (`S22`) survived its first check and the
+check was fixed rather than the sabotage — see `packages/contracts/SABOTAGE.md`.
+
+---
+
+## StrayVault V1 — DEPLOYED (superseded by V2 above)
 
 | | |
 |---|---|

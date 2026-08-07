@@ -24,7 +24,18 @@
  * 3. **Rate limit is 240 requests / 60s**, from the `ratelimit` response header. One detail fetch
  *    per candidate per cycle would blow that at scale, so details are cached by address and only
  *    re-fetched when stale.
+ *
+ * ══ AND A FOURTH, MEASURED 2026-08-07 WHILE WIRING THE MULTI-SLOT KEEPER ══
+ *
+ * 4. **The pad does not tell you which HOOK a token's pool uses in the list response, and there are
+ *    two of them.** RESEARCH §7d is the finding; `resolveHook` below is the fix. A PoolKey is
+ *    (currency0, currency1, fee, tickSpacing, HOOKS) and four fifths of a key addresses nothing —
+ *    the v1 vault hardcoded one hook and therefore could not trade LEVCAT, INTERN or Seriouscat at
+ *    all, which are three of the four highest-volume names on the pad.
  */
+
+import { KNOWN_HOOKS } from "@strays/hunt";
+import { encodeAbiParameters, keccak256 } from "viem";
 
 /**
  * The market cap every UNTRADED token on this pad reports, in ETH.
@@ -39,6 +50,100 @@
  * place would have been a comment claiming a policy the code no longer implements.
  */
 export const SEED_MARKET_CAP_ETH = 1.356;
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * RESOLVING A TOKEN'S HOOK — RESEARCH §7d
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * There are exactly two hooks on this pad and **the list endpoint does not say which one a token
+ * uses**. It does say `pool`, which is the v4 poolId, and a poolId is a hash of the whole PoolKey:
+ *
+ *     poolId = keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))
+ *
+ * Four of those five fields we already know for a pad launch — currency0 is native ETH (address 0),
+ * currency1 is the token, fee is 0, and tickSpacing comes from the detail endpoint. So the hook is
+ * the ONE unknown in an equation whose output we can read, and there are only two candidates.
+ * Reconstruct the poolId with each and see which one reproduces the pad's own `pool` field.
+ *
+ * ══ WHY DERIVE IT RATHER THAN READ `hookAddress` FROM THE DETAIL ENDPOINT ══
+ *
+ * The detail endpoint DOES expose a `hookAddress` field, and MEASURED over 20 live tokens it agreed
+ * with the reconstruction 20/20. It is used below as a fast path — but only ever CONFIRMED against
+ * the reconstruction, never trusted alone, and the reconstruction is what decides.
+ *
+ * That is not paranoia about this specific field; it is RESEARCH §7d's own lesson about how the
+ * two-hook bug hid for an entire build: *"A single-sample verification of a two-valued field cannot
+ * fail. The reconstruction matched because the sample was homogeneous, not because the derivation
+ * was right."* An unofficial API's undocumented field naming the most dangerous argument in the
+ * contract is exactly the input that deserves to be checked against arithmetic we control. The
+ * check costs a keccak256 — no network, no gas — and it fails CLOSED: a token whose hook cannot be
+ * confirmed is not traded.
+ *
+ * ══ WHAT "MATCHING NEITHER" MEANS, AND WHY THOSE TOKENS ARE SKIPPED RATHER THAN GUESSED ══
+ *
+ * RESEARCH §7d measured 67 / 44 / **3 unmatched**. The unmatched ones are not a defect in this
+ * routine: they are pools quoted in something other than native ETH (USDG, LAC, LETSBANK), so
+ * currency0 is not address(0) and the key we are reconstructing is not their key. We cannot trade
+ * them anyway — the vault swaps native ETH and only native ETH — so they are dropped with a reason
+ * rather than defaulted onto a hook. Defaulting would address a pool that does not exist, and
+ * §7d records what that failure looks like: an empty inner revert wrapped in
+ * `UnexpectedRevertBytes`, which reads exactly like a transient RPC problem and hides for weeks.
+ */
+
+/** Native ETH is currency0 for every pad pool we can trade. Not a guess — the vault sends ETH. */
+const NATIVE_CURRENCY = "0x0000000000000000000000000000000000000000" as const;
+
+/** Pad pools are created with a zero LP fee; the tax is taken by the hook, not by the fee tier. */
+const POOL_FEE = 0;
+
+/**
+ * Reconstruct the v4 poolId for one (token, tickSpacing, hook) triple.
+ *
+ * `encodeAbiParameters` rather than string concatenation: a PoolKey is a struct of five ABI-encoded
+ * 32-byte words, and hand-packing addresses is how you get a hash that is subtly wrong for the two
+ * signed/short types here (`uint24` fee and `int24` tickSpacing both left-pad, and a negative
+ * tickSpacing would sign-extend). Letting viem encode it means the bytes are the same bytes
+ * `PoolManager` hashed.
+ */
+export function poolIdFor(token: string, tickSpacing: number, hook: string): `0x${string}` {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: "address" },
+        { type: "address" },
+        { type: "uint24" },
+        { type: "int24" },
+        { type: "address" },
+      ],
+      [NATIVE_CURRENCY, token as `0x${string}`, POOL_FEE, tickSpacing, hook as `0x${string}`],
+    ),
+  );
+}
+
+/**
+ * WHICH HOOK DOES THIS TOKEN'S POOL USE? Returns `null` when neither candidate reproduces the
+ * pad's poolId.
+ *
+ * PURE — no network, no chain. Everything it needs is already in hand by the time it is called,
+ * which is what lets `discovery.test.ts` measure it against recorded rows rather than against the
+ * live pad.
+ *
+ * The comparison is lowercased on both sides because the pad, the RPC and our own constants
+ * disagree about EIP-55 checksum casing depending on which produced the string — `hook.ts` makes
+ * the same point about the allowlist, and a hex comparison that fails on case is a comparison that
+ * silently refuses every legitimate token from one data source.
+ */
+export function resolveHook(args: {
+  readonly token: string;
+  readonly tickSpacing: number;
+  readonly poolId: string;
+}): string | null {
+  const want = args.poolId.trim().toLowerCase();
+  for (const hook of KNOWN_HOOKS) {
+    if (poolIdFor(args.token, args.tickSpacing, hook).toLowerCase() === want) return hook;
+  }
+  return null;
+}
 
 export type TokenSummary = {
   readonly address: `0x${string}`;
@@ -55,9 +160,48 @@ export type TokenSummary = {
 export type Candidate = TokenSummary & {
   /** Required to build the PoolKey. NOT available from the list endpoint. */
   readonly tickSpacing: number;
+  /**
+   * THE POOL'S HOOK, resolved by reconstructing the poolId. The other fifth of the PoolKey.
+   *
+   * Not optional and not defaulted: a `Candidate` exists only if its hook was CONFIRMED, because a
+   * candidate carrying a guessed hook is a candidate that will address a nonexistent pool and
+   * revert with empty bytes (RESEARCH §7d). `parseDetail` returns `null` instead.
+   */
+  readonly hook: string;
   readonly priceEth: number;
   readonly holders: number;
   readonly volume24hEth: number;
+  /**
+   * REALISED SWAPS AGAINST THIS POOL, and the number the entry gate is indexed by.
+   *
+   * ⚠ **A FLOOR, NOT AN EXACT LIFETIME COUNT, AND THE CEILING IS 100.** Stated plainly because the
+   * honest description of a measured limitation belongs next to the number it limits.
+   *
+   * MEASURED on the live pad: `GET /api/tokens/{addr}/trades` hard-caps at **100 rows** — `limit`
+   * values of 100, 200, 500 and 1000 all return exactly 100 — and it exposes **no total, no cursor
+   * and no working pagination** (`page=2` and `offset=100` both return the same first row as page
+   * 1). There is no field anywhere in the list or detail responses carrying a swap count. So this
+   * is `min(realised swaps, 100)`, counted from the rows the endpoint will actually serve.
+   *
+   * ══ WHY THAT IS SOUND FOR THE GATE IT FEEDS, AND WHERE IT IS NOT ══
+   *
+   * `age.ts`'s window is **[20, 50] swaps**, which sits entirely below the 100-row cap. Inside the
+   * window the count is EXACT, which is the only region where the gate's answer depends on the
+   * value. Saturation at 100 can only occur above the ceiling, where the verdict is "too old —
+   * refuse" either way; a token pinned at 100 is refused for being past swap 50, and it would have
+   * been refused at its true count too. **The failure is therefore in the safe direction: it can
+   * only ever refuse a trade, never admit one the gate would have refused.**
+   *
+   * Where it IS wrong: a token with, say, 400 lifetime swaps reports 100 in `/logs`, so the
+   * displayed figure understates a mature token's activity. That is cosmetic here because nothing
+   * downstream reads it except the gate — but it must not be reused as a volume or activity metric
+   * without re-deriving it, and it is documented rather than quietly rounded because RESEARCH §7g
+   * is about the gap between what a number claims and what it measures.
+   *
+   * The exact count is recoverable from chain by counting the pool's `Swap` events since launch.
+   * That is a real indexer with real storage and it is not built; this is what the pad will serve.
+   */
+  readonly swapCount: number;
   /** When this row was read, so nothing downstream can render an unstamped figure. */
   readonly observedAt: number;
   readonly observedBlock: bigint;
@@ -121,23 +265,85 @@ export function parseSummary(raw: unknown): TokenSummary | null {
  * `tickSpacing` is FATAL if missing: without it the PoolKey cannot be built, and a guessed value
  * produces a poolId for a pool that does not exist. Guessing here would mean routing a real trade
  * into an uninitialised pool, which does not fail cleanly — it prices against an empty book.
+ *
+ * **So is the HOOK**, for exactly the same reason and with the same consequence: it is the fifth
+ * field of the same PoolKey. It is resolved rather than read (see `resolveHook`), and a token whose
+ * hook does not reconstruct is returned as `null` — dropped, never defaulted onto the more common
+ * hook. RESEARCH §7d: the tokens that match neither are non-ETH-quoted pools (USDG, LAC,
+ * LETSBANK) that this vault could not trade in any case.
+ *
+ * `swapCount` is supplied by the CALLER rather than parsed, because it needs a second request. It
+ * defaults to `-1` — deliberately not 0. `withinEntryWindow` refuses a negative count outright,
+ * whereas 0 is a real and highly attractive dose (the earliest measured, +9,791bps median), so a
+ * failed or un-attempted read defaulting to 0 would forge the most tempting value in the range out
+ * of missing data. `age.ts` makes the same argument in its own refusal path.
  */
-export function parseDetail(raw: unknown, at: { time: number; block: bigint }): Candidate | null {
+export function parseDetail(
+  raw: unknown,
+  at: { time: number; block: bigint },
+  swapCount = -1,
+): Candidate | null {
   const summary = parseSummary(raw);
   if (!summary || !isRecord(raw)) return null;
   const { tickSpacing, priceEth, holders, volumeEth } = raw;
   if (typeof tickSpacing !== "number") return null; // fatal — see above
   if (typeof priceEth !== "number" || !(priceEth > 0)) return null;
+
+  /*
+   * THE HOOK, derived from the pad's own poolId. Fatal if it does not reconstruct.
+   *
+   * The detail endpoint's `hookAddress` is used only as a cross-check: when present it must AGREE
+   * with the reconstruction, and a disagreement drops the token. Two sources that disagree about
+   * which pool a trade addresses is precisely the situation where picking one is a coin flip with
+   * a user's money on it, and §7d records that the losing side of that flip reverts with empty
+   * bytes that read like an RPC blip.
+   */
+  const hook = resolveHook({
+    token: summary.address,
+    tickSpacing,
+    poolId: summary.pool,
+  });
+  if (hook === null) return null;
+  const claimed = raw.hookAddress;
+  if (typeof claimed === "string" && claimed.trim().toLowerCase() !== hook.toLowerCase()) {
+    return null;
+  }
+
   const day = isRecord(volumeEth) && typeof volumeEth.day === "number" ? volumeEth.day : 0;
   return {
     ...summary,
     tickSpacing,
+    hook,
     priceEth,
     holders: typeof holders === "number" ? holders : 0,
     volume24hEth: day,
+    swapCount,
     observedAt: at.time,
     observedBlock: at.block,
   };
+}
+
+/**
+ * The number of realised swaps the pad will admit to for one token.
+ *
+ * Counts the rows `GET /api/tokens/{addr}/trades` returns. See `Candidate.swapCount` for the
+ * measured limitation this carries — the endpoint caps at 100 rows with no total and no
+ * pagination, so this is `min(true count, 100)` and it is exact only below the cap. The entry
+ * window is [20, 50], which is entirely below it.
+ *
+ * Returns `-1` on any failure rather than 0, and the distinction is the whole point: 0 is the
+ * earliest and most attractive dose on the measured curve, so reading a network error as "swap 0"
+ * would manufacture the single most tempting entry signal out of a failed request.
+ * `withinEntryWindow` refuses a negative count and says why.
+ */
+export async function fetchSwapCount(address: string): Promise<number> {
+  try {
+    const raw = await getJson(`${API}/tokens/${address}/trades?limit=100`);
+    if (!isRecord(raw) || !Array.isArray(raw.trades)) return -1;
+    return raw.trades.length;
+  } catch {
+    return -1;
+  }
 }
 
 /**
@@ -334,8 +540,24 @@ export async function fetchCandidates(opts: {
     const cached = detailCache.get(s.address);
     if (cached && opts.now - cached.at < DETAIL_TTL_MS) return cached.value;
     try {
-      const raw = await getJson(`${API}/tokens/${s.address}`);
-      const detail = parseDetail(raw, { time: opts.now, block: opts.block });
+      /*
+       * TWO requests per candidate now, not one: the detail row and the swap count.
+       *
+       * They are issued CONCURRENTLY rather than in sequence, so the added cost is one extra
+       * request against the 240/60s budget rather than an extra round-trip of latency per
+       * candidate. That budget is what the seed-cap prefilter above protects — it removes ~85% of
+       * the list before either request is spent, which is what makes a second one affordable.
+       *
+       * The swap count is fetched even though the detail may turn out to be unusable, because
+       * awaiting them in sequence to save the occasional wasted request would add ~500ms to EVERY
+       * candidate. The measured tick budget is the scarcer resource: a serial detail loop already
+       * cost 30 seconds of a 34-second tick once (see the note above).
+       */
+      const [raw, swapCount] = await Promise.all([
+        getJson(`${API}/tokens/${s.address}`),
+        fetchSwapCount(s.address),
+      ]);
+      const detail = parseDetail(raw, { time: opts.now, block: opts.block }, swapCount);
       if (!detail) return null; // a row we cannot build a swap from is skipped, never guessed at
       if (detail.holders < (opts.minHolders ?? 3)) return null;
       detailCache.set(s.address, { at: opts.now, value: detail });

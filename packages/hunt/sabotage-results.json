@@ -6,7 +6,7 @@
     "find": "  if (token.taxPct > cfg.maxTaxPct) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S2",
@@ -15,7 +15,7 @@
     "find": "  if (token.taxPct <= 0) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S3",
@@ -24,7 +24,7 @@
     "find": "  if (args.gasPriceWei === undefined || args.gasPriceWei === null || args.gasPriceWei <= 0n) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 6
+    "failCount": 7
   },
   {
     "id": "S4",
@@ -33,7 +33,7 @@
     "find": "  const exitTaxWei = (args.positionWei * taxBps) / BPS_DENOMINATOR;",
     "replace": "  const exitTaxWei = 0n;",
     "caught": true,
-    "failCount": 15
+    "failCount": 17
   },
   {
     "id": "S5",
@@ -42,7 +42,7 @@
     "find": "  if (args.gasPriceWei === undefined || args.gasPriceWei === null || args.gasPriceWei <= 0n) {",
     "replace": "  // @ts-expect-error sabotage: default instead of refusing\n  args = { ...args, gasPriceWei: args.gasPriceWei > 0n ? args.gasPriceWei : 1_019_000_000n };\n  if (false) {",
     "caught": true,
-    "failCount": 6
+    "failCount": 7
   },
   {
     "id": "S6",
@@ -51,7 +51,7 @@
     "find": "export const EDGE_MULTIPLE = 2n;",
     "replace": "export const EDGE_MULTIPLE = 1n;",
     "caught": true,
-    "failCount": 8
+    "failCount": 10
   },
   {
     "id": "S7",
@@ -60,7 +60,7 @@
     "find": "  const clears = args.expectedGainWei > 0n && args.expectedGainWei >= requiredWei;",
     "replace": "  const clears = true;",
     "caught": true,
-    "failCount": 7
+    "failCount": 9
   },
   {
     "id": "S8",
@@ -69,7 +69,7 @@
     "find": "  const clears = args.expectedGainWei > 0n && args.expectedGainWei >= requiredWei;",
     "replace": "  const clears = args.expectedGainWei >= requiredWei;",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S9",
@@ -78,7 +78,7 @@
     "find": "  const fired = moveBps <= -args.stopLossBps;",
     "replace": "  const fired = false;",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S10",
@@ -87,7 +87,7 @@
     "find": "  const fired = moveBps <= -args.stopLossBps;",
     "replace": "  const fired = moveBps <= -args.stopLossBps * 10n;",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S11",
@@ -96,7 +96,7 @@
     "find": "  if (dd >= cfg.maxDrawdownBps) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S12",
@@ -105,7 +105,7 @@
     "find": "  if (args.expectedOut <= 0n) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S13",
@@ -114,7 +114,7 @@
     "find": "  if (!ledger.durable) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S14",
@@ -123,7 +123,7 @@
     "find": "  const records: SpendRecord[] = [...seed];",
     "replace": "  const records: SpendRecord[] = [];",
     "caught": true,
-    "failCount": 11
+    "failCount": 12
   },
   {
     "id": "S15",
@@ -132,7 +132,7 @@
     "find": "  if (spent + sizeWei > cfg.maxSpendPerWindowWei) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S16",
@@ -141,7 +141,7 @@
     "find": "  if (count + 1 > cfg.maxEntriesPerWindow) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S17",
@@ -150,7 +150,7 @@
     "find": "export function mayExit(): true {\n  return true;\n}",
     "replace": "export function mayExit(): true {\n  // @ts-expect-error sabotage: an exit must never be refusable\n  return false;\n}",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S18",
@@ -177,7 +177,7 @@
     "find": "  const elapsedSeconds = last.atSeconds - first.atSeconds;",
     "replace": "  const elapsedSeconds = (n - 1) * 3600;",
     "caught": true,
-    "failCount": 12
+    "failCount": 13
   },
   {
     "id": "S21",
@@ -186,7 +186,7 @@
     "find": "export const SIGMA_1H_BPS = 157n;",
     "replace": "export const SIGMA_1H_BPS = 53n;",
     "caught": true,
-    "failCount": 6
+    "failCount": 7
   },
   {
     "id": "S22",
@@ -195,7 +195,7 @@
     "find": "  const isBreakout = moveBps >= thresholdBps && moveBps > 0n;",
     "replace": "  const isBreakout = moveBps >= thresholdBps || moveBps <= -thresholdBps;",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S23",
@@ -204,7 +204,7 @@
     "find": "  const takeProfitBps = TAKE_PROFIT_BPS > costFloorBps ? TAKE_PROFIT_BPS : costFloorBps;",
     "replace": "  const takeProfitBps = TAKE_PROFIT_BPS;",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S24",
@@ -213,7 +213,7 @@
     "find": "  if (token.marketCapWei < cfg.minMarketCapWei) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S25",
@@ -222,7 +222,7 @@
     "find": "  if (!Number.isInteger(token.holders) || token.holders < cfg.minHolders) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S26",
@@ -231,7 +231,7 @@
     "find": "  if (token.ageSeconds < cfg.minAgeSeconds) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S27",
@@ -240,7 +240,7 @@
     "find": "  if (!Number.isInteger(cfg.maxTaxPct) || cfg.maxTaxPct < 1 || cfg.maxTaxPct > MAX_PAD_TAX_PCT) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S28",
@@ -249,16 +249,16 @@
     "find": "    if (!eligibility.ok) {",
     "replace": "    if (false && !eligibility.ok) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S29",
     "file": "src/decide.ts",
     "what": "Force a sale when the mark price is unreadable — a failed read becomes a realised loss.",
-    "find": "    if (market.markPriceWei === undefined || market.markPriceWei <= 0n) {",
-    "replace": "    if (false) {",
-    "caught": null,
-    "note": "PATTERN NOT FOUND — sabotage could not be applied"
+    "find": "      if (markPriceWei === undefined || markPriceWei <= 0n) {",
+    "replace": "      if (false) {",
+    "caught": true,
+    "failCount": 3
   },
   {
     "id": "S30",
@@ -267,7 +267,7 @@
     "find": "  const totalWei = entryTaxWei + exitTaxWei + entryGasWei + exitGasWei;",
     "replace": "  const totalWei =\n    entryTaxWei + exitTaxWei + entryGasWei + exitGasWei + (args.positionWei * 5n) / 10_000n;",
     "caught": true,
-    "failCount": 5
+    "failCount": 6
   },
   {
     "id": "S31",
@@ -276,7 +276,7 @@
     "find": "  if (minOut <= 0n) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S32",
@@ -285,7 +285,7 @@
     "find": "  if (args.slippageBps < 0n || args.slippageBps >= BPS_DENOMINATOR) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S33",
@@ -294,7 +294,7 @@
     "find": "  if (!Number.isInteger(token.taxPct)) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S34",
@@ -303,7 +303,7 @@
     "find": "  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds <= 0) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S35",
@@ -312,7 +312,7 @@
     "find": "  if (n < 2) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 1
+    "failCount": 3
   },
   {
     "id": "S36",
@@ -321,7 +321,7 @@
     "find": "  const affordable = capped > state.compartmentWei ? state.compartmentWei : capped;",
     "replace": "  const affordable = capped;",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S37",
@@ -330,7 +330,7 @@
     "find": "  if (args.positionWei <= 0n) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S38",
@@ -339,7 +339,7 @@
     "find": "  if (!sell.ok) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 6
+    "failCount": 7
   },
   {
     "id": "S39",
@@ -348,7 +348,7 @@
     "find": "  if (sell.proceedsWei <= 0n) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S40",
@@ -357,7 +357,7 @@
     "find": "  if (holders.sniperHeldPct > cfg.maxSniperHeldPct) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S41",
@@ -366,7 +366,7 @@
     "find": "  if (holders.top10Pct > cfg.maxTop10Pct) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S42",
@@ -375,7 +375,7 @@
     "find": "  if (holders.creatorPct > cfg.maxCreatorPct) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 2
+    "failCount": 3
   },
   {
     "id": "S43",
@@ -384,7 +384,7 @@
     "find": "  if (!Number.isFinite(holders.sniperHeldPct) || holders.sniperHeldPct < 0) {",
     "replace": "  if (false) {",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S44",
@@ -393,7 +393,7 @@
     "find": "  if (holders.sniperHeldPct > cfg.maxSniperHeldPct) {",
     "replace": "  if (holders.sniperHeldPct > 100000) {",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S45",
@@ -402,7 +402,7 @@
     "find": "    if (!screened.safe) {",
     "replace": "    if (false) {",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S46",
@@ -411,7 +411,7 @@
     "find": "  const netEdgeBps = input.expectedMoveBps - costBps;",
     "replace": "  const netEdgeBps = input.expectedMoveBps;",
     "caught": true,
-    "failCount": 7
+    "failCount": 9
   },
   {
     "id": "S47",
@@ -420,7 +420,7 @@
     "find": "      ? (netEdgeBps * depthBps * momentumBps) / (BPS_DENOMINATOR * BPS_DENOMINATOR)\n      : netEdgeBps;",
     "replace": "      ? (netEdgeBps * depthBps * momentumBps) / (BPS_DENOMINATOR * BPS_DENOMINATOR)\n      : (netEdgeBps * depthBps) / BPS_DENOMINATOR;",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S48",
@@ -429,7 +429,7 @@
     "find": "  if (v < 0n) return 0n;\n  return v > BPS_DENOMINATOR ? BPS_DENOMINATOR : v;",
     "replace": "  return v;",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S49",
@@ -438,7 +438,7 @@
     "find": "    return a.address < b.address ? -1 : a.address > b.address ? 1 : 0;",
     "replace": "    return 0;",
     "caught": true,
-    "failCount": 4
+    "failCount": 5
   },
   {
     "id": "S50",
@@ -447,7 +447,7 @@
     "find": "  const ranked = rankCandidates(survivors.map((s) => s.score));",
     "replace": "  const ranked = survivors.map((s) => s.score);",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S51",
@@ -455,8 +455,8 @@
     "what": "Buy the least-bad candidate when NONE has a positive net edge.",
     "find": "    if (score.netEdgeBps <= 0n) {",
     "replace": "    if (false) {",
-    "caught": false,
-    "failCount": 0
+    "caught": true,
+    "failCount": 2
   },
   {
     "id": "S52",
@@ -465,7 +465,7 @@
     "find": "      taxPct: position.taxPct,",
     "replace": "      taxPct: cfg.eligibility.maxTaxPct === 10 ? 1 : cfg.eligibility.maxTaxPct,",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S53",
@@ -474,7 +474,7 @@
     "find": "  const costFloorBps =\n    numerator / args.positionWei + (numerator % args.positionWei > 0n ? 1n : 0n);",
     "replace": "  const costFloorBps = numerator / args.positionWei;",
     "caught": true,
-    "failCount": 1
+    "failCount": 2
   },
   {
     "id": "S54",
@@ -483,7 +483,7 @@
     "find": "  const edgeMultiple = cfg.edgeMultiple ?? EDGE_MULTIPLE;",
     "replace": "  const edgeMultiple = EDGE_MULTIPLE;",
     "caught": true,
-    "failCount": 3
+    "failCount": 4
   },
   {
     "id": "S55",
@@ -492,6 +492,294 @@
     "find": "      multiple: edgeMultiple,",
     "replace": "      multiple: 1n,",
     "caught": true,
+    "failCount": 6
+  },
+  {
+    "id": "S56",
+    "file": "src/risk.ts",
+    "what": "REINSTATE THE ONE-POSITION RULE. §10.5 measured this at 17 of 72 opportunities taken and a Welch t of 1.16 — not significant. It is the single most expensive line this package ever shipped.",
+    "find": "  const slot = firstFreeSlot(state, configuredSlots);",
+    "replace": "  const slot = state.positions.length > 0 ? undefined : firstFreeSlot(state, configuredSlots);",
+    "caught": true,
+    "failCount": 8
+  },
+  {
+    "id": "S57",
+    "file": "src/risk.ts",
+    "what": "Let a NINTH position through, past the contract's fixed 8-slot array — the keeper commits the spend to the ledger and then eats a NoFreeSlot revert.",
+    "find": "  if (slot === undefined) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 5
+  },
+  {
+    "id": "S58",
+    "file": "src/risk.ts",
+    "what": "Ignore the configured slot count so a $10 stray (4 slots) behaves like a $20 one, overcommitting capital it does not have.",
+    "find": "    cfg.maxPositions < MAX_POSITIONS ? cfg.maxPositions : MAX_POSITIONS;",
+    "replace": "    MAX_POSITIONS;",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S59",
+    "file": "src/risk.ts",
+    "what": "Size against the FREE compartment rather than free+committed, so the fraction compounds downward and the stray silently caps itself at ~3 positions while holding money and free slots.",
+    "find": "  const tradingCapitalWei = state.compartmentWei + committedWei(state);",
+    "replace": "  const tradingCapitalWei = state.compartmentWei;",
+    "caught": true,
     "failCount": 4
+  },
+  {
+    "id": "S60",
+    "file": "src/risk.ts",
+    "what": "Let the position size exceed FREE cash, funding a new slot out of capital that is already deployed.",
+    "find": "  const affordable = capped > state.compartmentWei ? state.compartmentWei : capped;",
+    "replace": "  const affordable = capped;",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S61",
+    "file": "src/risk.ts",
+    "what": "Scan slots highest-first, disagreeing with StrayVault.hunt's lowest-first scan — the indexer's watermark then attaches to a different slot than the chain filled.",
+    "find": "  for (let i = 0; i < bound; i++) {\n    if (!taken.has(i)) return i;\n  }",
+    "replace": "  for (let i = bound - 1; i >= 0; i--) {\n    if (!taken.has(i)) return i;\n  }",
+    "caught": true,
+    "failCount": 8
+  },
+  {
+    "id": "S62",
+    "file": "src/risk.ts",
+    "what": "Allow the SAME token in two slots — eight slots become one idea eight times, multiplying exposure without adding an observation.",
+    "find": "  if (args.token !== undefined) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S63",
+    "file": "src/trail.ts",
+    "what": "MAKE THE PEAK WATERMARK NON-MONOTONE, so it follows the price down and the trailing stop becomes a very slow market order that never fires.",
+    "find": "  return markPriceWei > currentPeakWei ? markPriceWei : currentPeakWei;",
+    "replace": "  return markPriceWei;",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S64",
+    "file": "src/trail.ts",
+    "what": "Let a failed price read (0 wei) reset the watermark — RESEARCH §7f's 'spend since last boot' in a new costume, silently disarming the only exit the strategy has.",
+    "find": "  if (markPriceWei <= 0n) {\n    throw new Error(\n      `refusing to update a peak watermark",
+    "replace": "  if (false) {\n    throw new Error(\n      `refusing to update a peak watermark",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S65",
+    "file": "src/trail.ts",
+    "what": "Accept a ZERO peak watermark, so a reset or unset watermark re-anchors the stop to the current price rather than being refused.",
+    "find": "  if (peakPriceWei <= 0n) {",
+    "replace": "  if (false && peakPriceWei <= 0n) {",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S66",
+    "file": "src/trail.ts",
+    "what": "Treat an unreadable mark (0 wei) as a 100% fall from the peak, so a single API blip sells every position at once.",
+    "find": "  if (markPriceWei <= 0n) {\n    throw new Error(\n      `refusing to evaluate a trailing stop against a mark",
+    "replace": "  if (false) {\n    throw new Error(\n      `refusing to evaluate a trailing stop against a mark",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S67",
+    "file": "src/trail.ts",
+    "what": "Make the trailing stop exclusive (> instead of >=), so it is one tick late by construction on an asset that can halve inside a tick.",
+    "find": "  const fired = fallFromPeakBps >= trailBps;",
+    "replace": "  const fired = fallFromPeakBps > trailBps + 1n;",
+    "caught": true,
+    "failCount": 7
+  },
+  {
+    "id": "S68",
+    "file": "src/trail.ts",
+    "what": "Measure the fall from ENTRY rather than from the PEAK — i.e. revert to a level stop, the family RESULTS §10 refuted.",
+    "find": "          : ((peakPriceWei - markPriceWei) * BPS_DENOMINATOR) / peakPriceWei;",
+    "replace": "          : ((peakPriceWei - markPriceWei) * BPS_DENOMINATOR) / markPriceWei;",
+    "caught": null,
+    "note": "PATTERN NOT FOUND — sabotage could not be applied"
+  },
+  {
+    "id": "S69",
+    "file": "src/trail.ts",
+    "what": "Narrow the 50% trail back to the refuted -235bps level, shaking the strategy out of exactly the moves that made the money.",
+    "find": "export const TRAIL_BPS = 5000n;",
+    "replace": "export const TRAIL_BPS = 235n;",
+    "caught": true,
+    "failCount": 7
+  },
+  {
+    "id": "S70",
+    "file": "src/decide.ts",
+    "what": "SKIP THE ENTRY-AGE GATE inside decide — age.ts is correct but never consulted, which is RESEARCH §7g exactly.",
+    "find": "    if (!age.inWindow) {",
+    "replace": "    if (false) {",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S71",
+    "file": "src/age.ts",
+    "what": "Remove the entry-window FLOOR, entering tokens before any sell of our size has been absorbed — RESEARCH-PROFITABLE-AGENTS §9's named kill condition.",
+    "find": "  if (swapCount < cfg.entrySwapIndex) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S72",
+    "file": "src/age.ts",
+    "what": "Remove the entry-window CEILING, entering at doses whose measured median is negative (-845bps at swap 100, -3,302 at swap 500).",
+    "find": "  if (swapCount > cfg.maxEntrySwapIndex) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 5
+  },
+  {
+    "id": "S73",
+    "file": "src/age.ts",
+    "what": "Treat a failed swapCount read as swap 0 — the earliest and most attractive dose, so every unreadable token looks maximally good.",
+    "find": "  if (!Number.isInteger(swapCount) || swapCount < 0) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S74",
+    "file": "src/age.ts",
+    "what": "Move the shipped entry dose past where the measured median crosses zero.",
+    "find": "export const ENTRY_SWAP_INDEX = 20;",
+    "replace": "export const ENTRY_SWAP_INDEX = 120;",
+    "caught": true,
+    "failCount": 55
+  },
+  {
+    "id": "S75",
+    "file": "src/age.ts",
+    "what": "Price every candidate at the BEST dose regardless of its actual age, feeding the cost bar an expectation the token has not earned.",
+    "find": "    if (entry[0] <= swapCount) chosen = entry;",
+    "replace": "    if (entry[0] <= 5) chosen = entry;",
+    "caught": true,
+    "failCount": 10
+  },
+  {
+    "id": "S76",
+    "file": "src/age.ts",
+    "what": "Drop the honesty caveat from the admission reason, so /logs reports +4,410bps as a promise rather than as an out-of-sample-positive, credible:false hypothesis.",
+    "find": "      \"credible:false at 183 cumulative trials, n=72, and the cost model is incomplete in the \" +",
+    "replace": "      \"\" +",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S77",
+    "file": "src/hook.ts",
+    "what": "ACCEPT AN ARBITRARY HOOK. A v4 hook runs inside the swap with the pool's permissions, so this puts an attacker-controlled contract on the money path.",
+    "find": "  return KNOWN_HOOKS.some((known) => known.toLowerCase() === normalised);",
+    "replace": "  return true;",
+    "caught": true,
+    "failCount": 9
+  },
+  {
+    "id": "S78",
+    "file": "src/hook.ts",
+    "what": "Drop the SECOND hook from the allowlist, reproducing v1's blindness to 44 of 111 tokens including LEVCAT, INTERN and Seriouscat.",
+    "find": "export const KNOWN_HOOKS: readonly [string, string] = [HOOK_PRIMARY, HOOK_SECONDARY];",
+    "replace": "export const KNOWN_HOOKS: readonly [string, string] = [HOOK_PRIMARY, HOOK_PRIMARY];",
+    "caught": true,
+    "failCount": 10
+  },
+  {
+    "id": "S79",
+    "file": "src/hook.ts",
+    "what": "Make the allowlist case-SENSITIVE, so a lowercase read of a legitimate hook is refused and the keeper declines every trade from one data source.",
+    "find": "  const normalised = hook.trim().toLowerCase();\n  return KNOWN_HOOKS.some((known) => known.toLowerCase() === normalised);",
+    "replace": "  const normalised = hook;\n  return KNOWN_HOOKS.some((known) => known === normalised);",
+    "caught": true,
+    "failCount": 5
+  },
+  {
+    "id": "S80",
+    "file": "src/hook.ts",
+    "what": "Let canonicalHook launder an unknown address into a canonical-looking one by skipping the allowlist assertion.",
+    "find": "export function canonicalHook(hook: string): string {\n  assertKnownHook(hook);",
+    "replace": "export function canonicalHook(hook: string): string {\n  if (false) assertKnownHook(hook);",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S81",
+    "file": "src/eligible.ts",
+    "what": "Skip the per-token hook check in eligibility, so an unaddressable or hostile pool reaches the quoter and the router.",
+    "find": "  if (!isKnownHook(token.hook)) {",
+    "replace": "  if (false) {",
+    "caught": true,
+    "failCount": 4
+  },
+  {
+    "id": "S82",
+    "file": "src/decide.ts",
+    "what": "RETURN on the first unreadable mark instead of continuing the scan — one missing price then disarms every later position's trailing stop, on every tick, until that read recovers.",
+    "find": "        continue;\n      }\n\n      /*\n       * ══ THE EXIT RULE.",
+    "replace": "        return { kind: \"hold\", reason: notes[0] ?? \"\" };\n      }\n\n      /*\n       * ══ THE EXIT RULE.",
+    "caught": true,
+    "failCount": 2
+  },
+  {
+    "id": "S83",
+    "file": "src/decide.ts",
+    "what": "Return HOLD after the exit scan instead of falling through to entry — a stray with free slots stops hunting the moment it holds anything, which is the one-position rule reintroduced at the decision layer.",
+    "find": "    holdNotes.push(...notes);",
+    "replace": "    return { kind: \"hold\", reason: notes.join(\" | \") };",
+    "caught": true,
+    "failCount": 3
+  },
+  {
+    "id": "S84",
+    "file": "src/decide.ts",
+    "what": "Report the wrong SLOT on an exit. flee() reads the token, hook and tickSpacing out of the slot it is given, so this sells a DIFFERENT position at this one's minOut.",
+    "find": "          slot: position.slot,",
+    "replace": "          slot: 0,",
+    "caught": true,
+    "failCount": 5
+  },
+  {
+    "id": "S85",
+    "file": "src/decide.ts",
+    "what": "Match mark prices case-SENSITIVELY, so an EIP-55-cased read misses the map and silently disarms a stop (a miss is indistinguishable from a failed read, and a failed read holds).",
+    "find": "      const wanted = token.toLowerCase();",
+    "replace": "      return undefined;\n      const wanted = token.toLowerCase();",
+    "caught": true,
+    "failCount": 1
+  },
+  {
+    "id": "S86",
+    "file": "src/decide.ts",
+    "what": "Feed the cost bar the refuted momentum projection again instead of the measured held-out median.",
+    "find": "    const expectedGainWei = (gate.sizeWei * measuredMedianNetBps(age.swapCount, ageCfg)) / 10_000n;",
+    "replace": "    const expectedGainWei = signal.expectedGainWei;",
+    "caught": true,
+    "failCount": 4
+  },
+  {
+    "id": "S87",
+    "file": "src/decide.ts",
+    "what": "Restore the momentum BREAKOUT as an entry gate, re-buying the top run-up quintile whose measured forward net is -5,999bps.",
+    "find": "    const age = withinEntryWindow(candidate.token.swapCount, ageCfg);",
+    "replace": "    const age = withinEntryWindow(candidate.token.swapCount, ageCfg);\n    if (evaluateEntry({ history: candidate.history, positionWei: gate.sizeWei, takeProfitBps: 471n }).direction !== \"long\") continue;",
+    "caught": true,
+    "failCount": 3
   }
 ]

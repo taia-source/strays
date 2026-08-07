@@ -17,13 +17,44 @@ restores the file. Machine-readable output lands in `sabotage-results.json`.
 
 ## Result
 
-**55 / 55 caught** after five fixes. Five sabotages escaped on a first run; all five are recorded
+**87 / 87 caught** after six fixes. Six sabotages escaped on a first run; all six are recorded
 in full below, with what was wrong and what changed.
 
 S1–S37 are the original suite (two escapes, S5 and S12). **S54–S55 were added when `edgeMultiple`
 became configuration** — see the note under the table. **S38–S53 were added by the REBUILD** —
 the sell simulation, the concentration screen, the scoring model, and the two real bugs the rebuild
 uncovered. One of those escaped (S47) and the check it exposed as decoration was fixed.
+
+**S56–S87 were added by the MEASURED-STRATEGY rewrite** (RESULTS.md §10): eight concurrent
+positions, entry by a token's age in swaps, exit on a 50% trailing stop from a peak watermark, and
+the two-hook allowlist. One escape, S51, and it is the most interesting result in this file — see
+below.
+
+### S51 ESCAPED A SECOND TIME, AND THIS TIME THE CHECK HAD GONE DEAD
+
+S51 replaces `if (score.netEdgeBps <= 0n)` with `if (false)`. It was CAUGHT before the rewrite and
+PASSED after it, with **no test change in between** — the sabotage found a check that the rewrite
+had silently turned into dead code.
+
+The cause is that the two gates stopped being independent. Break-even asks `move > costBps`; the
+cost bar asks `move >= multiple x costBps` with `multiple >= 1`. Under the OLD design they were fed
+DIFFERENT quantities — the bar got `signal.ts`'s momentum take-profit projection, break-even got the
+observed move — so either could fire alone. The rewrite feeds both from the same measured held-out
+median, which makes the bar strictly stronger and break-even unreachable.
+
+This is PLAN.md §3's unitick rule (*"when two mechanisms can independently reject the same input, at
+least one test must construct an input that only ONE of them rejects"*) in its worst form: the
+weaker mechanism had stopped being able to reject anything at all, and it still read as a safety
+check in review.
+
+**The fix is the ORDER, not a deletion.** Break-even is the weaker and more fundamental condition,
+so it now runs first and fires with the more specific message on candidates the bar would also have
+refused. Two new tests in `decide.test.ts` construct an input each gate rejects ALONE: a 10%-tax
+token at 900 gwei (round trip 3,282bps — net edge +1,128bps clears break-even, but 4,410 < 2×3,282
+so only the BAR refuses) and the same token at 2 gwei (round trip 4,850bps — net edge is negative,
+so only BREAK-EVEN refuses).
+
+Nothing about this was visible in coverage, which was 98%+ throughout.
 
 Note that S1, S2 and S27 were **rewritten**, not merely re-run: they targeted the `taxPct === 1`
 hard filter, which no longer exists. Tax is now a cost term (`score.ts`), so those sabotages now
@@ -87,11 +118,43 @@ target the checks that replaced it. A sabotage whose pattern no longer matches r
 | S48 | `score.ts` | Remove the quality clamp, letting a term exceed 1.0 | CAUGHT (4) | CAUGHT (4) |
 | S49 | `score.ts` | Drop the deterministic tiebreak (arrival order decides) | CAUGHT (2) | CAUGHT (2) |
 | S50 | `decide.ts` | Enter the FIRST survivor, not the best-ranked | CAUGHT (2) | CAUGHT (2) |
-| S51 | `decide.ts` | Buy the least-bad token when none has a positive edge | CAUGHT (5) | CAUGHT (5) |
+| S51 | `decide.ts` | Buy the least-bad token when none has a positive edge | CAUGHT (5) | **ESCAPED, then CAUGHT (2)** — see above |
 | S52 | `decide.ts` | **REGRESSION:** cost the exit against config, not the position's tier | CAUGHT (1) | CAUGHT (1) |
 | S53 | `signal.ts` | **REGRESSION:** re-truncate the take-profit cost floor downward | CAUGHT (2) | CAUGHT (4) |
 | S54 | `decide.ts` | Ignore the configured `edgeMultiple`, fall back to the constant | **ESCAPED** | **CAUGHT (3)** |
 | S55 | `decide.ts` | Let the entry BAR and the take-profit FLOOR read different multiples | **ESCAPED** | **CAUGHT (3)** |
+| S56 | `risk.ts` | **REINSTATE THE ONE-POSITION RULE** — §10.5's 17-of-72, t=1.16 constraint | — | CAUGHT (12) |
+| S57 | `risk.ts` | Let a NINTH position through the contract's fixed 8-slot array | — | CAUGHT (3) |
+| S58 | `risk.ts` | Ignore the configured slot count, so a $10 stray acts like a $20 one | — | CAUGHT (2) |
+| S59 | `risk.ts` | Size against FREE cash only, so the fraction compounds down and caps the portfolio at ~3 | — | CAUGHT (3) |
+| S60 | `risk.ts` | Let a position size exceed free cash, funding a slot from deployed capital | — | CAUGHT (2) |
+| S61 | `risk.ts` | Scan slots highest-first, disagreeing with `StrayVault.hunt` | — | CAUGHT (3) |
+| S62 | `risk.ts` | Allow the SAME token in two slots | — | CAUGHT (2) |
+| S63 | `trail.ts` | **Make the peak watermark NON-MONOTONE**, so the stop follows the price down | — | CAUGHT (5) |
+| S64 | `trail.ts` | Let a failed price read reset the watermark (RESEARCH §7f, new costume) | — | CAUGHT (2) |
+| S65 | `trail.ts` | Accept a ZERO peak, re-anchoring the stop to the current price | — | CAUGHT (2) |
+| S66 | `trail.ts` | Treat an unreadable mark as a 100% fall — one blip sells everything | — | CAUGHT (3) |
+| S67 | `trail.ts` | Make the trail exclusive, so it is one tick late by construction | — | CAUGHT (3) |
+| S68 | `trail.ts` | Measure the fall from ENTRY rather than the PEAK — the refuted level stop | — | CAUGHT (4) |
+| S69 | `trail.ts` | Narrow the 50% trail back to the refuted −235bps | — | CAUGHT (8) |
+| S70 | `decide.ts` | SKIP the entry-age gate — `age.ts` correct but never consulted (§7g) | — | CAUGHT (3) |
+| S71 | `age.ts` | Remove the entry-window FLOOR (the sellability kill condition) | — | CAUGHT (3) |
+| S72 | `age.ts` | Remove the entry-window CEILING, entering at negative-median doses | — | CAUGHT (5) |
+| S73 | `age.ts` | Treat a failed `swapCount` read as swap 0 — the most attractive dose | — | CAUGHT (2) |
+| S74 | `age.ts` | Move the entry dose past where the measured median crosses zero | — | CAUGHT (55) |
+| S75 | `age.ts` | Price every candidate at the BEST dose regardless of its real age | — | CAUGHT (10) |
+| S76 | `age.ts` | **Drop the `credible:false` caveat**, reporting +4,410bps as a promise | — | CAUGHT (2) |
+| S77 | `hook.ts` | **ACCEPT AN ARBITRARY HOOK** — an attacker's contract inside the swap | — | CAUGHT (9) |
+| S78 | `hook.ts` | Drop the SECOND hook, reproducing v1's blindness to 44 of 111 tokens | — | CAUGHT (10) |
+| S79 | `hook.ts` | Make the allowlist case-SENSITIVE, refusing legitimate lowercase reads | — | CAUGHT (5) |
+| S80 | `hook.ts` | Let `canonicalHook` launder an unknown address into a canonical one | — | CAUGHT (2) |
+| S81 | `eligible.ts` | Skip the per-token hook check, so a hostile pool reaches the router | — | CAUGHT (4) |
+| S82 | `decide.ts` | RETURN on the first unreadable mark — one blip disarms seven live stops | — | CAUGHT (2) |
+| S83 | `decide.ts` | Return HOLD after the exit scan — the one-position rule at the decision layer | — | CAUGHT (3) |
+| S84 | `decide.ts` | **Report the wrong SLOT on an exit** — `flee` then sells a different position | — | CAUGHT (5) |
+| S85 | `decide.ts` | Match mark prices case-SENSITIVELY, silently disarming a stop | — | CAUGHT (1) |
+| S86 | `decide.ts` | Feed the bar the refuted momentum projection again | — | CAUGHT (4) |
+| S87 | `decide.ts` | Restore the momentum BREAKOUT gate — re-buying the −5,999bps quintile | — | CAUGHT (3) |
 
 `(n)` is the number of tests that went red.
 

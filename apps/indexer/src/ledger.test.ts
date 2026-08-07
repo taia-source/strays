@@ -208,6 +208,213 @@ run("the durable spend ledger, against real Postgres", () => {
     });
   });
 
+  /* ══════════════════════════════════════════════════════════════════════════════════════════
+   * THE PEAK PRICE WATERMARKS
+   *
+   * The durable half of the trailing stop. `tick.test.ts` proves the RECONCILIATION survives a
+   * restart against a fake store; this proves the STORE itself does, against real Postgres — and
+   * that its monotonicity is enforced by the database rather than by application code, which is
+   * the same argument the spend ledger's UNIQUE constraint makes: an in-process guard is held by
+   * one process, a SQL constraint is held by the thing every process shares.
+   * ══════════════════════════════════════════════════════════════════════════════════════════ */
+  describe("position peak watermarks", () => {
+    it("raises a watermark and reads it back", async () => {
+      const strayId = `peak-basic-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      const effective = await store.raisePeak({
+        strayId,
+        slot: 3,
+        token: "0xTOKEN",
+        peakPriceWei: 5_000_000n,
+        atSeconds: at,
+      });
+      expect(effective).toBe(5_000_000n);
+
+      const peaks = await store.peaksFor(strayId);
+      expect(peaks.get(3)?.peakPriceWei).toBe(5_000_000n);
+      // Lowercased on write, so a case difference between the pad and the RPC cannot split a row.
+      expect(peaks.get(3)?.token).toBe("0xtoken");
+    });
+
+    /**
+     * MONOTONE, ENFORCED IN SQL.
+     *
+     * `GREATEST` runs under the row lock the upsert already holds, so two keepers racing on the
+     * same slot cannot interleave a read and a write and lose the higher value. A
+     * SELECT-then-UPDATE in TypeScript would reintroduce exactly the time-of-check/time-of-use gap
+     * this file's header is about.
+     *
+     * The direction matters: a watermark that can FALL is a trailing stop that follows the price
+     * down, which is not a trailing stop but a very slow market order.
+     */
+    it("never lowers a watermark, however many times a lower price is reported", async () => {
+      const strayId = `peak-monotone-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      const args = { strayId, slot: 0, token: "0xsame" };
+
+      await store.raisePeak({ ...args, peakPriceWei: 9_000_000n, atSeconds: at });
+      const lowered = await store.raisePeak({ ...args, peakPriceWei: 1_000n, atSeconds: at + 1 });
+      expect(lowered).toBe(9_000_000n);
+
+      // Concurrently, too — the max must hold under a race, not just in sequence.
+      await Promise.all(
+        [5n, 500n, 50_000n, 900n].map((p) =>
+          store.raisePeak({ ...args, peakPriceWei: p, atSeconds: at + 2 }),
+        ),
+      );
+      expect((await store.peaksFor(strayId)).get(0)?.peakPriceWei).toBe(9_000_000n);
+    });
+
+    it("raises when the new price is genuinely higher", async () => {
+      const strayId = `peak-raise-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      const args = { strayId, slot: 1, token: "0xup" };
+      await store.raisePeak({ ...args, peakPriceWei: 100n, atSeconds: at });
+      expect(await store.raisePeak({ ...args, peakPriceWei: 700n, atSeconds: at + 1 })).toBe(700n);
+    });
+
+    /**
+     * A SLOT REUSED BY A DIFFERENT TOKEN GETS A FRESH WATERMARK, NOT THE PREVIOUS ONE'S.
+     *
+     * `GREATEST` is deliberately NOT applied across a token change. A previous token's peak is not
+     * a larger observation of this token's price — it is an unrelated number, and carrying it over
+     * would seed a brand-new position with a watermark it never reached, arming its trailing stop
+     * immediately at a level it has never traded near.
+     */
+    it("resets rather than maxes when a slot is reused by another token", async () => {
+      const strayId = `peak-reuse-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      await store.raisePeak({
+        strayId,
+        slot: 4,
+        token: "0xold",
+        peakPriceWei: 50_000_000n,
+        atSeconds: at,
+      });
+      const fresh = await store.raisePeak({
+        strayId,
+        slot: 4,
+        token: "0xnew",
+        peakPriceWei: 12n,
+        atSeconds: at + 1,
+      });
+      // NOT 50,000,000 — the high belonged to a different position entirely.
+      expect(fresh).toBe(12n);
+      expect((await store.peaksFor(strayId)).get(4)?.token).toBe("0xnew");
+    });
+
+    /** FULL PRECISION. A watermark that truncates is a stop computed from a number the chain disagrees with. */
+    it("stores a full uint256 watermark without truncating", async () => {
+      const strayId = `peak-huge-${Date.now()}`;
+      const huge = 987_654_321_098_765_432_109_876_543_210n;
+      await store.raisePeak({
+        strayId,
+        slot: 7,
+        token: "0xbig",
+        peakPriceWei: huge,
+        atSeconds: Math.floor(Date.now() / 1000),
+      });
+      expect((await store.peaksFor(strayId)).get(7)?.peakPriceWei).toBe(huge);
+    });
+
+    /** A non-positive mark is a FAILED READ and must never touch the watermark. */
+    it("refuses to store a zero or negative watermark", async () => {
+      const strayId = `peak-zero-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      await expect(
+        store.raisePeak({ strayId, slot: 0, token: "0xz", peakPriceWei: 0n, atSeconds: at }),
+      ).rejects.toThrow(/refusing/i);
+      await expect(
+        store.raisePeak({ strayId, slot: 0, token: "0xz", peakPriceWei: -5n, atSeconds: at }),
+      ).rejects.toThrow(/refusing/i);
+    });
+
+    /** Slots are independent. Eight positions means eight watermarks that cannot bleed together. */
+    it("keeps each slot's watermark separate", async () => {
+      const strayId = `peak-slots-${Date.now()}`;
+      const at = Math.floor(Date.now() / 1000);
+      for (let slot = 0; slot < 8; slot++) {
+        await store.raisePeak({
+          strayId,
+          slot,
+          token: `0xtok${slot}`,
+          peakPriceWei: BigInt((slot + 1) * 1000),
+          atSeconds: at,
+        });
+      }
+      const peaks = await store.peaksFor(strayId);
+      expect(peaks.size).toBe(8);
+      expect(peaks.get(0)?.peakPriceWei).toBe(1000n);
+      expect(peaks.get(7)?.peakPriceWei).toBe(8000n);
+    });
+
+    /** And one stray's watermarks are invisible to another, like its spend. */
+    it("isolates watermarks between strays", async () => {
+      const a = `peak-iso-a-${Date.now()}`;
+      const b = `peak-iso-b-${Date.now()}`;
+      await store.raisePeak({
+        strayId: a,
+        slot: 0,
+        token: "0xt",
+        peakPriceWei: 42n,
+        atSeconds: Math.floor(Date.now() / 1000),
+      });
+      expect((await store.peaksFor(a)).size).toBe(1);
+      expect((await store.peaksFor(b)).size).toBe(0);
+    });
+
+    /** A closed slot's watermark is removed, so it cannot attach to the slot's next occupant. */
+    it("clears a watermark when a position closes", async () => {
+      const strayId = `peak-clear-${Date.now()}`;
+      await store.raisePeak({
+        strayId,
+        slot: 2,
+        token: "0xgone",
+        peakPriceWei: 7n,
+        atSeconds: Math.floor(Date.now() / 1000),
+      });
+      expect((await store.peaksFor(strayId)).size).toBe(1);
+      await store.clearPeak(strayId, 2);
+      expect((await store.peaksFor(strayId)).size).toBe(0);
+    });
+
+    /**
+     * ══ THE §7f PROPERTY ITSELF, AGAINST A REAL DATABASE ══
+     *
+     * A new `createStore` is a new pool and new process state — the closest thing to a Railway
+     * redeploy this suite can produce. The watermark must still be there, because a watermark that
+     * does not survive a restart re-anchors the trailing stop to the current price and silently
+     * disarms the only exit this strategy has.
+     */
+    it("a watermark survives a simulated process restart", async () => {
+      const strayId = `peak-restart-${Date.now()}`;
+      await store.raisePeak({
+        strayId,
+        slot: 5,
+        token: "0xsurvivor",
+        peakPriceWei: 8_000_000n,
+        atSeconds: Math.floor(Date.now() / 1000),
+      });
+
+      const reborn = await createStore(URL);
+      try {
+        const peaks = await reborn.peaksFor(strayId);
+        expect(peaks.get(5)?.peakPriceWei).toBe(8_000_000n);
+        // And the reborn process still cannot lower it — the rule outlives the process too.
+        const lowered = await reborn.raisePeak({
+          strayId,
+          slot: 5,
+          token: "0xsurvivor",
+          peakPriceWei: 3_000_000n,
+          atSeconds: Math.floor(Date.now() / 1000),
+        });
+        expect(lowered).toBe(8_000_000n);
+      } finally {
+        await reborn.close();
+      }
+    });
+  });
+
   it("records a decision with its block and outcome", async () => {
     await store.recordDecision({
       strayId: `0xdec${Date.now()}`,

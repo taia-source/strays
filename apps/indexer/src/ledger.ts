@@ -52,6 +52,59 @@ export type PricePoint = {
   readonly atSeconds: number;
 };
 
+/*
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE PEAK PRICE WATERMARKS. One row per (stray, slot) — the local copy of the trailing stop's
+ * only state.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ══ WHY A WATERMARK IN PROCESS MEMORY IS THE §7f BUG IN A NEW COSTUME ══
+ *
+ * RESEARCH §7f records meridian's daily cap: it *"only reset on process restart, so the 'daily' cap
+ * was really 'spend since last boot': long uptime falsely blocked, frequent redeploys never
+ * enforced."* That bug is already the reason `spend_ledger` above is a table instead of a `Map`.
+ *
+ * A peak watermark held only in the keeper process is the SAME bug — and it fails strictly worse.
+ * A reset spend cap is too permissive about how much is spent. A reset watermark **re-anchors the
+ * trailing stop to whatever the price happens to be at boot**, and because `raisePeak` is monotone
+ * the stop can only ever be re-armed lower, never restored. Concretely:
+ *
+ *     entry 100 → peak climbs to 500 → stop sits at 250 (50% trail)
+ *     REDEPLOY, watermark lost, price now 260
+ *     peak re-seeds at 260 → stop drops to 130
+ *
+ * The position must now fall to 130 instead of 250 before anything sells: **the trailing stop has
+ * been silently WIDENED by 48%, and it widens again on every deploy.** RESULTS §10.3 measured that
+ * the trailing exit is what resolves positions at all (0 of 72 held-out positions needed marking to
+ * market with it; 100% were unresolved without it), so a watermark that resets does not degrade the
+ * strategy — it disarms **the only exit the strategy has**, and does so invisibly, because a cat
+ * that never sells looks exactly like a cat whose stop has not been hit.
+ *
+ * On Railway a push redeploys. During this build alone that would have happened several times an
+ * hour.
+ *
+ * ══ WHY THIS TABLE EXISTS WHEN THE CHAIN ALREADY HOLDS THE SAME NUMBER ══
+ *
+ * It is deliberately the SECOND copy, not the only one. `StrayVault.Position.peakPriceWei` is the
+ * authority and `runTick`'s reconciliation block takes the chain's value every tick. This table is the
+ * fast local copy: reading eight slots per stray from the RPC on every tick is eight round-trips
+ * per stray per tick, and the keeper needs the number every tick to evaluate the stop.
+ *
+ * Two copies of one number can disagree, and that is handled rather than assumed away: both sides
+ * apply the same monotone `raisePeak`, so the higher value is the true one and applying the rule to
+ * both converges them. A disagreement is a reconciliation signal, never a race — and it is
+ * VISIBLE, which a single copy would not be.
+ *
+ * `NUMERIC(78,0)`, like every other wei column here: a uint256 is 78 decimal digits and Postgres
+ * `bigint` is 64-bit, which silently truncates. A watermark that truncates is a stop computed from
+ * a number that disagrees with the chain.
+ *
+ * The PRIMARY KEY is (stray_id, slot) because that is exactly what `mark(strayId, slot, priceWei)`
+ * names on chain. `token` is stored alongside so a stale row from a CLOSED position cannot be
+ * silently attached to the NEXT position that occupies the same slot — `peaksFor` returns the
+ * token so the caller can require it to match. A watermark from a previous token is arithmetically unrelated to
+ * this one's price and would fire or disarm the stop on a number belonging to something else.
+ */
 /**
  * Schema, applied idempotently at boot.
  *
@@ -93,7 +146,24 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 CREATE INDEX IF NOT EXISTS decisions_time ON decisions (at_ms DESC);
 CREATE INDEX IF NOT EXISTS decisions_stray ON decisions (stray_id, at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS position_peaks (
+  stray_id      TEXT NOT NULL,
+  slot          INTEGER NOT NULL,
+  token         TEXT NOT NULL,
+  peak_price_wei NUMERIC(78,0) NOT NULL,
+  updated_at    BIGINT NOT NULL,
+  PRIMARY KEY (stray_id, slot)
+);
 `;
+
+/** One position's watermark, as stored. */
+export type PositionPeak = {
+  readonly straySlot: number;
+  readonly token: string;
+  readonly peakPriceWei: bigint;
+  readonly updatedAtSeconds: number;
+};
 
 export type Store = {
   readonly ledger: SpendLedger;
@@ -110,6 +180,43 @@ export type Store = {
     block: bigint;
     atMs: number;
   }) => Promise<void>;
+  /**
+   * Raise the stored watermark for one slot. **MONOTONE — it can never be lowered.**
+   *
+   * The monotonicity is enforced in SQL (`GREATEST` on conflict), not in application code, for the
+   * same reason the spend ledger's dedup is a PRIMARY KEY rather than an in-process mutex: two
+   * keeper processes hitting the same row must not be able to produce a lower value between them.
+   * `@strays/hunt`'s `raisePeak` applies the identical rule on the other side, so the two agree by
+   * construction rather than by convention.
+   *
+   * The token is part of the write. When a slot is REUSED by a different token the row is replaced
+   * outright rather than maxed — a previous token's peak is not a larger observation of this
+   * token's price, it is an unrelated number, and taking `GREATEST` across a token change would
+   * seed a brand-new position with a watermark it never reached and arm its stop immediately.
+   */
+  readonly raisePeak: (args: {
+    strayId: string;
+    slot: number;
+    token: string;
+    peakPriceWei: bigint;
+    atSeconds: number;
+  }) => Promise<bigint>;
+  /**
+   * Every stored watermark for one stray, keyed by slot.
+   *
+   * Returns the token too, so the caller can refuse a row whose token no longer matches the slot's
+   * current occupant rather than trusting the slot index alone.
+   */
+  readonly peaksFor: (strayId: string) => Promise<ReadonlyMap<number, PositionPeak>>;
+  /**
+   * Forget a slot's watermark, called when a position CLOSES.
+   *
+   * Not merely housekeeping: a stale row is a watermark that would be handed to the next position
+   * opening in that slot. `peaksFor`'s token check already refuses that, so this is the second of
+   * two independent guards — the row is deleted, and if the delete were ever missed the token
+   * mismatch still catches it.
+   */
+  readonly clearPeak: (strayId: string, slot: number) => Promise<void>;
   readonly prune: (olderThanSeconds: number, nowSeconds: number) => Promise<void>;
   readonly close: () => Promise<void>;
 };
@@ -123,7 +230,35 @@ export async function createStore(databaseUrl: string): Promise<Store> {
     idleTimeoutMillis: 20_000,
     connectionTimeoutMillis: 8_000,
   });
-  await pool.query(SCHEMA);
+  /*
+   * ══ `CREATE TABLE IF NOT EXISTS` IS NOT ATOMIC AGAINST A CONCURRENT IDENTICAL CREATE ══
+   *
+   * MEASURED while adding the watermark table: two `createStore` calls racing at boot fail with
+   * `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`. `IF NOT EXISTS`
+   * checks for the table and then creates it, and two sessions can both pass the check — the
+   * conflict then surfaces from the system catalog rather than from the statement, which is why
+   * the error names `pg_type` and not the table being created.
+   *
+   * This is not a test-only concern. Railway runs the keeper alongside the web app and a redeploy
+   * overlaps the old and new instances, so two processes applying this schema simultaneously is the
+   * NORMAL case at boot, not an edge one — and a keeper that crashes on startup because another
+   * keeper started at the same moment is a keeper that fails to trade for reasons unrelated to
+   * trading.
+   *
+   * The retry is bounded and narrow: it re-reads the schema exactly once, after which the losing
+   * session sees the table the winner committed and every `IF NOT EXISTS` becomes a no-op. A
+   * failure that is not this race propagates unchanged — a broken schema must still refuse to boot.
+   */
+  try {
+    await pool.query(SCHEMA);
+  } catch (err) {
+    const message = String(err);
+    const isCreateRace =
+      message.includes("pg_type_typname_nsp_index") ||
+      message.includes("duplicate key value violates unique constraint");
+    if (!isCreateRace) throw err;
+    await pool.query(SCHEMA);
+  }
 
   const ledger: SpendLedger = {
     // The whole point of this file.
@@ -216,6 +351,81 @@ export async function createStore(databaseUrl: string): Promise<Store> {
           d.atMs,
         ],
       );
+    },
+
+    /**
+     * Raise a watermark, monotonically, in ONE statement.
+     *
+     * `GREATEST(existing, incoming)` inside the `DO UPDATE` means the max is computed by the
+     * database under the row lock the upsert already holds — so two keepers racing on the same slot
+     * cannot interleave a read and a write and lose the higher value. Doing this as
+     * SELECT-then-UPDATE in TypeScript would reintroduce exactly the time-of-check/time-of-use gap
+     * the spend ledger's header is about.
+     *
+     * The `WHERE position_peaks.token = EXCLUDED.token` guard is what keeps a slot's history from
+     * bleeding across tokens: when the token differs the `GREATEST` branch does not apply and the
+     * row is overwritten with the new token's price instead. Same slot, different position, fresh
+     * watermark.
+     *
+     * Returns the peak AFTER the call — the effective value — so a caller never needs a second read
+     * to know what the stop will be computed from. `StrayVault.mark()` returns it for the same
+     * reason.
+     */
+    raisePeak: async ({ strayId, slot, token, peakPriceWei, atSeconds }) => {
+      if (peakPriceWei <= 0n) {
+        // A failed price read must never touch the watermark. `@strays/hunt`'s `raisePeak` throws
+        // on this too — a watermark that moves on bad data is a stop that moves on bad data.
+        throw new Error(
+          `refusing to store a peak watermark of ${peakPriceWei.toString()} wei for ${strayId} ` +
+            `slot ${String(slot)}: a non-positive mark is a failed read, and a zero watermark ` +
+            "disarms the trailing stop entirely (RESEARCH §7f)",
+        );
+      }
+      const { rows } = await pool.query<{ peak_price_wei: string }>(
+        `INSERT INTO position_peaks (stray_id, slot, token, peak_price_wei, updated_at)
+         VALUES ($1, $2, $3, $4::NUMERIC, $5)
+         ON CONFLICT (stray_id, slot) DO UPDATE SET
+           peak_price_wei = CASE
+             WHEN position_peaks.token = EXCLUDED.token
+               THEN GREATEST(position_peaks.peak_price_wei, EXCLUDED.peak_price_wei)
+             ELSE EXCLUDED.peak_price_wei
+           END,
+           token = EXCLUDED.token,
+           updated_at = EXCLUDED.updated_at
+         RETURNING peak_price_wei::TEXT`,
+        [strayId, slot, token.toLowerCase(), peakPriceWei.toString(), atSeconds],
+      );
+      return BigInt(rows[0]?.peak_price_wei ?? peakPriceWei.toString());
+    },
+
+    peaksFor: async (strayId) => {
+      const { rows } = await pool.query<{
+        slot: number;
+        token: string;
+        peak_price_wei: string;
+        updated_at: string;
+      }>(
+        `SELECT slot, token, peak_price_wei::TEXT, updated_at::TEXT
+           FROM position_peaks WHERE stray_id = $1`,
+        [strayId],
+      );
+      const out = new Map<number, PositionPeak>();
+      for (const r of rows) {
+        out.set(Number(r.slot), {
+          straySlot: Number(r.slot),
+          token: r.token,
+          peakPriceWei: BigInt(r.peak_price_wei),
+          updatedAtSeconds: Number(r.updated_at),
+        });
+      }
+      return out;
+    },
+
+    clearPeak: async (strayId, slot) => {
+      await pool.query("DELETE FROM position_peaks WHERE stray_id = $1 AND slot = $2", [
+        strayId,
+        slot,
+      ]);
     },
 
     /** Price history is unbounded otherwise. The ledger is NOT pruned — it is the audit trail. */
