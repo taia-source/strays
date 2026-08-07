@@ -136,6 +136,33 @@ withdrawal.
 
 ---
 
+---
+
+## AUTONOMOUS TRADING — two complete round trips, no human in the loop
+
+The keeper chose the tokens, sized the positions from the stray's own compartment, entered, priced
+its own exits, and closed both. Stray `0x4e4ccd7e…`.
+
+| # | outcome | detail |
+|---|---|---|
+| 1 | **TAKE PROFIT** | bought 57,092,283,279,985,038,768,190 units for 0.00104 ETH (blk 30448514), sold for 0.001046819814464775 ETH (blk 30452877) — **+66 bps net of a 199bps round-trip tax** |
+| 2 | **STOP LOSS** | re-entered at blk 30453776, price fell to **−926 bps** from entry, breached the −235bps hard stop, and the cat exited itself |
+
+```
+principal  2,080,000,000,000,000 wei   ($4.01)
+stake now  1,990,193,484,509,105 wei   ($3.84)
+net           −89,806,515,490,895 wei  (−$0.17, −4.3%)
+```
+
+**The loss is the more valuable of the two.** A take-profit proves the happy path; a stop that fires
+on a real −926bps move and executes on chain proves the risk control is wired to something. Both
+paths are now exercised against live money rather than asserted.
+
+**What this is NOT.** Two trades is not evidence the strategy works — openhood's own record calls one
+winning trade over 15 days *"worth nothing"*, and that judgement applies here with equal force. It is
+evidence the MACHINERY works end to end: discovery, screening, the sell simulation, sizing, the cost
+bar, execution, position valuation, the stop, and the durable ledger.
+
 ## Not done
 
 - **No external audit.** Stated in `/docs` in the product. The 12-sabotage suite and the fork tests

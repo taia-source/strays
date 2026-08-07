@@ -335,10 +335,58 @@ export function reslot(sim: Sim): void {
       slot = huntSlot(sim, token, body.radius, nth);
     } else {
       slot = denSlot(sim, denIndex++, body.radius);
+      /*
+       * ══ AN IDLE CAT DOES NOT SIT ON TOP OF A TOKEN ══
+       *
+       * Measured at 390px, where the playable field is a ~390x450 strip holding fourteen diamonds:
+       * the den slot landed squarely on a token, so the cat was drawn over the diamond and its
+       * ticker, and the composite read as one broken sprite rather than as two things.
+       *
+       * A cat AT its quarry is meaningful — that is what a hunt slot is for. A cat standing on an
+       * unrelated token is noise, and worse, it looks like the same thing. So an idle slot that
+       * collides with any token is nudged clear along the vector away from it.
+       *
+       * This is deliberately NOT a separation force. It resolves once, deterministically, at
+       * slot-assignment time, so the cat still has a single fixed home it returns to and rests at.
+       * A force would reintroduce exactly the continuous drift this rewrite removed.
+       */
+      slot = clearOfTokens(sim, slot, body.radius);
     }
 
     setHome(body, slot);
   }
+}
+
+/**
+ * Nudge a slot clear of any token it overlaps.
+ *
+ * Bounded to a few passes rather than looped to convergence: on a field crowded enough that no
+ * clear spot exists within a few steps, the honest outcome is a slightly overlapping cat, and an
+ * unbounded search would be a frame-time cliff on exactly the small screens that can least afford
+ * one. Cats are drawn AFTER tokens, so a residual overlap still leaves the animal legible on top.
+ */
+function clearOfTokens(sim: Sim, slot: Vec, radius: number): Vec {
+  let out = slot;
+  for (let pass = 0; pass < 3; pass++) {
+    let moved = false;
+    for (const t of sim.tokens.values()) {
+      const dx = out.x - t.x;
+      const dy = out.y - t.y;
+      const d = Math.hypot(dx, dy);
+      // The cat's drawn half-width is roughly its radius; add the token's own extent and a margin
+      // wide enough to clear the ticker plate that hangs under the diamond.
+      const min = radius * 0.7 + t.radius + 22;
+      if (d >= min) continue;
+      // Degenerate case: exactly co-located. Push right, which is toward the open field from a den
+      // that sits at the left edge of the composition.
+      const ux = d < 0.001 ? 1 : dx / d;
+      const uy = d < 0.001 ? 0 : dy / d;
+      out = clampToField(sim, { x: t.x + ux * min, y: t.y + uy * min }, radius);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  return out;
 }
 
 /**
