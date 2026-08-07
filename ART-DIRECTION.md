@@ -12,6 +12,29 @@ most load-bearing section in the file.**
 
 ## 1. The cell claimed
 
+> ## ⚠ MEASURED AT SHIP TIME: THREE OF THESE SIX DID NOT SHIP
+>
+> This section was written before the first component, which is the method and it stays. But the
+> coordinates below are a CLAIM, and re-measuring the shipped source settled it against them:
+>
+> | Axis | Claimed here | **Measured in the build** |
+> |---|---|---|
+> | Navigation | map | **scroll · 5r** — the colony is a CSS grid of portraits, not a canvas map |
+> | Density | dense-instrument | **moderate** |
+> | Palette | phosphor | **phosphor** ✓ one hue at 145, verified by opening the page |
+> | Motion | idle-world | **ambient · 2kf** — a cat bob and a tail flick; there is no world yet |
+> | Type | mono-only | **mono-only** ✓ one local mono for every glyph including figures |
+> | Input | pointer-agnostic | **click** — nothing beyond links and buttons was built |
+>
+> `ARCHIVE.md` row 11 records the measured values and footnote 13 explains the gap. The two that
+> hold are both firsts, so the row still clears the rejection rule — but `map` and `idle-world`
+> were derived at length below and **never rendered**, and reading this section as a description
+> of the product would be reading an intention as a fact.
+>
+> The lesson, stated where the next reader will hit it: **an art direction is a claim about a page,
+> and only the page can settle it.** Re-measure the six coordinates from shipped source before
+> writing the archive row.
+
 From `~/work/taia/ARCHIVE.md`, 10 occupied rows. STRAYS claims:
 
 ```
