@@ -135,6 +135,18 @@ with a `failed` outcome means the strategy fired and the transaction did not —
 **"The keeper is quiet."** Check `/health` on the keeper service — it reports `mode: observe|live`
 and the tick interval. A keeper in observe mode is *supposed* to be quiet on chain.
 
+**NEVER RUN TWO KEEPERS ON ONE KEY — and check, do not assume.** During this build I restarted the
+live keeper without stopping the previous one and had **two processes signing from the same wallet**
+for several minutes. `.env` documents exactly this hazard for other projects on this machine
+(*"two autonomous signers on one nonce is a race"*), and I walked into it anyway because launching
+the new one felt like replacing the old one.
+
+Nothing was lost — the `inFlight` guard is per-process and would not have helped, but the vault's
+own per-stray accounting and the durable ledger's UNIQUE idempotency key are what actually stand
+between this and a double-spend. **Confirm with `ps aux | grep dist/main.js` before and after every
+restart.** On Railway a redeploy replaces the container, so this is a local-operator hazard, not a
+production one.
+
 **RPC rate limiting — MEASURED, 2026-08-07.** The public endpoint
 `https://rpc.mainnet.chain.robinhood.com` is fronted by Cloudflare and **starts returning a 403
 managed challenge** under sustained load. It surfaced mid-session as an HTML challenge page in

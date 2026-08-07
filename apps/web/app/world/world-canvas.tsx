@@ -608,17 +608,36 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
      * The rotated square is the only other primitive on the field, so "quarry" is readable at a
      * glance with no legend — which matters because at 320px there is no room for a legend.
      */
+    /*
+     * ══ THE QUARRY IS DEMOTED, BECAUSE THE CAT IS THE SUBJECT ══
+     *
+     * Measured on the rendered 1440px field after the cats gained their glow: fourteen diamonds at
+     * `--fed` on a 1.5px stroke were collectively the LOUDEST thing on the page, and the one cat —
+     * the only live animal in the colony, and the thing the whole product is about — read as a small
+     * grey smudge among them. The prey dominated the predator.
+     *
+     * This is a hierarchy failure rather than a colour one, and it is easy to arrive at honestly:
+     * each diamond was tuned on its own, where 0.95 alpha looks correct, and nobody adds up
+     * fourteen of them. The rule that actually matters is that the field has ONE subject, and every
+     * other layer has to sit visibly below it.
+     *
+     * So a huntable token is now a thin amber outline over a dark fill rather than a filled amber
+     * shape, and the alpha comes down. It stays unmistakably amber — `--fed` is the token that means
+     * "a stray may take this" and that meaning is load-bearing — but it stops competing.
+     */
     ctx.beginPath();
     ctx.moveTo(cx, cy - r);
     ctx.lineTo(cx + r, cy);
     ctx.lineTo(cx, cy + r);
     ctx.lineTo(cx - r, cy);
     ctx.closePath();
-    ctx.fillStyle = token.huntable ? palette.band : palette.soot;
+    ctx.fillStyle = palette.soot;
+    ctx.globalAlpha = 0.9;
     ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = token.huntable ? palette.fed : palette.phosGhost;
-    ctx.globalAlpha = token.huntable ? 0.95 : 0.45;
-    ctx.lineWidth = token.huntable ? 1.5 : 1;
+    ctx.globalAlpha = token.huntable ? 0.62 : 0.3;
+    ctx.lineWidth = 1;
     ctx.stroke();
     ctx.globalAlpha = 1;
 
@@ -687,10 +706,35 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
       [0, r + box.h + 10],
       [0, -r - box.h * 2 - 10],
     ];
-    const clashes = (bx: number, by: number): boolean =>
-      placed.some(
-        (o) => bx < o.x + o.w && bx + box.w > o.x && by < o.y + o.h && by + box.h > o.y,
+    /*
+     * ══ A CANDIDATE MUST CLEAR THE HUD AS WELL AS THE OTHER LABELS ══
+     *
+     * This predicate used to test only against labels already placed. The consequence was visible on
+     * every 1440px screenshot and survived several passes because it looks like a rendering
+     * artefact rather than a logic bug: the CSUMMIT ticker rendered as "CS" with the rest of the
+     * word disappearing under the roster panel.
+     *
+     * The reason it slipped through is that the HUD *was* being checked — but only for the ONE
+     * default position, in the `collides` test above, whose sole remedy is to flip the label above
+     * the token. If the flipped position is also occluded (which it is when the panel is tall), the
+     * search below then evaluates seven further candidates while cheerfully ignoring the panel, and
+     * happily returns the first one that merely clears the other labels.
+     *
+     * So the occlusion test belongs in the SAME predicate the search uses, not in a special case
+     * ahead of it. That is the generalisable shape of the bug: a constraint enforced at one call
+     * site rather than in the function every call site goes through.
+     */
+    const clashes = (bx: number, by: number): boolean => {
+      if (placed.some((o) => bx < o.x + o.w && bx + box.w > o.x && by < o.y + o.h && by + box.h > o.y)) {
+        return true;
+      }
+      // The reserved rectangles are in VIEWPORT coordinates; the box is canvas-local.
+      const ax = d.canvasRect.left + bx;
+      const ay = d.canvasRect.top + by;
+      return d.reserved.some(
+        (rc) => ax < rc.right && ax + box.w > rc.left && ay < rc.bottom && ay + box.h > rc.top,
       );
+    };
     // Keep the collision-resolved default as the fallback, so a crowded field still labels
     // everything rather than silently losing tickers.
     let bestX = box.x;
@@ -711,16 +755,24 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
     box.y = bestY;
     placed.push({ x: box.x, y: box.y, w: box.w, h: box.h });
 
+    /*
+     * The ticker keeps its dark plate but LOSES its border.
+     *
+     * The plate is not decoration — it is what keeps 11px type legible over a textured ground, and
+     * without it the labels dissolve into the dust field. The BORDER was the part that made fourteen
+     * of these read as a scattering of UI widgets over the world rather than as captions in it: a
+     * stroked box is a control, an unstroked plate is a shadow behind text.
+     *
+     * The type also comes down from `--phos` to `--phos-dim`. It stays comfortably legible (the
+     * plate guarantees the contrast) while ceding the top of the value range to the one animal.
+     */
     ctx.fillStyle = palette.soot;
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.82;
     ctx.fillRect(Math.round(box.x), Math.round(box.y), Math.round(box.w), box.h);
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = token.huntable ? palette.rail : palette.sootLine;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5, Math.round(box.w), box.h);
-    ctx.fillStyle = token.huntable ? palette.phos : palette.phosGhost;
+    ctx.fillStyle = token.huntable ? palette.phosDim : palette.phosGhost;
     ctx.textAlign = "center";
-    ctx.fillText(label, Math.round(cx), Math.round(box.y + box.h / 2) + 1);
+    ctx.fillText(label, Math.round(box.x + box.w / 2), Math.round(box.y + box.h / 2) + 1);
   }
 
   // ── The cats ─────────────────────────────────────────────────────────────────────────
