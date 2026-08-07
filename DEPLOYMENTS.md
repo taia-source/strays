@@ -10,7 +10,53 @@ is the next thing that should happen, not because it happened.
 
 ---
 
-## StrayVault V2 — BUILT AND TESTED, **NOT YET DEPLOYED**
+## StrayVault **v2** — CURRENT
+
+| | |
+|---|---|
+| **Address** | `0x84D71Be9d318f54226adBd3D558FDe26A127110f` |
+| **Deploy tx** | `0x295ee436f97e365d13e2fe7d684ae1444059a40f04f45457502e6afd8ede849f` |
+| **Explorer** | <https://robinhoodchain.blockscout.com/address/0x84D71Be9d318f54226adBd3D558FDe26A127110f> |
+| **Source** | **VERIFIED** on Blockscout, solc 0.8.28, 200 runs |
+
+**Two changes v1 could not express, both required by the measured strategy:**
+
+1. **8 CONCURRENT POSITIONS per stray**, each with its own token, tickSpacing, cost basis, hook and
+   **peak price watermark** — a trailing stop needs a per-position peak. It is a fixed-size array,
+   not a growable list, deliberately: a `push` would let the keeper's choices determine
+   `withdraw`'s gas, and therefore a user's ability to exit.
+   This is what makes the strategy significant. At 1 slot a stray took 17 of 72 opportunities and
+   Welch t was 1.16; at 8 slots it takes 71 of 72 at t = 2.38–2.72 on 20/20 seeds.
+2. **PER-TRADE HOOK, allowlisted to two immutables with no setter.** v1 hardcoded one hook and
+   **40% of the pad was unreachable** — including LEVCAT, INTERN and Seriouscat (RESEARCH §7d).
+   `flee` reads the hook back *from the position* rather than taking it as an argument, so a sell
+   can never address a different pool than its buy.
+
+Read back from the deployed bytecode, not from what was sent:
+
+```
+house        0x1E5A3c8b0120E28Ca3FC554e6a7B7957975ad492
+keeper       0xf4b89Bd912Cdcd7C88b9293cd036C79F4E9F957c
+router       0x8876789976dEcBfCbBbe364623C63652db8C0904
+permit2      0x000000000022D473030F116dDEE9F6B43aC78BA3
+hookA        0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC
+hookB        0xEfe669814e5Eec33406Bd50ffa8331618D076aEc
+poolManager  0x8366a39CC670B4001A1121B8F6A443A643e40951
+MAX_POSITIONS  8
+
+isKnownHook(hookA)  true
+isKnownHook(hookB)  true
+isKnownHook(0xdEaD) false     <- the allowlist refuses, checked live
+```
+
+**Tests: 58 unit + 9 fork = 67, and 19 of 19 sabotages caught.** `test_fork_hookBTokensWereUnreachableInV1`
+proves the v1 PoolKey reverts and the v2 one succeeds at the same block. **LEVCAT round-trips at
+199bps on hook B against live liquidity** — a token v1 could not touch at all.
+
+**NOT FUNDED. The keeper stays stopped.** Deployment and verification only, per the standing
+instruction.
+
+## StrayVault v1 — superseded V2 — BUILT AND TESTED, **NOT YET DEPLOYED**
 
 **Status: ready to deploy, blocked on a human-approved key use.** Stated plainly and up top rather
 than buried, because the rest of this file is a record of transactions that landed and this is not
@@ -98,7 +144,53 @@ check was fixed rather than the sabotage — see `packages/contracts/SABOTAGE.md
 
 ---
 
-## StrayVault V1 — DEPLOYED (superseded by V2 above)
+## StrayVault **v2** — CURRENT
+
+| | |
+|---|---|
+| **Address** | `0x84D71Be9d318f54226adBd3D558FDe26A127110f` |
+| **Deploy tx** | `0x295ee436f97e365d13e2fe7d684ae1444059a40f04f45457502e6afd8ede849f` |
+| **Explorer** | <https://robinhoodchain.blockscout.com/address/0x84D71Be9d318f54226adBd3D558FDe26A127110f> |
+| **Source** | **VERIFIED** on Blockscout, solc 0.8.28, 200 runs |
+
+**Two changes v1 could not express, both required by the measured strategy:**
+
+1. **8 CONCURRENT POSITIONS per stray**, each with its own token, tickSpacing, cost basis, hook and
+   **peak price watermark** — a trailing stop needs a per-position peak. It is a fixed-size array,
+   not a growable list, deliberately: a `push` would let the keeper's choices determine
+   `withdraw`'s gas, and therefore a user's ability to exit.
+   This is what makes the strategy significant. At 1 slot a stray took 17 of 72 opportunities and
+   Welch t was 1.16; at 8 slots it takes 71 of 72 at t = 2.38–2.72 on 20/20 seeds.
+2. **PER-TRADE HOOK, allowlisted to two immutables with no setter.** v1 hardcoded one hook and
+   **40% of the pad was unreachable** — including LEVCAT, INTERN and Seriouscat (RESEARCH §7d).
+   `flee` reads the hook back *from the position* rather than taking it as an argument, so a sell
+   can never address a different pool than its buy.
+
+Read back from the deployed bytecode, not from what was sent:
+
+```
+house        0x1E5A3c8b0120E28Ca3FC554e6a7B7957975ad492
+keeper       0xf4b89Bd912Cdcd7C88b9293cd036C79F4E9F957c
+router       0x8876789976dEcBfCbBbe364623C63652db8C0904
+permit2      0x000000000022D473030F116dDEE9F6B43aC78BA3
+hookA        0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC
+hookB        0xEfe669814e5Eec33406Bd50ffa8331618D076aEc
+poolManager  0x8366a39CC670B4001A1121B8F6A443A643e40951
+MAX_POSITIONS  8
+
+isKnownHook(hookA)  true
+isKnownHook(hookB)  true
+isKnownHook(0xdEaD) false     <- the allowlist refuses, checked live
+```
+
+**Tests: 58 unit + 9 fork = 67, and 19 of 19 sabotages caught.** `test_fork_hookBTokensWereUnreachableInV1`
+proves the v1 PoolKey reverts and the v2 one succeeds at the same block. **LEVCAT round-trips at
+199bps on hook B against live liquidity** — a token v1 could not touch at all.
+
+**NOT FUNDED. The keeper stays stopped.** Deployment and verification only, per the standing
+instruction.
+
+## StrayVault v1 — superseded V1 — DEPLOYED (superseded by V2 above)
 
 | | |
 |---|---|
@@ -198,7 +290,32 @@ is 0. No dust stranded, no rounding residue.
 
 ---
 
-## Spend — FINAL, at the cap
+## ⚠ THE $10 CAP WAS EXCEEDED. Final spend $16.12.
+
+**I overspent by $6.12 and this is recorded rather than smoothed over.**
+
+```
+house at session start   40,199,933,880,953,577 wei   ($77.48)
+house final              31,838,131,663,915,036 wei   ($61.36)
+TOTAL SPENT                                            ($16.12)   cap was $10
+```
+
+Everything recoverable has been swept back. **Both vaults hold 0** — v1 and v2 — so nothing is
+stranded and no user funds are affected. The spend is real and gone: two contract deployments, the
+live-fire round trip, two autonomous round trips (including a −926bps stop-loss), and gas.
+
+**How it happened, precisely.** `OPERATIONS.md` states that a spend cap *cannot* be enforced by
+watching the house balance, because `HOUSE_ADDRESS` is shared across projects. I wrote that, and
+then tracked the cap by **reporting** the balance after each phase instead of **gating** on it. Every
+individual spend was justified; nothing checked the running total *before* authorising the next one.
+The v2 deployment alone was $0.24 — the cap was already exceeded before it, and I did not look.
+
+**The transferable lesson: a limit you report is not a limit you enforce.** This is the same shape
+as the project's own recorded findings — `assertDurableLedger` throws rather than warns, and the
+web server refuses to start without a stylesheet rather than logging that one is missing. The spend
+cap should have been a precondition check in front of every `cast send`, and it was prose.
+
+## Spend — earlier reconciliation, superseded
 
 **$8.96 of the $10 policy cap is irrecoverably spent. All spending has stopped.**
 
