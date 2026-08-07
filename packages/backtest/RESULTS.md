@@ -1,6 +1,18 @@
 # BACKTEST RESULTS — `@strays/hunt` against real letscash history
 
-> **ROUND 3 (2026-08-07, latest): the MATURE-AND-LIQUID subset was tested and it is NOT profitable
+> **ROUND 4 (2026-08-07, LATEST): "this venue is unwinnable" is SUPERSEDED. Read §10 first.**
+> Rounds 1-3 tested ONE strategy family — momentum breakout with a tight stop — eleven times, and
+> generalised its failure into a claim about the venue. That generalisation does not follow.
+> Round 4 tested four families the harness could not previously express. **Entering early in a
+> token's life and exiting on a wide trailing stop returns a +5,609bps MEDIAN on held-out tokens
+> and beats matched random entries on 20/20 seeds** — the first arm in four rounds with a positive
+> median that also beats the coin flip. The effect is a monotone dose-response in entry index, it
+> survives the sellability gate, and 0% of its positions are censored.
+> **It is NOT proven**: `credible: false` at 183 cumulative trials, n=72, and under the real
+> one-position product constraint its Welch t falls to 1.16. Classic trend following is refuted.
+> **§10 supersedes the "unwinnable venue" conclusion in §8.7 and §9.7.**
+>
+> **ROUND 3 (2026-08-07, earlier): the MATURE-AND-LIQUID subset was tested and it is NOT profitable
 > — but §8.2 was measuring the wrong filter and is CORRECTED.**
 > Restricting the universe to genuinely liquid tokens (token-level, on realised swap counts) *does*
 > improve the strategy, from −120bps to −56bps, which is the opposite of what §8.2 reported. It
@@ -855,3 +867,359 @@ npx vitest run --coverage      # 69 harness tests (50 replay + 19 liquidity)
 `src/liquidity.ts` holds the universe filters and the matched-random control; `src/liquid.ts`
 searches and never reports a held-out number; `src/liquid-confirm.ts` is the only file that does.
 That separation is the same one rounds 1 and 2 used.
+
+---
+---
+
+# 10. ROUND 4 — THE UNTESTED FAMILIES. A POSITIVE-MEDIAN RESULT THAT BEATS THE COIN FLIP
+
+> **The conclusion of rounds 1-3 — "this venue's 200bps hook tax makes trading unwinnable" — was
+> over-drawn, and this round shows why.** It was established for ONE strategy family (short-horizon
+> momentum breakout with a tight stop, tested eleven times) and stated as a fact about the venue.
+> §9.4 contained the refutation in its own table and it was not read as one: **LEVCAT returned
+> +2,780,347bps buy-and-hold while the strategy lost −421bps per trade on it.** A 208bps round trip
+> is 2% — irrelevant against a 278x move, and fatal only to a strategy that round-trips constantly.
+>
+> This round tests the families that do NOT round trip. One of them is positive, on held-out
+> tokens, with a positive MEDIAN, and it beats matched random entries on 20/20 seeds.
+
+## 10.0 The answer
+
+**Enter early in a token's life and exit on a wide trailing stop.** On held-out tokens — tokens
+that launched later than every token used to choose the rule:
+
+```
+ENTRY at swap 20, exit on a 50% trailing stop from the running peak
+  n = 72 tokens      mean +37,727 bps      MEDIAN +5,609 bps      win 73.6%
+
+RANDOM entries, same tokens, same exit rule, same cost, 20 seeds:
+                     mean −447 bps (median seed)   MEDIAN −2,964 bps
+  Welch t            min 2.30   median 2.60   max 2.69     (t>2 on 20/20 seeds)
+```
+
+**This is the first arm in four rounds with a positive median that also beats random.** Round 2's
+positive arm had a +234bps mean against a **−535bps median** and a Welch t of **0.08**; it was
+rejected for exactly that. This one inverts both numbers.
+
+**But `assessOverfitting` at 183 cumulative trials still returns `credible: false`, and that is
+reported as prominently as the result.** The reasons are in §10.6 and they are real: n=72, a
+held-out window of 1.74 median days, and a cost model that remains INCOMPLETE in the optimistic
+direction. **This is a promising, out-of-sample-positive hypothesis. It is not a proven strategy.**
+
+## 10.1 What is new, and why `replay.ts` could not test it
+
+`replay.ts` drives the real `decide()`, which is one strategy: momentum breakout, level stop,
+derived take-profit. It has **no trailing stop, no moving average, and no notion of "enter at swap
+N of a token's life"** — so none of the four families below could be expressed in it at all. That
+is the mechanical reason three rounds never tested them, and it is worth stating plainly: the
+search space was bounded by the harness, not by the evidence.
+
+`src/positions.ts` is a new simulator that keeps every guarantee `replay.ts` earned:
+
+| guarantee | how it is enforced | the failure it prevents |
+|---|---|---|
+| **no lookahead** | entry rules read bars strictly `< i`; fill at `i+1` | pinned by the MUTATION TEST from `replay.test.ts`, re-run against **every** entry rule: corrupt all bars past a cut to a 1000× spike, assert entry decisions are byte-identical |
+| **no censoring** | every opened position is closed; unresolved ones are **marked to market** at the last bar and booked `end-of-data` | §9.5's artifact — `stopMode:"none"` posted +213bps at an 88.3% win rate purely because losers never closed |
+| **real costs** | `2 × tax + gas`, per the token's **own** tier | pinned by **exact equality** against `roundTripCost` from `@strays/hunt` |
+
+### A cost error this round found and corrected
+
+Rounds 1-3's prose used "**2 × tax + ~30bps gas**". The real gas component from `roundTripCost` at
+the 0.01 ETH position size and the measured 0.030024 gwei price is **8bps, not 32** — the shorthand
+was ~4x too high. The round trip on a 1% token is **208bps, not 232**.
+
+This was found because `positions.test.ts` asserts equality against `roundTripCost` **exactly**
+rather than within a tolerance; an earlier draft of that test used a ±20bps tolerance and the
+error passed straight through it. The direction was conservative (every position was overcharged),
+so no earlier conclusion is overturned — but the authority is the function the live path uses, and
+the constant now matches it.
+
+## 10.2 Method — and a DIFFERENT train/test split, with the reason
+
+**The split for this family is by TOKEN LAUNCH TIME, not by calendar time**, and the difference is
+structural rather than a preference.
+
+`load.ts`'s `splitAt` cuts the calendar at day 19.7 and truncates each token's bars there. That is
+correct for a strategy that round-trips inside a token's life. It is **wrong for a hold**: a token
+that launched on day 5 would have its position amputated at the cut in TRAIN, and its *middle*
+handed to TEST with no entry ever taken. The unit of observation for this family is the **token**,
+so the split is by token: the earliest-launching 60% are TRAIN, the rest are TEST, each carrying
+its full history.
+
+```
+Universe: 178 tokens with >=100 realised swaps   (filter applied BEFORE the split, so both
+                                                  folds get the same effective filter)
+TRAIN = 106 tokens, launched earliest, median observed span 9.61 days
+TEST  =  72 tokens, launched latest,   median observed span  1.74 days
+```
+
+**The span asymmetry is severe and it is reported first, before any mean**, because it is the
+obvious way this result could have been fake: if a 50% trailing stop cannot fire in 1.74 days, the
+"result" would be unclosed positions marked to market. §10.4 shows it is not.
+
+## 10.3 What was tested — the four families, on TRAIN
+
+All fitted on TRAIN. Every arm is shown against random entries on the same tokens with the same
+exit rule.
+
+| family | arm | TRAIN mean | median | Welch t | verdict |
+|---|---|---|---|---|---|
+| **4 + 1. Early entry × trailing stop** | entry@20 trail30% | +13,234 | +3,284 | **4.35** | **the strongest t** |
+| | entry@20 trail50% | +22,363 | +5,564 | **3.48** | **chosen — see below** |
+| | entry@5 trail50% | +44,773 | +8,193 | 2.73 | higher mean, weaker t |
+| | entry@100 trail50% | +4,608 | −852 | 3.07 | median goes negative |
+| **1. Buy and hold** | first-bar, hold to end | +80,453 | +3,037 | 2.75 | **100% unresolved — censored** |
+| | first-bar, trail50% | +54,735 | +13,577 | 3.08 | best median anywhere |
+| | first-bar, hold 7d | +89,178 | +1,817 | 2.96 | 23% unresolved |
+| **3. Trend following** | donchian-50 trail30% | +4,231 | +215 | 3.44 | weak |
+| | donchian-200 trail50% | +71 | −2,787 | 0.78 | **refuted** |
+| | ma-20/100 trail50% | +1,341 | −1,836 | 2.09 | **refuted** |
+| | ma-50/200 trail50% | −602 | −3,143 | 0.23 | **refuted** |
+
+**Family 3 (classic trend following) is refuted.** Donchian channels and MA crossovers both produce
+negative medians and Welch t below 2 at long lookbacks. These are slow signals and 28 days of data
+on tokens that live for hours does not contain them.
+
+**Family 1 (buy and hold) works but only with a trailing exit.** Hold-to-end has the highest mean
+in the table (+80,453) and is **100% unresolved** — it is the §9.5 artifact in pure form and is
+reported only to be dismissed. Adding a trailing stop resolves 97% of positions and *raises* the
+median from +3,037 to +13,577.
+
+**`entry@20 trail50%` was carried to TEST, not `entry@20 trail30%`, despite trail30% having the
+higher Welch t (4.35 vs 3.48).** Stated plainly because it is a judgement call: trail50% was the
+arm proposed before the sweep ran, and switching to trail30% after seeing the TRAIN t-statistics
+would be choosing the reported arm by its own search result. Trail30% is the better arm on TRAIN
+and it is left as a lead for a future round rather than harvested here.
+
+## 10.4 The held-out result, and the four tests it had to survive
+
+### Test 1 — does it beat the coin flip? **YES, on 20/20 seeds.**
+
+The control is run across **20 seeds, not one**, because a single-seed control on 72 tokens is
+itself a coin flip: the random arm's *mean* swings from −1,692 to +3,411bps depending only on which
+bars the draws land on. The Welch t is far more stable than the mean, and its range is what is
+reported.
+
+```
+WELCH t   min 2.30   median 2.60   max 2.69      t>2 on 20/20 seeds,  t>3 on 0/20
+```
+
+**The t does not clear the Harvey/Liu/Zhu t > 3 bar on any seed**, and §10.6 counts that against the
+result rather than around it.
+
+### Test 2 — is the mean one ticket? **No, but the tail is still doing most of the work.**
+
+```
+mean +37,727    MEDIAN +5,609    sd 124,357
+p10 −2,446      p90 +58,441      max +879,677
+win 73.6%       lost >90% of stake: 0.0%
+
+top 1%  of positions = 31.9% of all profit;  mean without them +25,869
+top 10% of positions = 76.1% of all profit;  mean without them  +9,462
+```
+
+**The median is the number to read, and it is +5,609bps — 27× the 208bps round trip.** Removing the
+best 10% of positions still leaves a +9,462bps mean. This is a genuinely different shape from round
+2's positive arm, whose median was −535bps and whose top 1% carried 49% of profit.
+
+### Test 3 — did the positions close? **All 72 of them.**
+
+```
+trailing-stop   n=72   mean +37,727 bps
+UNRESOLVED (marked to market): 0 of 72 = 0.0%
+```
+
+**The censoring worry raised by the 1.74-day span was wrong, and measurably so.** These tokens trade
+fast enough that a 50% trail fires within hours — several of the one-slot positions in §10.5 are
+held for minutes. No position in the held-out fold needed marking to market.
+
+### Test 4 — the sellability gate, which the research agent called decisive. **It passes.**
+
+`RESEARCH-PROFITABLE-AGENTS.md` §9 names one experiment as the one that matters most: its §4 found
+quiet early launches have the best forward medians, while its §6 found quiet pools are exactly the
+ones a $5 position cannot **sell**. If those sets fully overlap, the strategy is an illusion.
+
+Applying `sellableBefore` from `replay.ts` unchanged — *the pool has absorbed a real sell of at
+least our size, strictly before the entry bar*:
+
+```
+  arm                     n      mean    median   win%
+  UNGATED                72    +37,727   +5,609    74%
+  SELLABLE-GATED         68    +39,816   +5,723    74%
+
+  Tokens passing the gate at swap 20: 68/72
+```
+
+**The gate removes 4 tokens and slightly IMPROVES both mean and median. H1(c)(1)'s kill condition is
+not met.** The reason is that the `>=100 swaps` universe filter has already excluded the dead pools,
+so "quiet enough to be cheap" and "too quiet to exit" do not overlap on this universe.
+
+### The dose-response curve — the strongest evidence here
+
+A single threshold that works is what a search over five values produces by chance. A **monotone
+dose-response** is different, because chance does not usually produce an ordering. Measured on
+held-out tokens, at seven doses — two of which (200, 500) were **never in the TRAIN sweep at all**:
+
+```
+  entry@      n      mean    median   medianWelchT
+      5      72    +60,580    +9,714       2.31
+     10      72    +47,357    +7,027       2.33
+     20      72    +37,727    +5,609       2.60
+     50      72    +21,346    +1,058       2.21
+    100      72     +9,487    −1,137       2.21
+    200      59     +5,895    −1,539       1.57
+    500      48     +2,174    −2,983       1.23
+```
+
+**Both the mean and the median decay monotonically as entry moves later into a token's life, and
+the median crosses zero between swap 50 and swap 100.** The random control enters at a median index
+of ~297, so the comparison throughout is "enter early" against "enter anywhere". **The effect is a
+gradient, not a threshold.**
+
+## 10.5 THE ONE-POSITION CONSTRAINT — where this weakens badly
+
+A stray holds ~$5 with a 0.001 ETH floor. **It can hold ONE position.** Every mean above is a
+per-ticket edge on a basket held in parallel, which no stray can do — §5 caveat 1 made this point
+about rounds 1-3 and it applies with far more force to a family that occupies the only slot for
+hours or days.
+
+`oneAtATime` takes the first eligible entry in chronological order and refuses every other token
+until it closes. No ranking and no foresight, because a ranking rule would need to know which token
+was about to run.
+
+```
+basket (infinite capital):   n=72   mean +37,727   median +5,609
+ONE SLOT, chronological:     n=12   mean +51,135   median +4,502
+entries the slot was too busy to take: 60      slot utilisation: 80.5%
+
+ONE-SLOT RANDOM (20 seeds, same construction):  mean −733 bps
+WELCH t, one-slot signal vs one-slot random:  min 0.98  median 1.16  max 1.21
+```
+
+**The Welch t collapses from 2.60 to 1.16 and the result stops being significant.** The reason is
+purely n: the slot takes 12 of 72 available entries and skips 60. The per-ticket edge does not
+change — the median is still +4,502bps — but **12 observations cannot establish it.**
+
+And the compounded figure must not be read as a headline. The sequence one wallet could have traded
+compounds to **+21,382,518bps**, and that number is **one position**:
+
+```
+  CASHBIRD    net +544,653 bps   held 9.3h     <-- 54x, on its own
+  FEFI        net  +26,546 bps   held 27.4h
+  MONKEYS     net  +20,385 bps   held 1.2h
+  CASHDOG     net  +12,985 bps   held 0.1h
+  Catalyst    net   +5,540 bps   held 147.1h
+  ...  4 losers, worst −4,065 bps
+```
+
+**Remove CASHBIRD and the sequence compounds to roughly 38x instead of 2,000x.** A single $5 stray
+is far more likely to experience the median than the mean, and the honest statement of the one-slot
+result is: **a positive median of +4,502bps over 12 positions, not statistically distinguishable
+from random at this sample size.**
+
+## 10.6 The honesty check
+
+```
+── entry@swap-20 + 50% trailing stop, HELD-OUT, 183 cumulative trials ──
+RESULT: indistinguishable from noise
+
+  overfitting  Sharpe 2.57 does NOT survive 183 trials: needed > 46.74 and 1.6 years
+               of data, have 0.0. Treat this as noise.
+  sample size  72 trades is short of the 98 needed for t > 3
+  cost model   INCOMPLETE (slippage, reverts, own price impact — all bias OPTIMISTIC)
+
+CREDIBLE: false
+mean +37,727bps   MEDIAN +5,609bps   n=72   win 73.6%
+Welch t vs random, 20 seeds: 2.30 … 2.69   (t>3 on 0/20)
+```
+
+**Trials are counted cumulatively across all four rounds: 133 + 35 (the `hold.ts` sweep) + 5
+(span-truncation and seed-stability probes) + 10 (the arms in `hold-confirm.ts`) = 183.** Resetting
+the counter each round is the most common way a multi-round search launders an overfit into a
+result, and rounds 2 and 3 both refused to do it. So does this one.
+
+**What `credible: false` does and does not mean here.** MinBTL's bar (Sharpe > 46.74) is
+unreachable on 1.74 days of held-out data by any strategy whatsoever; it is not a bar this result
+could have cleared. The meaningful objections are the two beneath it:
+
+- **n=72 is short of the 98 needed for t > 3**, and the Welch t against random peaks at 2.69. By
+  conventional standards this is significant; by the standard `assessSampleSize` implements — which
+  exists precisely because conventional t > 2 admits too many false discoveries — it is not.
+- **The cost model is still INCOMPLETE and every omission biases OPTIMISTIC.** Reverts in
+  particular: RESEARCH-STRATEGY §1 measured that 84% of the pad fails a $5 sell quote. §10.4's gate
+  addresses this at *entry*, not at *exit*.
+
+## 10.7 The conclusion, stated plainly
+
+**Rounds 1-3 asked "can this strategy be tuned into profit?" and answered no, correctly. They then
+generalised that to "this venue is unwinnable", and that generalisation does not follow.** The
+tuning space was eleven variants of one family, bounded by a harness that could not express any
+other. This round tested four different families and one of them is positive out of sample.
+
+The arithmetic that made the old conclusion look inevitable:
+
+```
+momentum edge (held-out)      +145 bps over random
+round trip                    −208 bps
+                              ─────────
+                               −63 bps        <-- lose, every time, forever
+```
+
+The arithmetic of the new family:
+
+```
+early-entry median (held-out)  +5,609 bps
+round trip                       −208 bps      <-- 3.7% of the median move
+                               ───────────
+                                +5,401 bps
+```
+
+**The toll never was the binding constraint. The holding period was.** A 208bps round trip is fatal
+to a strategy that pays it every few minutes for a 145bps edge, and nearly irrelevant to one that
+pays it once for a move measured in thousands of bps. §9.4 said this in its own data and it was
+read as a footnote: on LEVCAT and CASHBIRD, holding beat trading by six orders of magnitude.
+
+### What is established, and what is not
+
+**Established:**
+- Early entry beats late entry on held-out tokens, **monotonically**, across seven doses including
+  two never used in the search. The median crosses zero between swap 50 and swap 100.
+- The result beats matched random on 20/20 seeds and survives the sellability gate that
+  `RESEARCH-PROFITABLE-AGENTS.md` named as its kill condition.
+- Positions genuinely close: 0% unresolved. This is not the §9.5 censoring artifact.
+- Classic trend following (Donchian, MA crossover) is **refuted** on this corpus.
+
+**NOT established:**
+- **That a single $5 stray can capture it.** Under the one-position constraint the Welch t falls to
+  1.16 and the compounded return is carried by one 54x token. **This is the finding that matters
+  most for the product and it is negative-to-inconclusive.**
+- **That it clears a t > 3 bar.** It does not, on any seed.
+- **That it survives a survivorship-free universe.** Every number in four rounds is computed on
+  tokens drawn from *today's* mcap and trending lists. §8.4 measured that bias at +264bps for a
+  coin flip and it is larger here, because holds have longer exposure to it. The random control is
+  the defence against it and the control does lose — but a universe collected forward from launch,
+  including the tokens that died, would move every absolute number DOWN.
+
+### The next experiments, in order
+
+1. **Collect a survivorship-free universe.** Every remaining doubt routes through this. A forward
+   collection from launch — including tokens that died — is the single highest-value data task, and
+   it is a collection problem, not a modelling one.
+2. **Resolve the one-position constraint.** Either measure a fleet of strays as a portfolio (§H5 in
+   `RESEARCH-PROFITABLE-AGENTS.md`), or find a selection rule better than "first eligible" that a
+   single slot can execute without foresight.
+3. **`entry@20 trail30%`** is the better TRAIN arm (t=4.35) and was deliberately not harvested here.
+   It should be carried to a fresh fold rather than re-measured on this one.
+
+## 10.8 Reproducing round 4
+
+```bash
+cd packages/backtest
+HOLD_SEARCH=1 npx tsx src/hold.ts   # the search, TRAIN only — 35 arms, reports nothing held-out
+npx tsx src/hold-confirm.ts         # the held-out verification + honesty check
+npx vitest run                      # 102 tests (50 replay + 19 liquidity + 33 positions)
+```
+
+`src/positions.ts` holds the simulator, the entry rules and the matched-random control;
+`src/hold.ts` searches and never reports a held-out number; `src/hold-confirm.ts` is the only file
+that does. That separation is the one rounds 2 and 3 used.

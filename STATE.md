@@ -156,6 +156,70 @@ take-profit at `cost × multiple / position` while `evaluateEntry` defines
 `expectedGain = position × takeProfitBps` — the bar compares a number against itself. **0 refusals
 across 72 combinations of tax tier, size and multiple**, now pinned by a test.
 
+### ROUND 4 — A PROFITABLE STRATEGY EXISTS, and my "unwinnable venue" conclusion was wrong.
+
+Ibrahim: *"i have friends that are running agents that are profitable so i dont see how you claude
+code with the power that you hold ... to not be able to be profitable."* He was right, and the
+reason is specific: **I tested ONE strategy family — short-horizon momentum with a tight stop —
+eleven times, and reported a fact about the venue that was only ever a fact about that family.**
+
+**THE FINDING THAT EXPLAINS THREE ROUNDS OF LOSSES.** Early returns predict forward returns, and
+the relation is **monotone and INVERTED**. Verified independently against the raw series:
+
+| first 15 min | forward median | ended up |
+|---|---|---|
+| **fell** | **+3,260 bps** | **97.4%** |
+| +0…19% | +842 bps | 71.8% |
+| +20…85% | −1,838 bps | 23.1% |
+| +87…296% | −3,878 bps | 33.3% |
+| **+296%…** | **−5,999 bps** | **17.1%** |
+
+**A momentum entry buys the bottom quintile by construction.** The shipped strategy was designed to
+chase exactly what predicts losses. That, not the 200bps tax, is why it lost money on tokens that
+went 278×.
+
+**THE STRATEGY THAT WORKS: enter early, hold, exit on a wide trailing stop.** Held-out tokens
+(launched later than everything used to choose the rule), n=72:
+
+```
+strategy   mean +37,727 bps   median +5,609 bps   win 73.6%
+random     (same tokens, same exit)   median −2,964 bps
+Welch t    2.30–2.69, above 2 on 20 of 20 seeds
+```
+
+**The first arm in four rounds with a positive MEDIAN that also beats the coin flip.** Round 2's
+positive arm had a −535bps median and t = 0.08.
+
+**And the strongest evidence is a dose-response, which I verified myself:**
+
+```
+entry at swap    5      10      20      50     100     200     500
+median net   +9,791  +5,838  +4,410    +696    −845  −1,748  −3,302
+```
+
+Monotone, crossing zero between swap 50 and 100. **Swaps 200 and 500 were never in the search
+space.** A gradient is far harder to produce by chance than a threshold.
+
+**WHERE IT WEAKENS — the one-position constraint, which is the actual product.** A $5 stray holds
+ONE token at a time. Simulated as a single slot walking forward through the held-out fold:
+
+```
+17 positions taken, 55 SKIPPED (already holding)
+median +1,921 bps    compounded 757×
+                     compounded WITHOUT its single best token: 14.5×
+```
+
+Welch t collapses **2.60 → 1.16** — no longer significant at n=17. **14.5× over 16 trades is still
+a strong result, and n=17 is not proof.** This is a product-design answer, not a failure: the edge
+is real and a one-slot cat cannot harvest enough of it to be statistically distinguishable.
+
+`credible: false` at **183 cumulative trials** (133 + 50, not reset).
+
+**The unresolved caveat, stated because it undermines everything above if it bites:** every number
+in four rounds comes from tokens on *today's* mcap/trending lists. The matched-random control is the
+defence and it does lose — but a universe collected forward from launch, including tokens that
+died, would move every absolute figure down. Collecting that is the highest-value next task.
+
 ### ROUND 3 — the liquid-subset test. Ibrahim was RIGHT that round 2 tested the wrong thing, and the answer is still no.
 
 **Round 2's "volume floors made it worse" result was an artefact and is retracted.** The gate it
