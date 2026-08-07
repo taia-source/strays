@@ -193,7 +193,29 @@ have no NAV anchor, are reflexive, and the pad supplies ~1,000 fresh 1%-tax list
 problem; the asset was.** Do NOT port openhood's 1440-minute lookback, its 2σ breakout, or its 24h
 horizon — those constants are artifacts of the wrong asset class.
 
-### 3e. Tax tier distribution — VERIFIED, newest 48 launches
+### 3e-bis. THE TAX DISTRIBUTION WAS MEASURED ON TOO SMALL A SAMPLE — corrected
+
+The table below was taken from the **newest 48** launches and reported 33% at 1% tax. Against the
+backtest corpus — **461 tokens with 394,635 real on-chain swaps over 28 days** — the true
+distribution is:
+
+| tax | count | share |
+|---|---|---|
+| **1%** | **369** | **80%** |
+| 3% | 27 | 6% |
+| 5% | 32 | 7% |
+| 10% | 30 | 7% |
+| other (0/2/4) | 3 | <1% |
+
+**80%, not 33%.** The newest-48 window is not a random sample of the pad — it is a sample of what
+launched in the last hour, and launch behaviour at the moment of sampling is not the population.
+
+The direction of the error is worth noting: it made the original `taxPct === 1` filter look far more
+costly than it was (I believed it discarded two thirds of the pad; it discarded one fifth). That did
+not save the filter — Ibrahim was still right that tax belongs in the cost model rather than in a
+gate — but it means **the sample size, not the reasoning, was the weakest part of §3e.**
+
+### 3e. Tax tier distribution — measured on the newest 48 launches (SUPERSEDED, see 3e-bis)
 
 | tax | count | share |
 |---|---|---|
