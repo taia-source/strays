@@ -80,9 +80,8 @@ export default function Landing() {
             You fund a cat with ETH. It picks its own targets on{" "}
             <a href="https://www.letscash.fun/" target="_blank" rel="noreferrer noopener">
               letscash
-            </a>
-            , trades them on Uniswap v4, and drops the proceeds back in your vault. You do not pick
-            or approve the trades. Cats that stop eating starve out and disappear.
+            </a>{" "}
+            and trades them — you never pick or approve a trade. Cats that stop eating starve out.
           </p>
         </section>
 

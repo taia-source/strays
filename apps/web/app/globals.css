@@ -609,25 +609,21 @@ img[data-pixel] {
  * misled. When the two compete for the last 40 pixels, the pitch loses — every time, by rule.
  */
 @media (max-height: 880px) and (max-width: 560px) {
-  .landing-what { max-height: 4.6em; }
-  /* The floor comes down a little rather than off: still four visible lines of disclosure, and
-     the panel scrolls for the remainder instead of the panel disappearing. */
-  .landing-grid { grid-template-rows: auto auto minmax(0, auto) min-content minmax(11rem, auto) auto auto; }
+  /*
+   * The last of the height goes to the disclosure.
+   *
+   * `.landing-what` was clamped to a scrolling two-line window here and the 320px screenshot
+   * showed why that was the wrong instrument: a sentence cut mid-word reads as a rendering bug,
+   * not as a scroll affordance. The copy was cut to fit instead — one sentence shorter — which is
+   * the same "budget the words before the boxes" move the whole page is built on. The panel keeps
+   * its `overflow-y: auto` as a safety net for a narrower device or a larger default font, but at
+   * every size measured it now simply fits and never clips.
+   *
+   * The risk floor comes down slightly rather than off: three risks fully visible with the fourth
+   * reachable by an internal scroll, rather than a crushed panel showing none.
+   */
+  .landing-grid { grid-template-rows: auto auto min-content min-content minmax(11rem, auto) auto auto; }
 }
-
-/*
- * A visible edge on any panel that is currently scrolling its own content.
- *
- * A clipped sentence with no affordance reads as a rendering bug — the 320px screenshot showed
- * "what it is" cut mid-word and nothing indicating there was more. A dotted rail on the scroll
- * container says "this box has more in it" without spending a scrollbar's width, which at 320px
- * is width the text needs.
- */
-.landing-what,
-.landing-risks {
-  border-right: var(--px) dotted transparent;
-}
-.landing-what { border-right-color: var(--soot-line); padding-right: var(--s1); }
 
 /*
  * ══ NARROW VIEWPORTS — the type itself gets smaller ══

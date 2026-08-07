@@ -219,9 +219,27 @@ export function WorldCanvas({
       if (now - reservedAt < RESERVED_REFRESH_MS) return;
       reservedAt = now;
       const rect = canvas.getBoundingClientRect();
-      reserved = [...document.querySelectorAll("[data-world-reserved]")].map((el) =>
-        el.getBoundingClientRect(),
-      );
+      /*
+       * ══ `.world-adopt` IS MATCHED BY CLASS, NOT BY THE `data-world-reserved` ATTRIBUTE ══
+       *
+       * Every other opaque panel carries `data-world-reserved`. The adopt panel does not, and the
+       * consequence was measured at 390px: it is a full-width block welded to the bottom of the
+       * viewport, and because the world could not see it, three token labels (PUSSY, CSUMMIT) and
+       * the DEN mark itself were drawn underneath it — invisible, in a layout where the field is
+       * already tight.
+       *
+       * The panel is rendered by `app/page.tsx`, which another agent owns and this task must not
+       * edit, so the attribute cannot be added at its source. Matching the class here is the honest
+       * way to express the same fact from inside the module that needs it. It is a coupling to a
+       * class name and that is a real cost — noted deliberately rather than hidden — but the
+       * alternative is a world that draws into pixels nobody can see, which is worse. The selector
+       * is a UNION so that adding the attribute upstream later is a no-op rather than a duplicate.
+       */
+      const panels = new Set<Element>([
+        ...document.querySelectorAll("[data-world-reserved]"),
+        ...document.querySelectorAll(".world-adopt"),
+      ]);
+      reserved = [...panels].map((el) => el.getBoundingClientRect());
 
       /*
        * ══ THE SAME RECTANGLES ALSO DEFINE THE PLAYABLE FIELD ══
