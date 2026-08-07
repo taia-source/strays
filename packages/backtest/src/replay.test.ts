@@ -22,6 +22,7 @@ import {
 import { type Bar, type RawSeries, historyBefore, toBars, toPriceWei } from "./series.js";
 import { decodeSwapLog, ethPerTokenFromSqrtX96, readSigned } from "./collect.js";
 import { describe as stat, quantile, summarise } from "./stats.js";
+import { forwardBps, mulberry32, welchT } from "./null.js";
 
 const MIN = 60;
 
@@ -85,6 +86,30 @@ group("volumeBefore / buyRatioBpsBefore / sellableBefore exclude the decision ba
   it("buyRatioBpsBefore cannot see bar i", () => {
     // Bars 0 (buy) and 1 (sell) -> 5000bps. Bar 2 being a buy must not pull it up.
     expect(buyRatioBpsBefore(bars, 2, 36_000)).toBe(5_000n);
+  });
+
+  it("the O(1) accumulators in replayToken agree with the O(n) references at every bar", () => {
+    // `replayToken` replaces `volumeBefore`/`sellableBefore` with running sums for speed. A prefix
+    // sum is easy to get wrong by exactly one bar, and one bar is the size of a lookahead bug —
+    // so the two forms are pinned equal here rather than assumed equal.
+    const series = [
+      bar(0, 1e-13, true, 100n),
+      bar(5, 1e-13, false, 900n),
+      bar(10, 1e-13, true, 30n),
+      bar(15, 1e-13, false, 50n),
+    ];
+    let cum = 0n;
+    let largestSell = 0n;
+    for (let i = 0; i < series.length; i++) {
+      expect(cum).toBe(volumeBefore(series, i));
+      // `largestSellSeenWei >= size` is the accumulator form of `sellableBefore(bars, i, size)`.
+      for (const size of [1n, 60n, 100n, 1000n]) {
+        expect(largestSell >= size).toBe(sellableBefore(series, i, size));
+      }
+      const b = series[i]!;
+      cum += b.ethVolumeWei;
+      if (!b.isBuy && b.ethVolumeWei > largestSell) largestSell = b.ethVolumeWei;
+    }
   });
 
   it("sellableBefore cannot see a sell at or after bar i", () => {
@@ -305,6 +330,44 @@ group("series construction", () => {
     expect(() => toPriceWei("0")).toThrow(/non-positive/);
     expect(() => toPriceWei("-1e-13")).toThrow(/non-positive/);
     expect(() => toPriceWei("banana")).toThrow(/non-positive/);
+  });
+});
+
+group("null hypothesis machinery", () => {
+  it("mulberry32 is deterministic — the baseline must be reproducible", () => {
+    const a = mulberry32(42);
+    const b = mulberry32(42);
+    const seqA = [a(), a(), a()];
+    const seqB = [b(), b(), b()];
+    expect(seqA).toEqual(seqB);
+    expect(new Set(seqA).size).toBe(3); // and not a constant
+    for (const v of seqA) expect(v).toBeGreaterThanOrEqual(0), expect(v).toBeLessThan(1);
+  });
+
+  it("forwardBps exits at the stop when the move breaches it", () => {
+    const bars = [bar(0, 1e-13), bar(1, 0.9e-13), bar(2, 2e-13)];
+    // -1000bps at bar 1 breaches a 235bps stop, so the +10000bps at bar 2 must NOT be reported.
+    const fwd = forwardBps(bars, 0, 10, 235n, 471n);
+    expect(fwd).toBeLessThan(0n);
+  });
+
+  it("forwardBps exits at the take-profit when that comes first", () => {
+    const bars = [bar(0, 1e-13), bar(1, 1.1e-13), bar(2, 0.5e-13)];
+    const fwd = forwardBps(bars, 0, 10, 235n, 471n);
+    expect(fwd).toBeGreaterThan(0n);
+  });
+
+  it("forwardBps never reads beyond holdBars", () => {
+    const bars = [bar(0, 1e-13), bar(1, 1.0001e-13), bar(2, 100e-13)];
+    // hold=1 means it may see bar 1 only. Bar 2's 100x must be invisible.
+    const fwd = forwardBps(bars, 0, 1, 100_000n, 100_000n);
+    expect(fwd).toBe(1n);
+  });
+
+  it("welchT is zero for identical samples and large for well-separated ones", () => {
+    expect(welchT([1, 2, 3, 4], [1, 2, 3, 4]).t).toBeCloseTo(0, 10);
+    expect(Math.abs(welchT([100, 101, 99, 100], [0, 1, -1, 0]).t)).toBeGreaterThan(10);
+    expect(welchT([1], [2]).t).toBeNaN();
   });
 });
 

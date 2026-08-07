@@ -127,7 +127,13 @@ export function sellableBefore(bars: readonly Bar[], i: number, sizeWei: bigint)
   return false;
 }
 
-/** Cumulative ETH volume over bars strictly before `i`. Never today's API value — that is lookahead. */
+/**
+ * Cumulative ETH volume over bars strictly before `i`. Never today's API value — that is lookahead.
+ *
+ * Kept as an O(i) reference implementation because it is what the tests pin. `replayToken` uses an
+ * O(1) running accumulator that is asserted equal to this — a prefix sum is easy to get subtly
+ * wrong by one bar, and one bar is exactly the size of a lookahead bug.
+ */
 export function volumeBefore(bars: readonly Bar[], i: number): bigint {
   let total = 0n;
   for (let j = 0; j < i; j++) total += bars[j]?.ethVolumeWei ?? 0n;
@@ -177,9 +183,22 @@ export async function replayToken(
   let entryBar = -1;
 
   const bars = token.bars;
+  // Running state over bars STRICTLY BEFORE the current index. Both are updated at the END of
+  // each iteration, never at the start, so during an iteration they describe the past only. This
+  // is the O(1) form of `volumeBefore`/`sellableBefore`; `replay.test.ts` pins them equal.
+  let cumulativeVolumeWei = 0n;
+  let largestSellSeenWei = 0n;
+
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     if (bar === undefined) continue;
+    // Everything below reads `cumulativeVolumeWei` / `largestSellSeenWei` as of bar i-1.
+    const advance = (): void => {
+      cumulativeVolumeWei += bar.ethVolumeWei;
+      if (!bar.isBuy && bar.ethVolumeWei > largestSellSeenWei) {
+        largestSellSeenWei = bar.ethVolumeWei;
+      }
+    };
 
     // ── Fill any entry decided on the PREVIOUS bar, at THIS bar's price.
     if (pendingEntry !== undefined) {
@@ -196,17 +215,16 @@ export async function replayToken(
       state = { ...state, position, compartmentWei: state.compartmentWei - pendingEntry.sizeWei };
       entryBar = i;
       pendingEntry = undefined;
+      advance();
       continue;
     }
 
     const history = historyBefore(bars, i, windowSeconds);
-    const sizeWei =
-      (state.compartmentWei * risk.positionFractionBps) / BPS > risk.maxPositionWei
-        ? risk.maxPositionWei
-        : (state.compartmentWei * risk.positionFractionBps) / BPS;
+    const rawSize = (state.compartmentWei * risk.positionFractionBps) / BPS;
+    const sizeWei = rawSize > risk.maxPositionWei ? risk.maxPositionWei : rawSize;
 
     const candidates: Candidate[] =
-      state.position !== undefined || history.length < 2 || !sellableBefore(bars, i, sizeWei)
+      state.position !== undefined || history.length < 2 || largestSellSeenWei < sizeWei
         ? []
         : [
             {
@@ -215,7 +233,7 @@ export async function replayToken(
                 taxPct: token.taxPct,
                 // Volume is reconstructed from bars strictly before `i`, never from the API's
                 // TODAY value — using today's volume at a bar three weeks ago is lookahead.
-                volumeAllTimeWei: volumeBefore(bars, i),
+                volumeAllTimeWei: cumulativeVolumeWei,
                 // Market cap is NOT available historically: the API reports only today's value,
                 // and reconstructing it needs the circulating supply at that block. It is set
                 // above the eligibility floor so that gate is NEUTRALISED rather than silently
@@ -298,6 +316,7 @@ export async function replayToken(
           equityWei > state.highWaterMarkWei ? equityWei : state.highWaterMarkWei,
       };
     }
+    advance();
   }
 
   // A position still open at the end of the data is closed at the last observed price and labelled

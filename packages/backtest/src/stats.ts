@@ -92,8 +92,18 @@ export type Summary = {
   readonly winRate: number;
   readonly gross: Distribution;
   readonly net: Distribution;
-  /** Compounded return of sequentially staking the same fraction, in bps. */
+  /**
+   * Compounded return of staking the full bankroll on each trade in sequence, in bps.
+   *
+   * REPORTED WITH A CAVEAT, because it is the most abusable number here. Tokens are replayed
+   * independently, so "in sequence" is an ordering that no single stray could have traded — and
+   * compounding 1,700 trades at a negative mean drives this to −10000bps (total ruin) for
+   * arithmetic reasons that say nothing extra beyond "the mean is negative". `sumBps` is the
+   * honest companion: the additive sum, which is what a fixed-size stake actually earns.
+   */
   readonly totalReturnBps: number;
+  /** Additive sum of net bps — what a CONSTANT position size earns. No compounding assumption. */
+  readonly sumBps: number;
   /** Worst peak-to-trough of the compounded equity curve, in bps. */
   readonly maxDrawdownBps: number;
   readonly sharpePerTrade: number;
@@ -128,6 +138,7 @@ export function summarise(trades: readonly Trade[]): Summary {
     gross: describe(gross),
     net: describe(net),
     totalReturnBps: (equity - 1) * 10_000,
+    sumBps: net.reduce((s, v) => s + v, 0),
     maxDrawdownBps: maxDd * 10_000,
     sharpePerTrade: sharpePerTrade(net),
     byTax: taxes.map((taxPct) => {

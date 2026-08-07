@@ -471,6 +471,7 @@ export function WorldCanvas({
         takeBox,
         now,
         reduced: reducedRef.current,
+        light,
       });
 
       // Hover test after the draw, against the interpolated positions the user actually sees.
@@ -529,6 +530,33 @@ type Palette = {
   readonly sootLine: string;
 };
 
+/**
+ * Is the RESOLVED palette the light one?
+ *
+ * Measured from the ground colour that is actually in effect rather than from
+ * `matchMedia("(prefers-color-scheme: dark)")`, because the two can disagree: the site supports an
+ * explicit `[data-theme]` override, and a user on a dark OS who has chosen the light theme would
+ * otherwise get the dark theme's additive glow painted onto a near-white field.
+ *
+ * The test is the ground's own luminance, which is the thing the blend mode actually has to be
+ * correct against. `--soot` is L 0.14 dark / L 0.97 light, so any sane threshold separates them;
+ * the colour is parsed by letting the browser resolve it through a canvas fill, which handles
+ * `oklch()` without this module needing a colour parser.
+ */
+function isLightGround(soot: string): boolean {
+  if (typeof document === "undefined") return false;
+  const c = document.createElement("canvas");
+  c.width = 1;
+  c.height = 1;
+  const cx = c.getContext("2d", { willReadFrequently: true });
+  if (cx === null) return false;
+  cx.fillStyle = soot;
+  cx.fillRect(0, 0, 1, 1);
+  const [r = 0, g = 0, b = 0] = cx.getImageData(0, 0, 1, 1).data;
+  // Rec. 601 luma is plenty for a two-way test and needs no gamma handling.
+  return (r * 0.299 + g * 0.587 + b * 0.114) / 255 > 0.5;
+}
+
 function readPalette(el: HTMLElement): Palette {
   return {
     soot: readVar(el, "--soot", "oklch(0.14 0.014 145)"),
@@ -557,6 +585,8 @@ type DrawCtx = {
   takeBox: (i: number) => { x: number; y: number; w: number; h: number };
   now: number;
   reduced: boolean;
+  /** True when the resolved palette is the LIGHT theme. Decides the glow's blend mode. */
+  light: boolean;
 };
 
 /** Grid cell size in CSS px. A camera-trap frame has a graticule; this is it. */
@@ -1037,10 +1067,26 @@ function drawGlow(
   radius: number,
   colour: string,
   strength: number,
+  light: boolean,
 ): void {
   if (radius <= 0 || strength <= 0) return;
   ctx.save();
-  ctx.globalCompositeOperation = "lighter";
+  /*
+   * ══ ADDITIVE ON A DARK GROUND, MULTIPLY-ISH ON A LIGHT ONE ══
+   *
+   * `lighter` is the right blend for the dark theme and exactly the wrong one for the light theme.
+   * Adding light to a near-white ground can only push it toward pure white, so on the light theme
+   * the cats' auras rendered as pale, desaturated PATCHES — the amber and ember state colours
+   * washed out to nearly the same off-white, which destroys the one thing the glow is carrying.
+   *
+   * On a light ground, light is not perceived as "more luminance" — it is perceived as SATURATION.
+   * `multiply` darkens toward the glow's own hue, so a fed cat sits in a warm amber pool and a
+   * starving one in an ember pool, and the two stay as distinguishable as they are in the dark.
+   *
+   * This is the same reasoning the palette itself uses — the light theme is not the dark theme with
+   * the lightness flipped, it is a separate set of decisions about what carries meaning.
+   */
+  ctx.globalCompositeOperation = light ? "multiply" : "lighter";
   const prev = ctx.globalAlpha;
   /*
    * ══ THE AMPLITUDES ARE **NOT** BLOODHORN'S 0.09 / 0.28, AND THE REASON IS THE MEDIUM ══
@@ -1444,13 +1490,13 @@ function drawStray(
   if (!d.reduced) {
     const auraScale = 1 + Math.sin(ts * rate * 0.8 + phase) * 0.06;
     const haloScale = 1 + Math.sin(ts * rate * 1.7 + phase * 1.3) * 0.045;
-    drawGlow(ctx, cx, glowY, w * 0.95 * auraScale, glowColour, glowStrength * (0.85 + breath * 0.3));
-    drawGlow(ctx, cx, glowY, w * 0.34 * haloScale, glowColour, glowStrength * (0.8 + breath * 0.4));
+    drawGlow(ctx, cx, glowY, w * 0.95 * auraScale, glowColour, glowStrength * (0.85 + breath * 0.3), d.light);
+    drawGlow(ctx, cx, glowY, w * 0.34 * haloScale, glowColour, glowStrength * (0.8 + breath * 0.4), d.light);
   } else {
     // Settled: the light is present but perfectly steady. A reduced-motion user gets the same
     // world, not a different one — the only thing removed is the movement.
-    drawGlow(ctx, cx, glowY, w * 0.95, glowColour, glowStrength * 0.9);
-    drawGlow(ctx, cx, glowY, w * 0.34, glowColour, glowStrength);
+    drawGlow(ctx, cx, glowY, w * 0.95, glowColour, glowStrength * 0.9, d.light);
+    drawGlow(ctx, cx, glowY, w * 0.34, glowColour, glowStrength, d.light);
   }
 
   /*

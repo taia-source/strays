@@ -187,11 +187,28 @@ export function createSim(width: number, height: number, random: () => number): 
 }
 
 /**
- * THE DEN — bottom-left, inset by a fraction rather than a constant.
+ * THE DEN — lower-left of the PLAYABLE field, by a fraction rather than a constant.
  *
  * A fixed pixel inset would put the den off-screen on a 320px phone and in the middle of nowhere on
  * a 1440px desktop. Fractions of the field keep it in the same PLACE in the composition at every
  * width, which is what makes "it went home" legible without a label.
+ *
+ * ══ 0.62 OF THE FIELD, NOT 0.78, AND THE DIFFERENCE WAS A MISSING CAT ══
+ *
+ * At 0.78 the den sat at y≈489 on a 390px viewport — measured, by dumping the body's real position
+ * alongside every panel rectangle — and the adopt panel occupies y 455..527 there. So the ONLY cat
+ * in the colony was parked underneath an opaque panel and the field rendered empty, on exactly the
+ * screen size where an empty field is most likely to be all anyone sees.
+ *
+ * The inset machinery did not catch it because the adopt panel is a wide, short band across the
+ * middle-bottom of a phone layout, and the bottom inset is capped at 30% of the height (deliberately
+ * — an uncapped inset on a small screen collapses the field to nothing). A capped inset means some
+ * chrome is NOT excluded from the field, which is the right trade for the field as a whole and the
+ * wrong assumption for the single most important fixed point in it.
+ *
+ * So the den is pulled up to a fraction that clears the panel band on a phone while still reading as
+ * "low and to the left" on a desktop. The cats' den is the one position that must never be occluded,
+ * because it is where every idle cat lives — and today every cat is idle.
  */
 function denFor(
   width: number,
@@ -203,7 +220,21 @@ function denFor(
   // walks off-screen to reach it.
   const w = Math.max(1, width - insets.left - insets.right);
   const h = Math.max(1, height - insets.top - insets.bottom);
-  return { x: insets.left + w * 0.13, y: insets.top + h * 0.78 };
+  /*
+   * The x fraction is larger on a NARROW field, because a fraction is not a margin.
+   *
+   * 0.13 of a 1440px field is 187px — ample room for the widest cat plus the den mark beside it.
+   * 0.13 of a 340px phone field is 44px, which is LESS than the half-width of a big cat sprite, so
+   * the animal was drawn clipped by the left edge of the viewport. Measured at 390px: the head and
+   * front paws were cut off.
+   *
+   * This is the same class of mistake the token layout already records — a value that is correct as
+   * a proportion of a large field and wrong as an absolute distance on a small one. The floor is
+   * expressed in the units the constraint is actually in (pixels of sprite), so it cannot drift out
+   * of agreement with the thing it is protecting.
+   */
+  const x = insets.left + Math.max(w * 0.13, Math.min(w * 0.34, MAX_CAT_RADIUS + 12));
+  return { x, y: insets.top + h * 0.62 };
 }
 
 /**
@@ -243,24 +274,57 @@ function denFor(
  * the left edge of the composition and an arc opening left would put half the colony off-canvas.
  */
 export function denSlot(sim: Sim, index: number, radius: number): Vec {
-  const PER_RING = 5;
-  const ring = Math.floor(index / PER_RING);
-  const withinRing = index % PER_RING;
-  // Ring 0 sits just clear of the den mark; each further ring clears the largest possible cat.
-  const r = 46 + ring * (radius + 34);
   /*
-   * Spread across a 120° arc.
+   * ══ THE RING'S CAPACITY IS DERIVED FROM THE CAT'S SIZE, NOT FIXED AT FIVE ══
    *
-   * The slot's position within the arc is `(withinRing + 0.5) / PER_RING` rather than
-   * `withinRing / (PER_RING - 1)`. The difference matters for the colony we actually have: the
-   * second form puts cat 0 at the arc's extreme END, so a colony of ONE — which is the real state
-   * of the vault today — renders a single cat pinned to the top edge of the arc, reading as a
-   * colony of five with four missing. Cell-centred placement puts a lone cat in the middle of the
-   * space it occupies, which is what "one cat resting at the den" should look like.
+   * This was `PER_RING = 5` on a 120° arc at radius 46, and the arithmetic never worked: five slots
+   * across a 96px arc is ~19px of spacing for animals that are 48-84px wide. It went unnoticed while
+   * the vault had ONE stray, because with one cat there is nothing to collide with. A second stray
+   * was adopted while this rewrite was being screenshotted and the two cats immediately rendered on
+   * top of each other — one composite blob where the colony should be.
+   *
+   * That is the shape of the bug worth naming: a layout constant chosen against the population you
+   * happen to have is untested by definition, and the test arrives as a user.
+   *
+   * So the ring holds as many cats as its CIRCUMFERENCE can seat, given how wide a cat actually is.
+   * `arcLength / catWidth`, floored, with a minimum of one. Radius and capacity are now derived from
+   * the same quantity, so they cannot disagree.
    */
-  const spread = Math.PI * (2 / 3);
-  const angle = -spread / 2 + ((withinRing + 0.5) / PER_RING) * spread;
-  return clampToField(sim, { x: sim.den.x + Math.cos(angle) * r, y: sim.den.y + Math.sin(angle) * r }, radius);
+  const SPREAD = Math.PI * (2 / 3);
+  // How much arc one cat needs, in radians, at a given radius: its drawn width plus a gap.
+  const need = radius * 1.15 + 16;
+
+  // Walk outward until a ring is found with room for this index.
+  let ring = 0;
+  let seen = 0;
+  let r = 52 + radius * 0.5;
+  for (;;) {
+    const seats = Math.max(1, Math.floor((SPREAD * r) / need));
+    if (index < seen + seats) {
+      const withinRing = index - seen;
+      /*
+       * The slot's position within the arc is `(withinRing + 0.5) / seats` rather than
+       * `withinRing / (seats - 1)`. The difference matters for the colony we actually have: the
+       * second form puts cat 0 at the arc's extreme END, so a colony of ONE renders a single cat
+       * pinned to the top edge of the arc, reading as a colony of many with the others missing.
+       * Cell-centred placement puts a lone cat in the middle of the space it occupies.
+       */
+      const angle = -SPREAD / 2 + ((withinRing + 0.5) / seats) * SPREAD;
+      return clampToField(
+        sim,
+        { x: sim.den.x + Math.cos(angle) * r, y: sim.den.y + Math.sin(angle) * r },
+        radius,
+      );
+    }
+    seen += seats;
+    ring += 1;
+    r += need;
+    // A colony large enough to need this many rings would be off-field anyway; stop rather than
+    // loop forever on a pathological input.
+    if (ring > 24) {
+      return clampToField(sim, { x: sim.den.x + r, y: sim.den.y }, radius);
+    }
+  }
 }
 
 /**
@@ -657,6 +721,38 @@ export type TokenInput = {
 };
 
 /**
+ * ══ HOW MANY TOKENS THIS FIELD CAN HONESTLY DRAW ══
+ *
+ * Derived from area, not chosen. Each token needs room for its diamond (up to 17px radius) AND its
+ * ticker plate, and the plate is the binding constraint — it is ~70px wide and 16px tall, and a
+ * ticker nobody can read defeats the entire quarry layer.
+ *
+ * Measured at 390px, where the playable field is roughly 340x430 = ~146,000px²: fourteen tokens put
+ * a diamond every ~10,000px², and the rendered result had labels clipping each other, labels
+ * clipping the cat, and the one live animal in the colony overlapping two diamonds at once. At
+ * ~26,000px² per token the same field holds five or six and every one of them is readable.
+ *
+ * ══ WHY THINNING IS HONEST HERE, AND WHERE THE HONESTY ACTUALLY LIVES ══
+ *
+ * This is the one place in the file that shows less than the whole truth, so it needs defending.
+ * The rule the project holds is that the world must never INVENT data — an empty colony renders
+ * empty and says so. Showing a subset is a different act from fabricating: nothing drawn is false,
+ * and the count is never misrepresented, because the HUD reads "QUARRY 14 on field" from the
+ * payload and the roster lists every one of the fourteen as text with its market cap and its tax.
+ * So the complete truth is on the page, in the layer that can carry it.
+ *
+ * What the canvas cannot do is draw fourteen legible diamonds in 146,000px². Cramming them in does
+ * not show more information — it shows fourteen unreadable marks, which is less. The subset is
+ * taken from the FRONT of the already-sorted list, so it is the newest launches (the ones a stray
+ * would actually hunt), never a random sample.
+ */
+function fieldCapacity(sim: Sim): number {
+  const fw = Math.max(1, sim.width - sim.insets.left - sim.insets.right);
+  const fh = Math.max(1, sim.height - sim.insets.top - sim.insets.bottom);
+  return Math.max(3, Math.floor((fw * fh) / 26000));
+}
+
+/**
  * Sync the token field with what the API actually returned.
  *
  * Tokens that fall off the list LEAVE the field. Nothing is retained to keep the world looking
@@ -666,8 +762,11 @@ export type TokenInput = {
  * Returns true when the SET changed, so the caller can skip a re-layout on the overwhelmingly
  * common poll where the same fourteen tokens came back.
  */
-export function syncTokens(sim: Sim, tokens: readonly TokenInput[]): boolean {
+export function syncTokens(sim: Sim, all: readonly TokenInput[]): boolean {
   let changed = false;
+  // Only as many as the field can draw legibly. See `fieldCapacity` for why this is a rendering
+  // limit rather than a data one, and where the full list stays visible.
+  const tokens = all.slice(0, fieldCapacity(sim));
   const live = new Set(tokens.map((t) => t.address));
   for (const key of [...sim.tokens.keys()]) {
     if (!live.has(key)) {

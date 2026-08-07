@@ -17,9 +17,10 @@ import {
   createMemoryTrialLog,
   formatHonestReport,
 } from "@taia/backtest";
-import { DEFAULT_PARAMS, type ReplayParams, type Trade, replay } from "./replay.js";
+import { randomEntries, welchT } from "./null.js";
+import { DEFAULT_PARAMS, type ReplayParams, replay } from "./replay.js";
 import { type RawSeries, type TokenBars, toBars } from "./series.js";
-import { type Summary, summarise } from "./stats.js";
+import { type Summary, describe as stats, summarise } from "./stats.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +41,7 @@ function line(label: string, s: Summary): string {
     `win ${pct(s.winRate).padStart(6)}  ` +
     `meanNet ${s.net.mean.toFixed(0).padStart(7)}bps  ` +
     `medNet ${s.net.median.toFixed(0).padStart(6)}bps  ` +
-    `total ${s.totalReturnBps.toFixed(0).padStart(9)}bps  ` +
+    `sum ${s.sumBps.toFixed(0).padStart(8)}bps  ` +
     `maxDD ${s.maxDrawdownBps.toFixed(0).padStart(6)}bps  ` +
     `SR/trade ${s.sharpePerTrade.toFixed(3)}`
   );
@@ -79,6 +80,43 @@ async function main(): Promise<void> {
   process.stdout.write(`by tax tier: ${baseSummary.byTax.map((t) => `${String(t.taxPct)}%: n=${String(t.n)} mean=${t.meanNet.toFixed(0)}bps`).join("  ")}\n`);
   process.stdout.write(`by exit:     ${baseSummary.byExit.map((t) => `${t.reason}: n=${String(t.n)} mean=${t.meanNet.toFixed(0)}bps`).join("  ")}\n\n`);
 
+  /* ══ 1b. THE NULL HYPOTHESIS — does the signal beat entering at random? ══ */
+  const holdBars = Math.round(
+    base.trades.reduce((n, t) => n + t.barsHeld, 0) / Math.max(base.trades.length, 1),
+  );
+  const random = randomEntries(tokens, {
+    perToken: 4,
+    holdBars,
+    stopBps: DEFAULT_PARAMS.stopLossBps,
+    takeBps: 471n, // 3 x SIGMA_1H_BPS, the take-profit the strategy uses
+    seed: 20_260_807,
+  });
+  // Charge the random arm the SAME measured cost, per its own token's tax tier. Comparing a
+  // gross random return against a net signal return would rig the comparison.
+  const randomNet = random.map((r) => r.netBps - (2 * r.taxPct * 100 + 32));
+  const randomGross = random.map((r) => r.netBps);
+  const signalNet = base.trades.map((t) => Number(t.netBps));
+  const signalGross = base.trades.map((t) => Number(t.grossBps));
+
+  const netT = welchT(signalNet, randomNet);
+  const grossT = welchT(signalGross, randomGross);
+  const rNet = stats(randomNet);
+  const rGross = stats(randomGross);
+
+  process.stdout.write("══ NULL HYPOTHESIS: signal entries vs RANDOM entries, same tokens/hold/cost ══\n");
+  process.stdout.write(
+    `  signal  n=${String(signalGross.length)}  gross mean ${baseSummary.gross.mean.toFixed(0)}bps  ` +
+      `median ${baseSummary.gross.median.toFixed(0)}bps  |  net mean ${baseSummary.net.mean.toFixed(0)}bps\n`,
+  );
+  process.stdout.write(
+    `  random  n=${String(randomGross.length)}  gross mean ${rGross.mean.toFixed(0)}bps  ` +
+      `median ${rGross.median.toFixed(0)}bps  |  net mean ${rNet.mean.toFixed(0)}bps\n`,
+  );
+  process.stdout.write(
+    `  Welch t (gross): ${grossT.t.toFixed(2)}   Welch t (net): ${netT.t.toFixed(2)}\n` +
+      "  |t| < 2 means the signal is not distinguishable from a coin flip on this data.\n\n",
+  );
+
   /* ══ 2. THE PARAMETER SWEEP — every variant counted against MinBTL ══ */
   const trialLog = createMemoryTrialLog();
   await trialLog.record({ name: "baseline", sharpe: baseSummary.sharpePerTrade });
@@ -87,9 +125,13 @@ async function main(): Promise<void> {
   for (const lookbackMinutes of [15, 30, 60, 120, 240]) {
     variants.push({ name: `lookback=${String(lookbackMinutes)}`, params: { ...DEFAULT_PARAMS, lookbackMinutes } });
   }
-  for (const edgeMultiple of [1n, 2n, 3n, 4n]) {
-    variants.push({ name: `edge=${edgeMultiple.toString()}`, params: { ...DEFAULT_PARAMS, edgeMultiple } });
-  }
+  // EDGE_MULTIPLE is deliberately ABSENT from this sweep. It is a module-level `const` in
+  // `@strays/hunt`'s bar.ts and `decide()` reads it directly rather than taking it from
+  // `DecideConfig`, so there is no way to vary it without editing hunt — which this package may
+  // not do. An earlier draft swept it anyway and produced four byte-identical rows; they were
+  // removed rather than reported, because four identical rows presented as a sweep would be a
+  // claim that the parameter was tested when it was not. Recorded in RESULTS.md as a finding
+  // about the strategy's testability.
   for (const stopLossBps of [100n, 235n, 400n, 800n, 1600n]) {
     variants.push({ name: `stop=${stopLossBps.toString()}`, params: { ...DEFAULT_PARAMS, stopLossBps } });
   }

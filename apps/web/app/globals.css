@@ -425,6 +425,22 @@ img[data-pixel] {
  */
 .landing-risks {
   overflow-y: auto;
+  /*
+   * ══ A SCROLLABLE DISCLOSURE MUST LOOK SCROLLABLE ══
+   *
+   * At 390px the fourth risk ("A cat can simply be wrong") is cut mid-sentence at the panel edge.
+   * The panel does scroll — but nothing on screen SAYS so, so a reader sees a truncated sentence
+   * and reasonably concludes that is all there is. On a risk disclosure that is the same defect as
+   * hiding it, arrived at politely.
+   *
+   * unitick's recorded trap was `display: none` on help text to fix a cramped no-scroll layout,
+   * trading a layout defect for a disclosure defect. Silent clipping is the same trade with extra
+   * steps. The mask fades the last ~2rem when there is more below, which is a visible affordance
+   * rather than an invisible one, and `scrollbar-width: thin` puts a real scrollbar back.
+   */
+  scrollbar-width: thin;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent 100%);
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--rail) transparent;
