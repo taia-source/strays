@@ -112,3 +112,85 @@ export async function quoteBuy(args: {
     return null;
   }
 }
+
+/**
+ * THE SELL SIMULATION. Quote selling `amountInTokens` back to ETH — **before we buy**.
+ *
+ * ══ MEASURED: 84 OF THE NEWEST 100 TOKENS FAIL THIS AND 0 FAIL THE BUY ══
+ *
+ * Every token on this pad quotes a BUY successfully. 84 of 100 cannot be quoted for a SELL. Until
+ * this function existed the keeper checked only `quoteBuy`, so it would have bought all 84 and
+ * discovered the problem while holding — RESEARCH-STRATEGY §1.
+ *
+ * It is the same `eth_call` in the opposite direction (`zeroForOne: false`), so it costs nothing
+ * and risks nothing, and it is the single highest-value check available to us.
+ *
+ * ══ WHY THE REVERT SELECTOR IS UNWRAPPED RATHER THAN DISCARDED ══
+ *
+ * The v4 quoter wraps inner reverts in `UnexpectedRevertBytes(bytes)` (`0x6190b2b0`). Unwrapping
+ * gave exactly two inner selectors across all 84 measured failures, and they mean different things:
+ *
+ *   0x7a5ed734  NotEnoughLiquidity  — 38 tokens, a genuine DEPTH refusal
+ *   0x90bfb865  hook refusal        — 46 tokens, ALL of which had never traded
+ *
+ * The ACTION is identical (do not buy), so `screen.ts` keys on the outcome. But a log that cannot
+ * tell a thin pool from a hook refusal cannot tell an operator whether the pad has changed, so the
+ * selector is extracted and carried through.
+ */
+export async function simulateSell(args: {
+  readonly client: ReturnType<typeof createPublicClient>;
+  readonly token: `0x${string}`;
+  readonly tickSpacing: number;
+  readonly amountInTokens: bigint;
+}): Promise<{ ok: true; proceedsWei: bigint } | { ok: false; selector: string | null }> {
+  if (args.amountInTokens <= 0n) {
+    // Nothing to sell back is not evidence that selling works. Refuse rather than report success.
+    return { ok: false, selector: null };
+  }
+  try {
+    const { result } = await args.client.simulateContract({
+      address: V4_QUOTER,
+      abi: QUOTER_ABI,
+      functionName: "quoteExactInputSingle",
+      args: [
+        [
+          [NATIVE, args.token, 0, args.tickSpacing, HOOK],
+          false, // zeroForOne: FALSE — token in, ETH out. This is the whole point.
+          args.amountInTokens,
+          "0x",
+        ],
+      ],
+    });
+    const out = result[0];
+    return out > 0n ? { ok: true, proceedsWei: out } : { ok: false, selector: null };
+  } catch (err) {
+    return { ok: false, selector: innerRevertSelector(err) };
+  }
+}
+
+/**
+ * Pull the INNER revert selector out of the quoter's `UnexpectedRevertBytes(bytes)` wrapper.
+ *
+ * Returns `null` when nothing decodable is present — an RPC error rather than a contract refusal.
+ * Deliberately does not throw: a failure to parse a revert must not become a failure to screen.
+ */
+export function innerRevertSelector(err: unknown): string | null {
+  // viem nests the original data through a `cause` chain; walk it for the wrapper payload.
+  let node: unknown = err;
+  let wrapped: string | null = null;
+  for (let depth = 0; node !== null && node !== undefined && depth < 10; depth++) {
+    if (typeof node !== "object") break;
+    const data = (node as { data?: unknown }).data;
+    if (typeof data === "string" && data.startsWith("0x6190b2b0")) wrapped = data;
+    node = (node as { cause?: unknown }).cause;
+  }
+  if (wrapped === null) return null;
+  // Layout after the 4-byte selector: offset word (32B), length word (32B), then the payload.
+  const body = wrapped.slice(10);
+  const lengthHex = body.slice(64, 128);
+  if (lengthHex.length < 64) return null;
+  const length = Number.parseInt(lengthHex, 16);
+  if (!Number.isFinite(length) || length < 4) return null;
+  const payload = body.slice(128, 128 + length * 2);
+  return payload.length >= 8 ? `0x${payload.slice(0, 8)}` : null;
+}

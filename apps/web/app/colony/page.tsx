@@ -1,68 +1,18 @@
 /**
- * `/colony` — the map. The social loop and the product's primary surface.
+ * `/colony` → `/app`.
  *
- * Referent rule 3: THE CAMERA DOES NOT FOLLOW. It has a fixed frame and things enter and leave it.
- * The map does not pan to your cat and nothing is centred on the user — you find yours in the
- * frame. That is what makes it a colony rather than a dashboard.
+ * The colony moved to `/app` when it became a live canvas world rather than a grid of portraits.
+ * This route is kept as a permanent redirect rather than deleted because `/colony` is in
+ * `DESIGN.md` §8's route table, on the landing page's old markup, and in whatever screenshots and
+ * links already exist — and a 404 on a route the project's own design document names is the kind of
+ * rot that gets discovered by a user rather than by us.
  *
- * HONEST STATE: this route reads live vault state from chain. When no strays exist it renders an
- * EMPTY colony and says so. It does NOT seed example cats — "a blank table reads as broken, a fake
- * one reads as fine", and the fake one is the dangerous defect.
+ * `permanentRedirect` (308) rather than `redirect` (307): the move is permanent, and a 308 lets
+ * crawlers and browsers transfer the old URL's standing to the new one instead of re-checking it
+ * forever.
  */
-import type { Metadata } from "next";
-import Link from "next/link";
-import { listStrays } from "../lib/chain";
-import { Adopt } from "../adopt";
-import { CatPortrait } from "../cat-portrait";
+import { permanentRedirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "STRAYS — the colony" };
-export const revalidate = 15;
-
-export default async function Colony() {
-  const { strays, block, at } = await listStrays();
-  return (
-    <main className="colony">
-      <header className="colony-head">
-        <Link href="/" className="back">← STRAYS</Link>
-        <h1>The colony</h1>
-        <p className="stamp">
-          {strays.length} {strays.length === 1 ? "stray" : "strays"} · block {block.toString()} ·{" "}
-          {new Date(at).toISOString().replace("T", " ").slice(0, 19)}Z
-        </p>
-      </header>
-
-      {/*
-        ADOPTION LIVES HERE, above the colony, on the app route.
-        The recorded failure this guards against: a service built to act on a user's token shipped
-        with NO TEXT INPUT ANYWHERE, passing 747 tests and 24 browser checks, because the user's
-        path was never written down so nothing could notice a step was missing. Step 4 of the path
-        in DESIGN §7 is "funds and spawns", and this is it.
-      */}
-      <section className="adopt-slot">
-        <Adopt />
-      </section>
-
-      {strays.length === 0 ? (
-        <section className="empty">
-          <p>No strays yet.</p>
-          <p className="stamp">
-            Nothing has been adopted on this vault. This is an empty colony, not a broken page — the
-            first cat to be funded appears here.
-          </p>
-        </section>
-      ) : (
-        <ul className="colony-grid">
-          {strays.map((s) => (
-            <li key={s.id}>
-              <Link href={`/stray/${s.id}`}>
-                <CatPortrait id={s.id} state={s.state} size={72} />
-                <span className="fig">{s.stakeEth.toFixed(5)} ETH</span>
-                <span className="stamp">{s.holding ? "hunting" : "idle"}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
-  );
+export default function ColonyMoved(): never {
+  permanentRedirect("/app");
 }

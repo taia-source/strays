@@ -1,45 +1,62 @@
 /**
- * THE HARD FILTER. Which letscash tokens a stray is permitted to hunt at all.
+ * THE HARD FILTER. Which letscash tokens are worth SPENDING A QUOTER CALL ON.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
- * ══ RULE 1 IS THE PRODUCT (RESEARCH.md §3c, DESIGN.md §6) ══
+ * ══ WHAT CHANGED, AND WHY THE OLD RULE 1 WAS WRONG ══
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
- * **A stray may hunt `taxPct === 1` tokens and nothing else.** This is not a tuning preference;
- * it is the difference between a strategy that can win and one that provably cannot. From the
- * measured round trips in RESEARCH §3b, the move a position needs merely to BREAK EVEN:
+ * This file used to hard-refuse everything but `taxPct === 1`. That rule is now GONE, and the
+ * reason is arithmetic rather than preference: **a 5%-tax token that moves 30% is far more
+ * profitable than a 1%-tax token that moves 2%.** Refusing by tier discards the first trade in
+ * order to avoid the second, when the cost model can simply price both.
  *
- *    1% tax  ->   231.4 bps round trip  ->  needs  +2.32%   <- the only tier we take
- *    3% tax  ->   624.2 bps             ->  needs  +6.24%
- *    5% tax  ->  1007.6 bps             ->  needs +10.08%
- *   10% tax  ->  1938.3 bps             ->  needs +19.38%
+ * Tax is now a COST TERM in `score.ts`, subtracted from the expected move before ranking. Each
+ * tier carries its own bar, from the measured round trips (RESEARCH.md §3b, re-confirmed on LIVE
+ * pools this session — RESEARCH-STRATEGY §6):
  *
- * Against a measured mean absolute 24h move of 7.7% across live launches, a 10%-tax token must
- * post a 2.5-sigma-scale move just to return the capital. RESEARCH §0 states it in one line: this
- * single filter "is the difference between a product and a money incinerator".
+ *    1% tax  ->   231 bps round trip  ->  break-even +2.31%,  bar +4.63%
+ *    3% tax  ->   624 bps             ->  break-even +6.24%,  bar +12.5%
+ *    5% tax  ->  1008 bps             ->  break-even +10.1%,  bar +20.2%
+ *   10% tax  ->  1938 bps             ->  break-even +19.4%,  bar +38.8%
  *
- * It costs us nothing in opportunity. RESEARCH §3e measured the tier distribution across the
- * newest 48 launches: 1% = 33%, 3% = 13%, 5% = 23%, 10% = 31%. **~33% of the pad is huntable**,
- * which against 3,063 launched tokens is ~1,000 candidates and growing. Refusing two thirds of
- * the pad is affordable precisely because the pad is large.
+ * A 10%-tax token is therefore refused **by the arithmetic** when it cannot clear +38.8%, and
+ * admitted when it can. SpinningCat (10% tax) was the third most-traded token in the measured
+ * sample and the old rule could not see it at all.
  *
- * The comparison is `=== 1`, strictly, not `<= 1`. A `taxPct` of 0 is not a better deal, it is a
- * failed read: every launch on this pad carries a tax, the hook is the fee engine, and a zero
- * would mean `/api/tokens/{addr}` returned a missing field coerced to a number. RESEARCH §5 says
- * to treat the API as unofficial and unstable, so a suspicious value is refused rather than
- * treated as the most attractive token on the venue.
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ * ══ TWO SHIPPED FLOORS WERE MEASURED TO BE BROKEN. BOTH ARE RECORDED, NOT QUIETLY FIXED. ══
+ * ══════════════════════════════════════════════════════════════════════════════════════════
  *
- * ══ WHY THE OTHER FILTERS ARE FLOORS, NOT SCORES ══
+ * **1. `minMarketCapWei = 1 ETH` refused NOTHING — 100/100 tokens passed it.** The derivation
+ * ("~385x a $5 position") was sound reasoning, but the pad's SEED market cap is 1.356 ETH, so a
+ * 1.0 ETH floor sits BELOW the minimum value the field can take. It read like a depth control and
+ * was arithmetically incapable of being one. Now set above the seed, where it separates traded
+ * from untraded: `> 1.36 ETH` was sellable 15/15, `<= 1.36 ETH` was sellable 1/85.
  *
- * Everything below returns a REASON string, and the reason goes in `/logs` (DESIGN §8: the logs
- * page is "load-bearing, not a nicety" and must show why a decision went the way it did). A
- * refusal with no reason beside it is an assertion; "refused: tax 10% (231bps at 1%, 1938bps
- * here)" is a finding somebody can check.
+ * **2. `minHolders = 25` admitted 1 token in 100.** The full shipped filter
+ * (`tax==1 && mcap>=1 && holders>=25 && vol>=0.026`) passed exactly ONE of the newest 100 tokens.
+ * That is the mechanical cause of ~0.4 trades/day.
  *
- * The floors are deliberately few. Each one below traces to a measurement or to a recorded
- * failure; there is no "quality score" here, because a weighted score of unmeasured factors is a
- * curve fit wearing a filter's clothes, and `@taia/backtest`'s MinBTL guard exists to make that
- * mistake loud.
+ * And it did not do the job it was credited with. The objection was that 25 holders is too LOW to
+ * stop a rug — the measurement agrees, and shows the instrument is simply wrong: **CASHDOG, the
+ * single token that passed, carries `top10Pct = 22%`**, the second-highest concentration in the
+ * sample. The holder count admitted it; concentration was never checked at all.
+ *
+ * Note also that the `holders` field counts the POOL CONTRACT itself, which is why 83 of 100
+ * tokens report exactly 2 (pool + factory). A "25 holders" floor asks for far more real
+ * participants than the number suggests.
+ *
+ * So the holder floor stays, at 3, as a pure LIVENESS proxy — and the protection job moves to
+ * `screen.ts`, which measures the thing itself: a sell simulation, top-10 concentration, sniper
+ * /bundle holdings and creator holdings.
+ *
+ * ══ WHAT THIS FILE IS NOW FOR ══
+ *
+ * It is a CHEAP PRE-FILTER, not the safety system. Its only job is to avoid spending a quoter
+ * round-trip and an API call on a token that provably cannot pass — 46% of the pad has never
+ * traded at all. The decisive checks are in `screen.ts` (can we sell it?) and `score.ts` (does the
+ * move clear its own tax?). Every refusal returns a REASON, and the reason goes in `/logs`
+ * (DESIGN §8).
  */
 
 /** What `/api/tokens/{addr}` gives us, narrowed to the fields the filter actually reads. */
@@ -62,40 +79,50 @@ export type TokenSnapshot = {
 
 export type EligibilityConfig = {
   /**
-   * The ONLY permitted tax tier. Configurable so a test can prove that changing it changes the
-   * outcome, NOT so an operator can raise it — `assertHuntableTax` refuses anything but 1 and is
-   * called on every config.
+   * The HIGHEST tax tier worth evaluating at all, as an integer percent.
+   *
+   * NOT an exclusion of the kind this file used to carry. Tax is priced in `score.ts`; this is
+   * only a sanity ceiling so a malformed API read (`taxPct: 900`) cannot reach the cost model.
+   * Set at 10, the highest tier the pad actually issues (RESEARCH §3e, re-measured: the newest 100
+   * split 1%=29, 3%=10, 5%=18, 10%=43).
+   *
+   * A token at the ceiling is still required to clear its own +38.8% bar, so admitting it costs
+   * nothing — the arithmetic refuses it, and does so with a number in the log rather than a rule.
    */
-  readonly requiredTaxPct: number;
+  readonly maxTaxPct: number;
 
   /**
    * Minimum market cap, in wei of ETH.
    *
-   * DERIVATION: the position is $5 (DESIGN §2) ~= 0.0026 ETH at the measured ETH price of
-   * $1927.27. RESEARCH §3b measured swap cost as `2 x tax` to within 1 bps at $5, i.e. price
-   * impact was BELOW MEASUREMENT RESOLUTION — but that was measured against live pools, and the
-   * property is a statement about the ratio of position to depth, not about $5 in the abstract.
+   * DERIVATION — MEASURED, and it replaces a floor that refused nothing. The pad's SEED market cap
+   * is **1.356 ETH**: 84 of the newest 100 tokens sit at exactly that value, because it is what a
+   * launch is initialised to before anyone buys. The old 1.0 ETH floor was therefore BELOW the
+   * minimum the field can take and passed 100/100 tokens.
    *
-   * 1 ETH (~$1927) is ~385x a $5 position. At that ratio a $5 trade is ~0.26% of the pool, which
-   * is the regime the negligible-impact measurement was actually taken in. Below it the whole
-   * cost model — which carries NO impact term precisely because impact was unmeasurable — starts
-   * describing a trade we are not making. This floor is what keeps `cost.ts` honest, and it is
-   * set at the edge of where cost.ts was verified rather than at a round number that sounded safe.
+   * Above the seed means somebody has actually bought, and it separates the pad almost perfectly:
+   *
+   *   marketCapEth >  1.36   ->  15/15 sellable (100%)
+   *   marketCapEth <= 1.36   ->   1/85 sellable (  1%)
+   *
+   * Set at 1.40 ETH — clear of the seed, at the edge of where the measured sellable set begins.
    */
   readonly minMarketCapWei: bigint;
 
   /**
-   * Minimum distinct holders.
+   * Minimum distinct holders. A LIVENESS proxy and nothing more.
    *
-   * DERIVATION: a token whose entire holder set is its deployer has no counterparty, so its
-   * "price" is one address's mark and any move in it is that address moving it. 25 is the floor
-   * at which a price is at least a plural opinion. It is a LIVENESS floor, not a quality signal —
-   * it does not claim 25 holders are good, only that fewer than 25 means the price series the
-   * signal reads is not a market's.
+   * DERIVATION: the shipped value of 25 admitted **1 token in 100** and was the mechanical cause
+   * of ~0.4 trades/day. It was also credited with rug protection it never provided — the one token
+   * it admitted, CASHDOG, carries the second-highest top-10 concentration in the sample (22%).
    *
-   * This is the one threshold here with no direct measurement behind it, and it is labelled as
-   * such rather than dressed up. It is set low on purpose: a high holder floor would be a
-   * popularity filter, and RESEARCH offers no evidence that popularity predicts return.
+   * Two facts make a high holder floor wrong on this pad specifically. The field COUNTS THE POOL
+   * CONTRACT, so 83 of 100 tokens report exactly 2 (pool + factory) and "25" means far more real
+   * participants than it sounds like. And RESEARCH offers no evidence that popularity predicts
+   * return, so a high floor is a popularity filter wearing a safety label.
+   *
+   * 3 is the floor at which at least one address other than the pool and the factory holds the
+   * token — i.e. a price that is not purely the seed. Rug protection lives in `screen.ts`, which
+   * measures concentration directly instead of inferring it from a count.
    */
   readonly minHolders: number;
 
@@ -120,6 +147,16 @@ export type EligibilityConfig = {
    * this to the horizon rather than picking a "feels new enough" number means that if the horizon
    * ever changes, this floor is wrong in a way a test will catch — `eligible.test.ts` asserts the
    * two agree.
+   *
+   * There is a real tension here worth stating rather than hiding. The strongest number in the rug
+   * literature is that **93% of rug pulls occur within 24 hours of pool creation** (*Do Not Rug on
+   * Me*, Mazorra/Adan/Daza, Mathematics 10(6):949, 2022, 27,588 labelled tokens), which argues for
+   * waiting. The pad's economics argue the opposite way, since a memecoin's move happens early.
+   *
+   * We resolve it structurally rather than by picking a number: letscash **locks liquidity
+   * permanently at launch** (RESEARCH §1a), so the classic liquidity-withdrawal rug — the failure
+   * that 24-hour statistic is dominated by — is not reachable on this venue. What remains is the
+   * sell-side trap, which `screen.ts` tests directly on every candidate at every age.
    */
   readonly minAgeSeconds: number;
 
@@ -143,11 +180,13 @@ export type EligibilityConfig = {
  * The wei figures below are stated against that.
  */
 export const DEFAULT_ELIGIBILITY: EligibilityConfig = {
-  requiredTaxPct: 1,
-  // 1 ETH — ~385x a $5 position, the depth regime the negligible-impact measurement holds in.
-  minMarketCapWei: 1_000_000_000_000_000_000n,
-  minHolders: 25,
-  // 0.026 ETH — 10x the $5 position.
+  // The highest tier the pad issues. A sanity ceiling, not an exclusion — `score.ts` prices tax.
+  maxTaxPct: 10,
+  // 1.40 ETH — above the MEASURED 1.356 ETH seed. `>1.36` was sellable 15/15, `<=1.36` was 1/85.
+  minMarketCapWei: 1_400_000_000_000_000_000n,
+  // 3 — one holder beyond the pool and the factory. A liveness proxy; see `screen.ts` for safety.
+  minHolders: 3,
+  // 0.026 ETH — 10x the $5 position. Volume ~0 was sellable 0/47.
   minVolumeAllTimeWei: 26_000_000_000_000_000n,
   // 3600s — exactly `signal.ts`'s LOOKBACK_MINUTES. Asserted equal by test.
   minAgeSeconds: 3600,
@@ -156,31 +195,38 @@ export const DEFAULT_ELIGIBILITY: EligibilityConfig = {
 };
 
 /**
- * The only tax tier a stray may hunt. RESEARCH §3c Rule 1.
+ * The highest tax tier the pad actually issues, as an integer percent.
  *
- * Exported as a constant rather than left implicit in the config so that a config which tries to
- * raise it is refused by `assertHuntableTax` below, and so that a test can point at the number
- * the rule is about.
+ * MEASURED across the newest 100 launches: 1% = 29, 3% = 10, 5% = 18, 10% = 43. Nothing above 10
+ * exists, so a `taxPct` beyond this is a failed read of an unofficial API (RESEARCH §5), not a
+ * token with an unusual fee.
+ *
+ * Note this constant replaces `HUNTABLE_TAX_PCT = 1`. It is a CEILING on what can be evaluated,
+ * not a statement that only one tier may be traded — that rule is gone, and `score.ts` explains why.
  */
-export const HUNTABLE_TAX_PCT = 1;
+export const MAX_PAD_TAX_PCT = 10;
 
 export type Eligibility = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 /**
- * Refuse a config that permits any tax tier but 1%.
+ * Refuse a config whose tax ceiling is outside what the pad can issue.
  *
- * `requiredTaxPct` is configurable so a test can demonstrate the filter binds, but a config is not
- * a place to overrule arithmetic. openhood's `AUTOMATIC_EXECUTION_WIRED = true` (RESEARCH §7g)
- * is the failure this guards against in miniature: a setting whose value contradicts what the
- * system actually may do. Called from `isEligible`, so there is no path that skips it.
+ * A config is not a place to overrule arithmetic — openhood's `AUTOMATIC_EXECUTION_WIRED = true`
+ * (RESEARCH §7g) is the failure this guards against in miniature: a setting whose value contradicts
+ * what the system actually may do.
+ *
+ * The check is now a CEILING rather than an equality, and the difference matters: a ceiling above
+ * 10 would let a malformed `taxPct` reach `roundTripCost` and produce a plausible-looking cost for
+ * a tier that does not exist. Called from `isEligible`, so no path skips it.
  */
-export function assertHuntableTax(cfg: EligibilityConfig): void {
-  if (cfg.requiredTaxPct !== HUNTABLE_TAX_PCT) {
+export function assertTaxCeiling(cfg: EligibilityConfig): void {
+  if (!Number.isInteger(cfg.maxTaxPct) || cfg.maxTaxPct < 1 || cfg.maxTaxPct > MAX_PAD_TAX_PCT) {
     throw new Error(
-      `refusing an eligibility config with requiredTaxPct=${String(cfg.requiredTaxPct)}. ` +
-        `Only ${String(HUNTABLE_TAX_PCT)}% is huntable: measured round trips are 231.4bps at 1% ` +
-        "and 1938.3bps at 10%, so a 10%-tax position needs a +19.38% move to break even against " +
-        "a measured mean absolute 24h move of 7.7%. This is arithmetic, not configuration",
+      `refusing an eligibility config with maxTaxPct=${String(cfg.maxTaxPct)}. The pad issues ` +
+        `1, 3, 5 and 10 percent only (measured across the newest 100 launches), so a ceiling ` +
+        `outside 1..${String(MAX_PAD_TAX_PCT)} would let a failed API read reach the cost model ` +
+        "and produce a plausible cost for a tier that does not exist. Tax is PRICED in score.ts, " +
+        "not excluded here — this is a sanity bound, not a trading rule",
     );
   }
 }
@@ -196,14 +242,18 @@ export function assertHuntableTax(cfg: EligibilityConfig): void {
  * because it refuses two thirds of the pad on one integer comparison.
  */
 export function isEligible(token: TokenSnapshot, cfg: EligibilityConfig): Eligibility {
-  assertHuntableTax(cfg);
+  assertTaxCeiling(cfg);
 
   /*
-   * ══ RULE 1. THE FILTER THE PRODUCT IS BUILT ON ══
+   * ══ TAX IS A SANITY BOUND HERE, AND A COST TERM IN `score.ts` ══
    *
-   * Strict equality. `<= cfg.requiredTaxPct` would admit taxPct 0, which is a failed API read
-   * rather than a free lunch — every pool on this pad routes through the hook that charges the
-   * tax, so 0 cannot be real. RESEARCH §5: treat the API as unofficial and unstable.
+   * A zero is still refused, and for the original reason: every pool on this pad routes through
+   * the hook that charges the tax, so `taxPct: 0` cannot be real — it is a missing field coerced
+   * to a number. RESEARCH §5 says treat the API as unofficial and unstable, so a suspicious value
+   * is refused rather than treated as the cheapest token on the venue.
+   *
+   * What is NO LONGER done here is refusing 3, 5 and 10. Those clear their own bars in `score.ts`
+   * (+12.5%, +20.2%, +38.8% respectively) or they do not trade.
    */
   if (!Number.isInteger(token.taxPct)) {
     return {
@@ -213,15 +263,23 @@ export function isEligible(token: TokenSnapshot, cfg: EligibilityConfig): Eligib
         "The pad reports 1, 3, 5 or 10; anything else is a failed read of an unofficial API",
     };
   }
-  if (token.taxPct !== cfg.requiredTaxPct) {
-    const breakevenBps = 2 * token.taxPct * 100 + 32;
+  if (token.taxPct <= 0) {
     return {
       ok: false,
       reason:
-        `refused ${token.address}: taxPct ${String(token.taxPct)}% != ${String(cfg.requiredTaxPct)}%. ` +
-        `Round trip is ~${String(breakevenBps)}bps here vs 231bps at 1%, so this position needs ` +
-        `a +${(breakevenBps / 100).toFixed(2)}% move merely to break even against a measured mean ` +
-        "absolute 24h move of 7.7% (RESEARCH §3b/§3c Rule 1)",
+        `refused ${token.address}: taxPct is ${String(token.taxPct)}. Every pool on this pad routes ` +
+        "through the hook that charges the tax, so a zero is a missing field coerced to a number, " +
+        "not a free lunch (RESEARCH §5)",
+    };
+  }
+  if (token.taxPct > cfg.maxTaxPct) {
+    return {
+      ok: false,
+      reason:
+        `refused ${token.address}: taxPct ${String(token.taxPct)}% exceeds the ` +
+        `${String(cfg.maxTaxPct)}% ceiling. The pad issues 1, 3, 5 and 10 only, so this is a ` +
+        "failed API read rather than an expensive token — an expensive token would be priced by " +
+        "score.ts and refused by its own cost bar, not by this check",
     };
   }
 
@@ -230,9 +288,9 @@ export function isEligible(token: TokenSnapshot, cfg: EligibilityConfig): Eligib
       ok: false,
       reason:
         `refused ${token.address}: marketCap ${token.marketCapWei.toString()} wei < floor ` +
-        `${cfg.minMarketCapWei.toString()} wei. Below this depth the cost model's omission of a ` +
-        "price-impact term stops being justified — impact was unmeasurable at $5 against live " +
-        "pools, and that is a statement about position-to-depth ratio, not about $5 (RESEARCH §3b)",
+        `${cfg.minMarketCapWei.toString()} wei. The pad's SEED market cap is 1.356 ETH and 84 of ` +
+        "the newest 100 tokens sit at exactly that value, never having been bought. Above the " +
+        "seed was sellable 15/15; at or below it, 1/85 (RESEARCH-STRATEGY §1b)",
     };
   }
 
@@ -241,8 +299,9 @@ export function isEligible(token: TokenSnapshot, cfg: EligibilityConfig): Eligib
       ok: false,
       reason:
         `refused ${token.address}: ${String(token.holders)} holders < floor ` +
-        `${String(cfg.minHolders)}. Below this a price is one address's mark rather than a ` +
-        "market's, so any move the signal reads is that address moving it",
+        `${String(cfg.minHolders)}. The holders field counts the POOL CONTRACT, so 83 of the ` +
+        "newest 100 report exactly 2 (pool + factory) and have no real participant at all. This " +
+        "is a LIVENESS proxy only — concentration and rug checks live in screen.ts",
     };
   }
 

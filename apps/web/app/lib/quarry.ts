@@ -152,5 +152,29 @@ export async function fetchQuarry(limit = 40, timeoutMs = 7000): Promise<QuarryR
     return b.marketCapEth - a.marketCapEth;
   });
 
-  return { ok: true, tokens: ranked.slice(0, WORLD_QUARRY_CAP), scanned: parsed.length, at };
+  /*
+   * ══ ONE ROW PER TICKER ══
+   *
+   * Memecoin launchpads have no ticker uniqueness — the live list routinely carries several
+   * unrelated contracts all called MEDICI. Rendered on the field that is two identical diamonds
+   * both labelled MEDICI, which looks like a rendering bug and is worse than one: a viewer cannot
+   * tell which contract a cat is actually on, so the label stops being information.
+   *
+   * The FIRST occurrence survives, and because the list is already sorted huntable-first then by
+   * market cap, that is the largest huntable one — the row a stray would actually pick. The dropped
+   * duplicates are still counted in `scanned`, so the denominator stays honest: "14 on field of 40
+   * scanned" does not claim the other 26 did not exist.
+   *
+   * De-duplicating on ADDRESS instead would be wrong here. The addresses genuinely differ; it is
+   * the human-readable label that collides, and the label is what this layer renders.
+   */
+  const seen = new Set<string>();
+  const unique = ranked.filter((t) => {
+    const key = t.symbol.toUpperCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { ok: true, tokens: unique.slice(0, WORLD_QUARRY_CAP), scanned: parsed.length, at };
 }

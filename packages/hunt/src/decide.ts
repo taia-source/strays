@@ -45,6 +45,13 @@
 import { clearsBar, EDGE_MULTIPLE, type BarVerdict } from "./bar.js";
 import { roundTripCost, type RoundTripCost } from "./cost.js";
 import { type EligibilityConfig, isEligible, type TokenSnapshot } from "./eligible.js";
+import {
+  type HolderDistribution,
+  type ScreenConfig,
+  screenToken,
+  type SellSimulation,
+} from "./screen.js";
+import { rankCandidates, type Score, scoreCandidate } from "./score.js";
 import { evaluateEntry, levelsFor, type EntrySignal, type PricePoint } from "./signal.js";
 import {
   drawdownBps,
@@ -70,6 +77,26 @@ export type Candidate = {
    * TRANSFER_FROM_FAILED. bigint end to end.
    */
   readonly quotedOut: bigint;
+  /**
+   * THE SELL SIMULATION. Quote selling `quotedOut` back to ETH, BEFORE buying.
+   *
+   * The highest-value check available to us: 84 of the newest 100 tokens quote a BUY successfully
+   * and **cannot be quoted for a SELL at all** (RESEARCH-STRATEGY §1). The shipped strategy checked
+   * only `quotedOut` — the buy side — so it would have bought all 84.
+   *
+   * Supplied by the caller because this package performs no I/O. `screen.ts` decides on it.
+   */
+  readonly sell: SellSimulation;
+  /**
+   * Holder concentration from `GET /api/tokens/{addr}/holders` — top-10, creator and, most
+   * importantly, the pad's own sniper/bundle detection. See `screen.ts`.
+   */
+  readonly holders: HolderDistribution;
+  /**
+   * Buys as a fraction of all trades, in bps. 5000 = balanced. Measured range on live tokens:
+   * 3300..7300. Feeds the momentum term of the score, which is a MULTIPLIER and cannot invent edge.
+   */
+  readonly buyRatioBps: bigint;
 };
 
 /** Everything about the outside world this decision reads. All of it is data. */
@@ -89,6 +116,8 @@ export type DecideConfig = {
   readonly eligibility: EligibilityConfig;
   readonly risk: RiskConfig;
   readonly ledger: SpendLedger;
+  /** Rug/honeypot ceilings. See `screen.ts` for why they sit outside the measured range. */
+  readonly screen: ScreenConfig;
   /** Slippage tolerance for `minOut`, in bps. Never 0 on the output side — RESEARCH §7c. */
   readonly slippageBps: bigint;
   /** Idempotency key for this tick's potential entry. Supplied, not generated — purity. */
@@ -109,6 +138,8 @@ export type Decision =
       readonly cost: RoundTripCost;
       readonly bar: BarVerdict;
       readonly signal: EntrySignal;
+      /** Why THIS token won the ranking, with the arithmetic. */
+      readonly score: Score;
     }
   | { readonly kind: "exit"; readonly token: string; readonly reason: string };
 
@@ -161,9 +192,15 @@ export async function decide(
 
     // Take-profit. Derived from the same measured vol as the stop, floored against the cost bar
     // so a target that cannot pay for its own round trip cannot be expressed.
+    /*
+     * The exit is costed against the OPEN POSITION'S OWN tax tier, carried on the position itself.
+     * Previously this read `cfg.eligibility.requiredTaxPct` — correct only while every position was
+     * guaranteed to be 1%-tax. Now that any tier may be held, reading the config would mis-state a
+     * 10%-tax exit as a 1%-tax one and set the take-profit ~1700bps too low.
+     */
     const cost = roundTripCost({
       positionWei: position.entryWei,
-      taxPct: cfg.eligibility.requiredTaxPct,
+      taxPct: position.taxPct,
       gasPriceWei: market.gasPriceWei,
       approvalsNeeded: cfg.approvalsNeeded,
     });
@@ -213,8 +250,44 @@ export async function decide(
     };
   }
 
-  const refusals: string[] = [];
+  if (market.candidates.length === 0) {
+    return { kind: "hold", reason: "no entry: no candidates were offered this tick" };
+  }
 
+  /*
+   * The risk gate is about the STRAY, not about any candidate, so it is evaluated ONCE before the
+   * loop rather than once per token. Previously it sat inside the loop, which meant a stray that
+   * was out of budget produced its denial only if at least one candidate had already passed
+   * eligibility — the same denial, reported or not depending on unrelated data.
+   */
+  const gate = await mayEnter({
+    state,
+    cfg: cfg.risk,
+    ledger: cfg.ledger,
+    idempotencyKey: cfg.idempotencyKey,
+    nowSeconds: market.nowSeconds,
+  });
+  if (!gate.allowed) {
+    return { kind: "hold", reason: `no entry [${gate.reason}]: ${gate.detail}` };
+  }
+
+  const refusals: string[] = [];
+  const survivors: {
+    readonly candidate: Candidate;
+    readonly score: Score;
+    readonly cost: RoundTripCost;
+    readonly bar: BarVerdict;
+    readonly signal: EntrySignal;
+  }[] = [];
+
+  /* ════════════════════════════════════════════════════════════════════════════════════════
+   * 3. SCREEN AND SCORE EVERY CANDIDATE. No early return — the BEST wins, not the first.
+   *
+   * The old loop returned the FIRST candidate that passed every gate, which made the outcome
+   * depend on arrival order — an ordering the LLM is allowed to influence (DESIGN §5). Now every
+   * survivor is scored and `rankCandidates` picks the winner deterministically, so the model may
+   * still propose what to LOOK at and the arithmetic decides what gets bought.
+   * ════════════════════════════════════════════════════════════════════════════════════════ */
   for (const candidate of market.candidates) {
     const eligibility = isEligible(candidate.token, cfg.eligibility);
     if (!eligibility.ok) {
@@ -222,20 +295,21 @@ export async function decide(
       continue;
     }
 
-    const gate = await mayEnter({
-      state,
-      cfg: cfg.risk,
-      ledger: cfg.ledger,
-      idempotencyKey: cfg.idempotencyKey,
-      nowSeconds: market.nowSeconds,
+    /*
+     * ══ THE SELL SIMULATION, BEFORE ANYTHING ELSE IS COMPUTED ══
+     *
+     * 84 of the newest 100 tokens quote a buy fine and cannot be sold. Nothing below this line
+     * matters if we cannot get out, so it runs before the cost model, the signal and the score.
+     */
+    const screened = screenToken({
+      address: candidate.token.address,
+      sell: candidate.sell,
+      holders: candidate.holders,
+      cfg: cfg.screen,
     });
-    if (!gate.allowed) {
-      // A risk denial is about the STRAY, not the candidate, so no further candidate can pass
-      // either. Stop rather than repeating the same refusal once per token.
-      return {
-        kind: "hold",
-        reason: `no entry [${gate.reason}]: ${gate.detail}`,
-      };
+    if (!screened.safe) {
+      refusals.push(screened.reason);
+      continue;
     }
 
     const cost = roundTripCost({
@@ -261,6 +335,10 @@ export async function decide(
       continue;
     }
 
+    /*
+     * The cost bar, per candidate, against ITS OWN tax tier. This is where a 10%-tax token is
+     * refused — by arithmetic (it must clear +38.8%), not by a rule that never let it be seen.
+     */
     const bar = clearsBar({ expectedGainWei: signal.expectedGainWei, costWei: cost.totalWei });
     if (!bar.clears) {
       refusals.push(
@@ -269,29 +347,76 @@ export async function decide(
       continue;
     }
 
-    // The slippage floor. Throws rather than returning zero (RESEARCH §7c).
-    const minOut = minOutFor({ expectedOut: candidate.quotedOut, slippageBps: cfg.slippageBps });
+    const score = scoreCandidate({
+      address: candidate.token.address,
+      taxPct: candidate.token.taxPct,
+      positionWei: gate.sizeWei,
+      gasPriceWei: market.gasPriceWei,
+      expectedMoveBps: signal.moveBps,
+      marketCapWei: candidate.token.marketCapWei,
+      volumeAllTimeWei: candidate.token.volumeAllTimeWei,
+      buyRatioBps: candidate.buyRatioBps,
+      holders: candidate.token.holders,
+    });
 
+    /*
+     * A candidate whose expected move does not cover its own tax is refused HERE rather than being
+     * ranked last, so a tick where every survivor is unprofitable holds instead of buying the least
+     * bad one. Ranking is for choosing among trades worth making, never for choosing a loser.
+     */
+    if (score.netEdgeBps <= 0n) {
+      refusals.push(
+        `${candidate.token.address}: expected move does not cover its own tax — ${score.arithmetic}`,
+      );
+      continue;
+    }
+
+    survivors.push({ candidate, score, cost, bar, signal });
+  }
+
+  if (survivors.length === 0) {
     return {
-      kind: "enter",
-      token: candidate.token.address,
-      sizeWei: gate.sizeWei,
-      minOut,
-      reason:
-        `ENTER ${candidate.token.address} for ${gate.sizeWei.toString()} wei. ` +
-        `${signal.reasoning}. ${bar.arithmetic}. ${cost.arithmetic}. ` +
-        `minOut ${minOut.toString()} at ${cfg.slippageBps.toString()}bps slippage`,
-      cost,
-      bar,
-      signal,
+      kind: "hold",
+      reason: `no entry: ${String(refusals.length)} candidate(s) refused — ${refusals.join(" | ")}`,
     };
   }
 
+  /* ══ 4. THE BEST ONE WINS. Ties break on address, never on arrival order. ══ */
+  const ranked = rankCandidates(survivors.map((s) => s.score));
+  const winningScore = ranked[0];
+  if (winningScore === undefined) {
+    return { kind: "hold", reason: "no entry: ranking produced no winner" };
+  }
+  const winner = survivors.find((s) => s.score.address === winningScore.address);
+  if (winner === undefined) {
+    return { kind: "hold", reason: "no entry: the ranked winner had no candidate behind it" };
+  }
+
+  // The slippage floor. Throws rather than returning zero (RESEARCH §7c).
+  const minOut = minOutFor({
+    expectedOut: winner.candidate.quotedOut,
+    slippageBps: cfg.slippageBps,
+  });
+
+  const runnersUp = ranked
+    .slice(1)
+    .map((s) => `${s.address} @ ${s.totalBps.toString()}bps`)
+    .join(", ");
+
   return {
-    kind: "hold",
+    kind: "enter",
+    token: winner.candidate.token.address,
+    sizeWei: gate.sizeWei,
+    minOut,
     reason:
-      refusals.length === 0
-        ? "no entry: no candidates were offered this tick"
-        : `no entry: ${String(refusals.length)} candidate(s) refused — ${refusals.join(" | ")}`,
+      `ENTER ${winner.candidate.token.address} for ${gate.sizeWei.toString()} wei — BEST OF ` +
+      `${String(survivors.length)} scored candidate(s). ${winner.score.arithmetic}. ` +
+      `${winner.signal.reasoning}. ${winner.bar.arithmetic}. ${winner.cost.arithmetic}. ` +
+      `minOut ${minOut.toString()} at ${cfg.slippageBps.toString()}bps slippage` +
+      (runnersUp === "" ? "" : `. Runners-up: ${runnersUp}`),
+    cost: winner.cost,
+    bar: winner.bar,
+    signal: winner.signal,
+    score: winner.score,
   };
 }

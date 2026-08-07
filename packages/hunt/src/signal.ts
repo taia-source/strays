@@ -227,8 +227,30 @@ export function levelsFor(args: {
   if (args.positionWei <= 0n) {
     throw new Error("refusing to derive levels for a non-positive position");
   }
+  /*
+   * ══ THE DIVISION ROUNDS UP, AND THAT IS LOAD-BEARING ══
+   *
+   * A REAL DEFECT lived here, and it was invisible while only 1%-tax tokens were tradeable.
+   *
+   * Integer division truncates DOWNWARD. So the cost floor this function computed was up to one
+   * bp BELOW the true `cost x multiple`, and the expected gain derived from it
+   * (`positionWei * takeProfitBps / 10000`) came out FRACTIONALLY UNDER the bar in `bar.ts` —
+   * which then refused the trade. Measured on a 10%-tax position of 2.5e15 wei:
+   *
+   *   cost x 2          = 1016806015852000 wei required
+   *   gain from floor   = 1016750000000000 wei   -> SHORT BY 56015852000 wei
+   *
+   * The function's entire promise is that a take-profit "can always pay its own way", and it was
+   * emitting a target that provably could not. The bug is small in magnitude and total in effect:
+   * it silently refused every trade whose take-profit was cost-bound rather than vol-bound, which
+   * at 1% tax was none of them (the 471bps vol level dominates a 462bps cost floor) and at 10% tax
+   * is ALL of them.
+   *
+   * Rounding UP costs at most one bp of extra target and makes the floor a floor.
+   */
+  const numerator = args.roundTripCostWei * args.edgeMultiple * BPS_DENOMINATOR;
   const costFloorBps =
-    (args.roundTripCostWei * args.edgeMultiple * BPS_DENOMINATOR) / args.positionWei;
+    numerator / args.positionWei + (numerator % args.positionWei > 0n ? 1n : 0n);
   const takeProfitBps = TAKE_PROFIT_BPS > costFloorBps ? TAKE_PROFIT_BPS : costFloorBps;
   return { takeProfitBps, stopLossBps: STOP_LOSS_BPS };
 }

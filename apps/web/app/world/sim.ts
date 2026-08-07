@@ -90,6 +90,15 @@ export type Sim = {
   readonly random: () => number;
   /** Where a cat drags its kill back to. Recomputed on resize; never null after `resizeSim`. */
   den: { x: number; y: number };
+  /**
+   * How much of each edge the HUD covers, in CSS px.
+   *
+   * The canvas is the whole viewport but the HUD panels are opaque, so the PLAYABLE field is
+   * smaller than the canvas. The renderer measures the real panel rectangles and writes them here;
+   * `step` keeps cats inside the remainder and `syncTokens` places quarry inside it. Without this
+   * the world happily puts cats and tokens in pixels nobody can see.
+   */
+  insets: { top: number; right: number; bottom: number; left: number };
 };
 
 export function createSim(width: number, height: number, random: () => number): Sim {
@@ -100,6 +109,9 @@ export function createSim(width: number, height: number, random: () => number): 
     tokens: new Map(),
     random,
     den: denFor(width, height),
+    // Zero until the renderer measures the HUD. A world that has not measured yet uses its whole
+    // canvas, which is the correct behaviour for the first frame and for a HUD-less embedding.
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
   };
 }
 
@@ -110,8 +122,17 @@ export function createSim(width: number, height: number, random: () => number): 
  * a 1440px desktop. Fractions of the field keep it in the same PLACE in the composition at every
  * width, which is what makes "it went home" legible without a label.
  */
-function denFor(width: number, height: number): { x: number; y: number } {
-  return { x: width * 0.13, y: height * 0.8 };
+function denFor(
+  width: number,
+  height: number,
+  insets: { top: number; right: number; bottom: number; left: number } = { top: 0, right: 0, bottom: 0, left: 0 },
+): { x: number; y: number } {
+  // Placed within the PLAYABLE field, not the raw canvas — otherwise on a phone (where the adopt
+  // panel and roster stack along the bottom) the den sits under a panel and every returning cat
+  // walks off-screen to reach it.
+  const w = Math.max(1, width - insets.left - insets.right);
+  const h = Math.max(1, height - insets.top - insets.bottom);
+  return { x: insets.left + w * 0.13, y: insets.top + h * 0.8 };
 }
 
 export function resizeSim(sim: Sim, width: number, height: number): void {
@@ -119,7 +140,7 @@ export function resizeSim(sim: Sim, width: number, height: number): void {
   const sy = height / Math.max(1, sim.height);
   sim.width = width;
   sim.height = height;
-  sim.den = denFor(width, height);
+  sim.den = denFor(width, height, sim.insets);
   /*
    * SCALE existing positions rather than leaving them.
    *
@@ -137,10 +158,145 @@ export function resizeSim(sim: Sim, width: number, height: number): void {
     if (b.tx !== null) b.tx *= sx;
     if (b.ty !== null) b.ty *= sy;
   }
-  for (const t of sim.tokens.values()) {
-    t.x *= sx;
-    t.y *= sy;
-  }
+  // Tokens are LAID OUT rather than scaled: their arrangement is a function of the field, so a
+  // resize should recompute it rather than stretch the old one into a squashed ellipse.
+  layoutTokens(sim);
+}
+
+/**
+ * Tell the sim which parts of the canvas the HUD is covering.
+ *
+ * Called by the renderer from the same measured rectangles the label placer uses, so there is ONE
+ * source of truth for "where is the chrome" rather than a CSS value duplicated into a constant that
+ * drifts the first time a panel's width changes.
+ */
+export function setInsets(
+  sim: Sim,
+  insets: { top: number; right: number; bottom: number; left: number },
+): void {
+  const changed =
+    sim.insets.top !== insets.top ||
+    sim.insets.right !== insets.right ||
+    sim.insets.bottom !== insets.bottom ||
+    sim.insets.left !== insets.left;
+  sim.insets = insets;
+  sim.den = denFor(sim.width, sim.height, insets);
+  if (changed) layoutTokens(sim);
+}
+
+/**
+ * ══ PULL TOKENS OUT FROM UNDER THE HUD ══
+ *
+ * Tokens are placed once, when they first appear. The insets are not known until the renderer has
+ * measured the HUD (250ms after mount) — so the FIRST placement always happens against the raw
+ * canvas, and on a 1440px field that put several tokens squarely behind the roster panel.
+ *
+ * That is worse than a hidden token. A cat holding one of them still stalks toward it, so the
+ * observable behaviour was a cat walking into the side of the roster and pressing against it —
+ * which reads as the cats being broken rather than as the tokens being misplaced.
+ *
+ * Clamping (rather than re-randomising) is deliberate: a token that jumps to a new position on
+ * every measure would make the field twitch, and any cat mid-stalk would have its target yanked.
+ * A clamp moves only what is actually out of bounds, and only as far as it must.
+ */
+/**
+ * ══ LAY THE QUARRY OUT ACROSS THE PLAYABLE FIELD ══
+ *
+ * Two earlier attempts at this are worth recording, because both were locally reasonable and both
+ * produced a worse field than the bug they fixed:
+ *
+ *   1. CLAMP each out-of-bounds token to the nearest legal edge. Correct per token, wrong in
+ *      aggregate: with a ~420px roster on the right, every token placed in the right third piled up
+ *      on the SAME edge line and their labels stacked into an unreadable vertical column.
+ *   2. RE-PROJECT each token inward along its own angle from the field centre. This preserved each
+ *      token's angle but pulled them all toward the middle by different amounts, collapsing the
+ *      ring into a diagonal streak through the centre of the field.
+ *
+ * The shared mistake: both tried to REPAIR positions computed against the wrong rectangle. The
+ * positions are not repairable, because the information that would make them right — the shape of
+ * the playable field — was not available when they were computed.
+ *
+ * So this LAYS OUT the whole set against the field that actually exists, by index. Deterministic
+ * from the token's position in the (already sorted) list, so a re-layout after a resize or a HUD
+ * measurement puts everything back in the same relative arrangement rather than reshuffling the
+ * field under the user. Cats mid-stalk follow their token because `step` reads its live position
+ * every tick.
+ */
+function layoutTokens(sim: Sim): void {
+  const fw = Math.max(1, sim.width - sim.insets.left - sim.insets.right);
+  const fh = Math.max(1, sim.height - sim.insets.top - sim.insets.bottom);
+  const cx = sim.insets.left + fw / 2;
+  const cy = sim.insets.top + fh / 2;
+
+  const tokens = [...sim.tokens.values()];
+  const n = Math.max(1, tokens.length);
+
+  tokens.forEach((t, i) => {
+    /*
+     * A jittered ring, indexed by position.
+     *
+     * Pure random placement CLUSTERS — on a 390px field, two of fourteen tokens landing on top of
+     * each other is not unlikely, it is expected, and two overlapping labels is the difference
+     * between "the tickers are legible" and this whole feature failing. Indexing by position gives
+     * a guaranteed minimum angular separation; the deterministic jitter (derived from the index,
+     * not from `random()`, so a re-layout does not move anything) stops it reading as a clock face.
+     */
+    /*
+     * ══ A JITTERED GRID, NOT A RING ══
+     *
+     * Three ring versions were tried and all three left most of the field empty. The reason is
+     * structural rather than a matter of tuning the radii: a ring puts every token on the BOUNDARY
+     * of an ellipse and nothing in its interior, so the middle of the field is empty by
+     * construction. Worse, the ellipse is centred on the playable field — and because the HUD's
+     * insets are asymmetric (a tall roster on the right, nothing on the left), that centre sits
+     * well right of the screen's centre, so the ring rendered as a crescent hugging the right edge
+     * with the entire left half of a 1440px viewport blank.
+     *
+     * A grid fills a rectangle, which is the shape the field actually is. Columns are derived from
+     * the aspect ratio so the cells stay roughly square at every width — 320px gets a tall narrow
+     * grid, 1440px a wide flat one — and each token is offset within its own cell by a
+     * deterministic jitter, which breaks the lattice without ever letting two tokens collide (the
+     * jitter is bounded to well inside the cell).
+     *
+     * Deterministic, from the index: a re-layout after a resize or a HUD measurement reproduces the
+     * same arrangement rather than reshuffling the field under the viewer.
+     */
+    /*
+     * ══ COLUMNS ARE CHOSEN SO THE GRID FILLS THE FIELD, NOT SO THE CELLS ARE SQUARE ══
+     *
+     * `round(sqrt(n * aspect))` is the standard "keep the cells square" formula and it is the wrong
+     * objective here. Measured on the 1440px field: 14 tokens in a ~950x700 playable area gives
+     * `sqrt(14 * 1.36) ≈ 4.4 → 4` columns and 4 rows — a 4x4 block sitting in the middle of the
+     * field with square cells and most of the width unused. Square cells are a property of the
+     * CELLS; filling the field is a property of the GRID, and only the second one is visible.
+     *
+     * `ceil` rather than `round` on the same expression, plus a floor of 3 on any field wide enough
+     * to hold three labels, biases toward more columns — which is what spreads the set across the
+     * width. Cells end up wider than they are tall on a landscape field, which is correct: the
+     * jitter then has more horizontal room, and horizontal room is what a ticker label needs.
+     */
+    const cols = Math.max(
+      fw > 420 ? 3 : 2,
+      Math.min(n, Math.ceil(Math.sqrt(n * (fw / Math.max(1, fh))) * 1.35)),
+    );
+    const rows = Math.max(1, Math.ceil(n / cols));
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const pad = t.radius + 14;
+    const usableW = Math.max(1, fw - pad * 2);
+    // The label hangs BELOW the diamond, so the vertical budget must clear it too — otherwise the
+    // ticker, the entire point of the layer, is the part that lands under a panel.
+    const usableH = Math.max(1, fh - pad * 2 - 16);
+    const cellW = usableW / cols;
+    const cellH = usableH / rows;
+    // Bounded to ±30% of a cell, so jitter never lets two neighbours reach each other.
+    const jx = Math.sin(i * 12.9898) * 0.3;
+    const jy = Math.cos(i * 78.233) * 0.3;
+    const originX = cx - fw / 2 + pad;
+    const originY = cy - fh / 2 + pad;
+    t.x = originX + (col + 0.5 + jx) * cellW;
+    t.y = originY + (row + 0.5 + jy) * cellH;
+  });
 }
 
 /**
@@ -152,9 +308,34 @@ export function resizeSim(sim: Sim, width: number, height: number): void {
  * deliberate mark rather than as a stray pixel; the 26px ceiling stops one whale owning the field.
  */
 export function radiusForStake(stakeEth: number): number {
-  if (!Number.isFinite(stakeEth) || stakeEth <= 0) return 9;
-  return Math.max(9, Math.min(26, 9 + Math.sqrt(stakeEth) * 90));
+  if (!Number.isFinite(stakeEth) || stakeEth <= 0) return MIN_CAT_RADIUS;
+  return Math.max(MIN_CAT_RADIUS, Math.min(MAX_CAT_RADIUS, MIN_CAT_RADIUS + Math.sqrt(stakeEth) * 90));
 }
+
+/**
+ * ══ THE FLOOR AND CEILING WERE RAISED AFTER LOOKING AT THE RENDERED FIELD ══
+ *
+ * silvertongue's numbers are 9 and 26, and they are right FOR SILVERTONGUE — its agents are drawn
+ * as filled circles, and a 9px circle is a perfectly solid mark.
+ *
+ * A cat is not a circle. The sprite is a 16x16 grid, so `scale = floor(2r / 16)`: at r=9 that is
+ * `floor(18/16) = 1`, a **16px cat**, and at r=26 it is `floor(52/16) = 3`, a 48px cat. Measured on
+ * the rendered 1440px field with five cats and fourteen tokens: the smallest cats were smaller than
+ * the token diamonds they were supposed to be hunting, so the predator read as the prey. A 16px cat
+ * also loses its ears and tail to the pixel grid — the two axes ART-DIRECTION §5b says carry a
+ * cat's identity — leaving an unrecognisable blob.
+ *
+ * The floor of 16 gives `floor(32/16) = 2`, a 32px cat: every geometry axis survives, and it is
+ * comfortably larger than the 7-17px token diamonds. The ceiling of 40 gives a 80px cat for a whale.
+ *
+ * The generalisable lesson, and the reason this is a comment rather than two changed numbers: a
+ * size constant inherited from a project with a DIFFERENT sprite is a number with no meaning here.
+ * The quantisation (`floor(2r/16)`) is the thing that actually decides what a cat looks like, and
+ * it only has four usable values in this range — so the floor has to be chosen against the
+ * quantised output, not against the continuous radius.
+ */
+const MIN_CAT_RADIUS = 16;
+const MAX_CAT_RADIUS = 40;
 
 /** Market cap sizes a token the same way stake sizes a cat: a fatter target is a bigger shape. */
 export function radiusForCap(marketCapEth: number): number {
@@ -198,30 +379,33 @@ export function syncTokens(sim: Sim, tokens: readonly TokenInput[]): void {
    * by position gives a guaranteed minimum angular separation; the jitter stops it reading as a
    * clock face.
    */
-  const n = Math.max(1, tokens.length);
-  tokens.forEach((t, i) => {
+  /*
+   * Insert new tokens at the field centre, then lay the whole set out.
+   *
+   * The position assigned here is a placeholder that `layoutTokens` immediately overwrites — the
+   * ring position depends on how many tokens there ARE and on where each sits in the list, neither
+   * of which is known while iterating. Doing the arithmetic twice (once here, once in the layout)
+   * is how the two earlier versions of this drifted out of agreement.
+   */
+  for (const t of tokens) {
     const existing = sim.tokens.get(t.address);
     const radius = radiusForCap(t.marketCapEth);
     if (existing !== undefined) {
       existing.radius = radius;
-      return;
+      continue;
     }
-    const angle = (i / n) * Math.PI * 2 + (sim.random() - 0.5) * (Math.PI / n);
-    // Two rings on a wide field, one on a narrow one — a single ring on 1440px leaves the middle
-    // empty and the edges crowded.
-    const ringBias = sim.width > 900 && i % 2 === 1 ? 0.62 : 0.86;
-    const rx = (sim.width / 2) * 0.78 * ringBias;
-    const ry = (sim.height / 2) * 0.66 * ringBias;
     sim.tokens.set(t.address, {
       address: t.address,
       symbol: t.symbol,
-      x: sim.width / 2 + Math.cos(angle) * rx,
-      y: sim.height / 2 + Math.sin(angle) * ry,
+      x: sim.width / 2,
+      y: sim.height / 2,
       phase: sim.random() * Math.PI * 2,
       radius,
       huntable: t.huntable,
     });
-  });
+  }
+
+  layoutTokens(sim);
 }
 
 /**
@@ -315,11 +499,24 @@ export function markExit(sim: Sim, id: string, profitable: boolean): void {
 }
 
 const PROWL_SPEED = 0.55;
-const STALK_SPEED = 2.6;
+/**
+ * ══ THE STALK SPEED IS SET BY HOW LONG THE HUNT SHOULD TAKE, NOT BY WHAT LOOKS RIGHT ALONE ══
+ *
+ * Measured on the real field before this was raised: at 2.6px/tick a cat took **282 ticks — 9.4
+ * seconds** to cross a 1440px field and reach its token. Nine seconds of a cat walking in a
+ * straight line is not a hunt, it is a progress bar, and a visitor arriving from a screenshot
+ * (DESIGN §7 step 1) has left before it lands.
+ *
+ * 5.4px/tick puts a worst-case crossing at ~4.5s and a typical one under 3s, which is inside the
+ * window where a viewer will still be watching the cat they started watching. It is also still
+ * visibly SLOWER than the pounce, which is what keeps the two beats distinct — a stalk that moves
+ * at pounce speed erases the pounce.
+ */
+const STALK_SPEED = 5.4;
 /** The pounce is FAST. This is the only speed in the file tuned for a beat rather than a path. */
 const POUNCE_SPEED = 7.5;
-const DRAG_SPEED = 1.5;
-const SLINK_SPEED = 0.9;
+const DRAG_SPEED = 2.4;
+const SLINK_SPEED = 1.5;
 
 /** Within this many px of the quarry, a stalk becomes a pounce. */
 const POUNCE_RANGE = 96;
@@ -417,6 +614,25 @@ export function step(sim: Sim): void {
     // The lunge decays outside a pounce, so the stretch relaxes rather than snapping back.
     if (body.mode !== "pounce") body.lunge *= 0.9;
 
+    /*
+     * ══ A HARD CEILING ON WHAT ONE TICK MAY MOVE — the anti-teleport guarantee ══
+     *
+     * Every mode sets its own speed, but `separate` ADDS to `vx`/`vy` after the fact, and the soft
+     * containment below adds again on the next tick. Measured before this clamp: a pounce whose
+     * nominal ceiling is 7.5px/tick produced a **9.03px** single-tick step — the separation force
+     * stacking on top of an already-saturated seek velocity.
+     *
+     * 9px in one tick is not visually a teleport, so this was invisible in a screenshot and only
+     * showed up because the headless harness measured the maximum per-tick displacement. But the
+     * brief's requirement is "cats must not teleport", and a speed cap that any other force can
+     * quietly exceed is not a cap — it is a suggestion. This makes the invariant hold no matter
+     * what else pushes on the body, which is the difference between a bound and a hope.
+     *
+     * The ceiling is the pounce speed, the fastest legitimate motion in the file. Nothing may
+     * exceed the fastest thing a cat is supposed to be able to do.
+     */
+    clampSpeed(body, POUNCE_SPEED);
+
     body.x += body.vx;
     body.y += body.vy;
 
@@ -429,12 +645,29 @@ export function step(sim: Sim): void {
     if (body.vx > 0.12) body.facing = 1;
     else if (body.vx < -0.12) body.facing = -1;
 
-    // Soft containment — drift back rather than sticking to a wall.
-    const margin = body.radius + 24;
-    if (body.x < margin) body.vx += 0.14;
-    if (body.x > sim.width - margin) body.vx -= 0.14;
-    if (body.y < margin) body.vy += 0.14;
-    if (body.y > sim.height - margin) body.vy -= 0.14;
+    /*
+     * ══ SOFT CONTAINMENT, AGAINST THE PLAYABLE FIELD RATHER THAN THE CANVAS ══
+     *
+     * The canvas is the full viewport, but a large part of it is under opaque HUD panels — the
+     * roster on the right, the stat block top-left, the adopt panel bottom-left. Measured on the
+     * rendered field: three of five hunting cats were completely INVISIBLE, sitting behind the
+     * roster, and one had drifted into the strip under the top bar. A cat nobody can see is
+     * indistinguishable from a cat that is not there, which undoes the entire feature.
+     *
+     * `insets` is the margin the HUD actually occupies, supplied by the renderer from the same
+     * measured rectangles the label placer uses. Cats are pushed out of it. This is NOT a hard
+     * wall — the push is a gentle acceleration like every other containment force here, so a cat
+     * that a resize strands under a panel walks out rather than snapping.
+     */
+    const margin = body.radius + 12;
+    const left = sim.insets.left + margin;
+    const right = sim.width - sim.insets.right - margin;
+    const top = sim.insets.top + margin;
+    const bottom = sim.height - sim.insets.bottom - margin;
+    if (body.x < left) body.vx += 0.14;
+    if (body.x > right) body.vx -= 0.14;
+    if (body.y < top) body.vy += 0.14;
+    if (body.y > bottom) body.vy -= 0.14;
   }
 
   separate(bodies);
@@ -457,16 +690,23 @@ function seek(body: SimBody, tx: number, ty: number, speed: number, ease: number
   body.vy = (dy / d) * desired;
 }
 
+/** How much clear space separation tries to keep between two prowling cats. */
+const SEPARATION_GAP = 40;
+
 /**
- * Cell size for the separation grid.
+ * Cell size for the separation grid — DERIVED, not a magic number.
  *
- * Separation only acts within `a.radius + b.radius + 40`, and `radiusForStake` caps at 26 — so
- * `26 + 26 + 40 = 92 < 128` guarantees every interacting pair lands in the same cell or an
- * adjacent one, which is what makes the 3x3 neighbourhood scan EXACT rather than approximate.
- * A smaller cell would MISS pairs. This constant is coupled to that cap; changing either without
- * the other silently breaks separation for the largest bodies.
+ * Separation only acts within `a.radius + b.radius + SEPARATION_GAP`. For the 3x3 neighbourhood
+ * scan below to be EXACT rather than approximate, the cell must be at least the largest possible
+ * interaction distance: two maximum-radius bodies plus the gap. Anything smaller silently MISSES
+ * pairs, which presents as large cats overlapping and is very hard to attribute back to here.
+ *
+ * This was a hardcoded 128 whose comment justified it against a max radius of 26. Raising the
+ * radius cap to 40 (see `MAX_CAT_RADIUS`) made `40+40+40 = 120` — still under 128, so it happened
+ * to survive. That is the exact shape of a latent bug: correct by luck, with a comment asserting
+ * an invariant that no longer held. Deriving it means the next radius change cannot break it.
  */
-const SEPARATION_CELL = 128;
+const SEPARATION_CELL = MAX_CAT_RADIUS * 2 + SEPARATION_GAP;
 
 /**
  * Push prowling cats apart — via a spatial hash, not every pair.
@@ -506,7 +746,7 @@ export function separate(bodies: readonly SimBody[]): void {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const d = Math.hypot(dx, dy);
-    const min = a.radius + b.radius + 40;
+    const min = a.radius + b.radius + SEPARATION_GAP;
     if (d > 0.001 && d < min) {
       const force = ((min - d) / min) * 0.32;
       a.vx -= (dx / d) * force;

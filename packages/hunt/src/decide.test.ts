@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type Candidate, decide, type DecideConfig, type Market } from "./decide.js";
 import { DEFAULT_ELIGIBILITY } from "./eligible.js";
+import { DEFAULT_SCREEN } from "./screen.js";
 import {
   createMemorySpendLedger,
   DEFAULT_RISK,
@@ -37,6 +38,7 @@ function position(overrides: Partial<OpenPosition> = {}): OpenPosition {
     entryPriceWei: BASE_PRICE,
     tokenBalance: 1_298_451_422_972_480_224_401_102n,
     openedAtSeconds: NOW - 600,
+    taxPct: 1,
     ...overrides,
   };
 }
@@ -67,6 +69,19 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
     // A move well past the ~314bps breakout AND past the ~463bps bar.
     history: history(900n),
     quotedOut: 1_298_451_422_972_480_224_401_102n,
+    // The SELL SIMULATION passes by default so that tests of OTHER gates are not all silently
+    // short-circuited by the screen. Tests that care about the screen override it explicitly.
+    sell: { ok: true, proceedsWei: 2_540_919_554_531_752n },
+    // Concentration well inside every measured ceiling (top10 max on the pad was 23.92%).
+    holders: {
+      top10Pct: 5,
+      creatorPct: 0,
+      creatorSold: true,
+      sniperCount: 0,
+      sniperHeldPct: 0,
+    },
+    // 6500 = 65% buys, the measured CASHDOG figure.
+    buyRatioBps: 6500n,
     ...overrides,
   };
 }
@@ -76,6 +91,7 @@ function cfg(overrides: Partial<DecideConfig> = {}): DecideConfig {
     eligibility: DEFAULT_ELIGIBILITY,
     risk: DEFAULT_RISK,
     ledger: durable(),
+    screen: DEFAULT_SCREEN,
     slippageBps: 100n,
     idempotencyKey: "tick-1",
     approvalsNeeded: false,
@@ -248,7 +264,16 @@ describe("EXIT IS EVALUATED FIRST AND GATED BY NOTHING (DESIGN §6 Rule 5)", () 
 });
 
 describe("decide — RULE 1 reaches all the way through", () => {
-  it("HOLDS rather than entering a 10%-tax token", async () => {
+  /*
+   * ══ THE BEHAVIOUR CHANGE, ASSERTED IN BOTH DIRECTIONS ══
+   *
+   * A 10%-tax token is no longer refused by a TIER RULE. It is refused by its own COST BAR when
+   * its move is too small, and ADMITTED when the move is large enough to pay for the tax. Both
+   * halves are tested, because a suite that only proved the refusal would pass just as happily
+   * against the old hard filter — which is the thing being replaced.
+   */
+  it("HOLDS on a 10%-tax token whose move cannot pay its 1938bps round trip", async () => {
+    // A 900bps move clears the bar comfortably at 1% tax. At 10% it does not come close.
     const d = await decide(
       state(),
       market({ candidates: [candidate({ token: { ...candidate().token, taxPct: 10 } })] }),
@@ -256,10 +281,37 @@ describe("decide — RULE 1 reaches all the way through", () => {
     );
     expect(d.kind).toBe("hold");
     if (d.kind !== "hold") throw new Error("unreachable");
-    expect(d.reason).toMatch(/taxPct 10%/);
+    // Refused by ARITHMETIC, not by a tier rule. The reason must carry the numbers.
+    expect(d.reason).toMatch(/cost bar refused it|does not cover its own tax/);
+    // And it must NOT be refused for being tier 10 — that rule is gone.
+    expect(d.reason).not.toMatch(/taxPct 10% !=/);
   });
 
-  it("picks the 1% token out of a mixed candidate list", async () => {
+  it("ENTERS a 10%-tax token when the move DOES clear its own tax bar", async () => {
+    // THE POINT OF THE REBUILD: a 5%-tax token that moves 30% beats a 1%-tax token that moves 2%.
+    // At 10% tax the bar is ~3876bps of expected gain; a 6000bps move clears it.
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({
+            token: { ...candidate().token, taxPct: 10 },
+            history: history(6000n),
+          }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("enter");
+    if (d.kind !== "enter") throw new Error("unreachable");
+    // The cost actually charged must be the 10% one, not a 1% one read from config.
+    expect(d.cost.totalBps).toBeGreaterThan(1900n);
+    expect(d.score.netEdgeBps).toBeGreaterThan(0n);
+  });
+
+  it("ranks on NET edge, so a low-tax token beats a high-tax one on the SAME move", async () => {
+    // Identical 900bps moves. The 1% token nets ~669bps; the 10% token nets negative and is
+    // refused outright. Ranking on GROSS move would have made them indistinguishable.
     const mixed = [
       candidate({ token: { ...candidate().token, address: "0xTen", taxPct: 10 } }),
       candidate({ token: { ...candidate().token, address: "0xFive", taxPct: 5 } }),
@@ -272,9 +324,14 @@ describe("decide — RULE 1 reaches all the way through", () => {
   });
 
   it("HOLDS when every candidate is refused, and lists every reason", async () => {
+    // Both refused for REAL reasons now that tier alone is not one: a 10%-tax token whose 900bps
+    // move cannot pay its 1938bps round trip, and a token that fails the sell simulation.
     const allBad = [
       candidate({ token: { ...candidate().token, address: "0xTen", taxPct: 10 } }),
-      candidate({ token: { ...candidate().token, address: "0xThree", taxPct: 3 } }),
+      candidate({
+        token: { ...candidate().token, address: "0xThree", taxPct: 3 },
+        sell: { ok: false, selector: "0x7a5ed734" },
+      }),
     ];
     const d = await decide(state(), market({ candidates: allBad }), cfg());
     expect(d.kind).toBe("hold");
@@ -315,7 +372,9 @@ describe("decide — the bar and the signal both bind", () => {
     );
     expect(d.kind).toBe("hold");
     if (d.kind !== "hold") throw new Error("unreachable");
-    expect(d.reason).toMatch(/cost bar refused it/);
+    // Either gate may catch it — the bar on expected gain, or the net-edge check that refuses a
+    // move which cannot cover its own cost. Both are the cost term binding, which is the property.
+    expect(d.reason).toMatch(/cost bar refused it|does not cover its own tax/);
   });
 
   it("the SAME token enters at a real gas price and is refused at anvil's", async () => {
@@ -452,5 +511,255 @@ describe("decide is PURE and FULLY DETERMINISTIC", () => {
       const d = (await p) as { kind: string };
       expect(["hold", "enter", "exit"]).toContain(d.kind);
     }
+  });
+});
+
+describe("decide — the sell simulation reaches all the way through", () => {
+  /*
+   * ══ THE HIGHEST-VALUE CHECK, ASSERTED ON THE REAL DECISION PATH ══
+   *
+   * 84 of the newest 100 tokens quote a buy and cannot be sold. It is not enough for `screen.ts`
+   * to refuse them in isolation — `decide` has to actually consult it. RESEARCH §7g is precisely
+   * about the gap between a claim and the code that would have to run for it.
+   */
+  it("HOLDS on a token that cannot be sold, even though everything else is perfect", async () => {
+    const d = await decide(
+      state(),
+      market({
+        candidates: [candidate({ sell: { ok: false, selector: "0x90bfb865" } })],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("hold");
+    if (d.kind !== "hold") throw new Error("unreachable");
+    expect(d.reason).toMatch(/SELL SIMULATION FAILED/);
+  });
+
+  it("picks the SELLABLE token over an unsellable one with a bigger move", async () => {
+    // The unsellable token has the far better signal. It must still lose, because a position you
+    // cannot exit has no expected value at all.
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({
+            token: { ...candidate().token, address: "0xTrap" },
+            history: history(5000n),
+            sell: { ok: false, selector: "0x7a5ed734" },
+          }),
+          candidate({ token: { ...candidate().token, address: "0xGood" } }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("enter");
+    if (d.kind !== "enter") throw new Error("unreachable");
+    expect(d.token).toBe("0xGood");
+  });
+
+  it("HOLDS on a bundled token — concentration is consulted on the real path", async () => {
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({
+            holders: {
+              top10Pct: 5,
+              creatorPct: 0,
+              creatorSold: true,
+              sniperCount: 30,
+              sniperHeldPct: 45,
+            },
+          }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("hold");
+    if (d.kind !== "hold") throw new Error("unreachable");
+    expect(d.reason).toMatch(/sniper\/bundle wallets hold/);
+  });
+});
+
+describe("decide — scoring picks the BEST candidate, not the first", () => {
+  it("enters the highest-scoring token even when it is LAST in the list", async () => {
+    /*
+     * The old loop returned the first candidate that passed every gate, so the winner depended on
+     * arrival order — the one channel DESIGN §5 lets the LLM influence. This is the test that
+     * proves the arithmetic decides instead.
+     */
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({ token: { ...candidate().token, address: "0xWeak" }, history: history(600n) }),
+          candidate({ token: { ...candidate().token, address: "0xMid" }, history: history(900n) }),
+          candidate({ token: { ...candidate().token, address: "0xBest" }, history: history(4000n) }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("enter");
+    if (d.kind !== "enter") throw new Error("unreachable");
+    expect(d.token).toBe("0xBest");
+  });
+
+  it("gives the same winner however the candidates are ordered", async () => {
+    const weak = candidate({
+      token: { ...candidate().token, address: "0xWeak" },
+      history: history(600n),
+    });
+    const best = candidate({
+      token: { ...candidate().token, address: "0xBest" },
+      history: history(4000n),
+    });
+    const forward = await decide(state(), market({ candidates: [weak, best] }), cfg());
+    const reversed = await decide(state(), market({ candidates: [best, weak] }), cfg());
+    expect(forward.kind).toBe("enter");
+    expect(reversed.kind).toBe("enter");
+    if (forward.kind !== "enter" || reversed.kind !== "enter") throw new Error("unreachable");
+    expect(forward.token).toBe("0xBest");
+    expect(reversed.token).toBe("0xBest");
+  });
+
+  it("the entry reason names the runners-up and the score arithmetic, for /logs", async () => {
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({ token: { ...candidate().token, address: "0xBest" }, history: history(4000n) }),
+          candidate({ token: { ...candidate().token, address: "0xMid" }, history: history(900n) }),
+        ],
+      }),
+      cfg(),
+    );
+    if (d.kind !== "enter") throw new Error("expected an entry");
+    expect(d.reason).toMatch(/BEST OF 2 scored candidate/);
+    expect(d.reason).toMatch(/Runners-up: 0xMid/);
+    expect(d.score.netEdgeBps).toBeGreaterThan(0n);
+  });
+
+  it("HOLDS rather than buying the least-bad token when NONE has a positive net edge", async () => {
+    // Ranking is for choosing among trades worth making. A tick where every survivor is
+    // unprofitable must hold, not buy the top of a bad list.
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({ token: { ...candidate().token, address: "0xA", taxPct: 10 } }),
+          candidate({ token: { ...candidate().token, address: "0xB", taxPct: 10 } }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("hold");
+  });
+});
+
+describe("decide — the exit is costed against the POSITION's tax, not the config's", () => {
+  it("uses the open position's own tax tier for the take-profit floor", async () => {
+    /*
+     * A REAL BUG this replaced: the exit read `cfg.eligibility.requiredTaxPct`, which was correct
+     * only while every position was guaranteed to be 1%-tax. Now that any tier may be held,
+     * reading config would understate a 10%-tax exit by ~1700bps and set the take-profit far too
+     * low — selling into a "profit" that does not cover the tax.
+     *
+     * A 10%-tax position needs ~3876bps to clear its round trip. At +2000bps it must still HOLD.
+     */
+    const d = await decide(
+      state({
+        position: position({ taxPct: 10 }),
+        compartmentWei: 0n,
+      }),
+      market({ markPriceWei: (BASE_PRICE * 12_000n) / 10_000n }),
+      cfg(),
+    );
+    expect(d.kind).toBe("hold");
+    if (d.kind !== "hold") throw new Error("unreachable");
+    /*
+     * The band must be the 10%-TAX one: +4068bps, i.e. 2 x the ~2034bps round trip on a 10% token.
+     * Had the config's 1% been read instead, the target would be ~471bps and a +2000bps move would
+     * have taken profit — selling into a "gain" that does not cover the tax.
+     */
+    expect(d.reason).toMatch(/\+4068\]bps/);
+    expect(d.reason).not.toMatch(/\+471\]bps/);
+  });
+
+  it("takes profit on the SAME move when the position is 1%-tax", async () => {
+    // Both directions: the tier actually changes the outcome, so the field is load-bearing.
+    const d = await decide(
+      state({ position: position({ taxPct: 1 }), compartmentWei: 0n }),
+      market({ markPriceWei: (BASE_PRICE * 12_000n) / 10_000n }),
+      cfg(),
+    );
+    expect(d.kind).toBe("exit");
+  });
+});
+
+describe("decide — refusal paths that must stay reachable", () => {
+  it("refuses an INELIGIBLE candidate and keeps evaluating the rest", async () => {
+    // The eligibility refusal must not abort the loop — it is about one token, not the stray.
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          // Untraded: market cap sits on the 1.356 ETH seed, below the 1.40 floor.
+          candidate({
+            token: {
+              ...candidate().token,
+              address: "0xSeed",
+              marketCapWei: 1_356_000_000_000_000_000n,
+            },
+          }),
+          candidate({ token: { ...candidate().token, address: "0xGood" } }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("enter");
+    if (d.kind !== "enter") throw new Error("unreachable");
+    expect(d.token).toBe("0xGood");
+  });
+
+  it("a candidate whose signal does not fire is skipped, not fatal", async () => {
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({ token: { ...candidate().token, address: "0xFlat" }, history: history(0n) }),
+          candidate({ token: { ...candidate().token, address: "0xGood" } }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("enter");
+    if (d.kind !== "enter") throw new Error("unreachable");
+    expect(d.token).toBe("0xGood");
+  });
+
+  it("lists a mixture of refusal causes when everything is refused", async () => {
+    // Each token fails a DIFFERENT gate, and /logs must carry all three reasons.
+    const d = await decide(
+      state(),
+      market({
+        candidates: [
+          candidate({
+            token: { ...candidate().token, address: "0xSeed", marketCapWei: 1n },
+          }),
+          candidate({
+            token: { ...candidate().token, address: "0xTrap" },
+            sell: { ok: false, selector: "0x7a5ed734" },
+          }),
+          candidate({ token: { ...candidate().token, address: "0xFlat" }, history: history(0n) }),
+        ],
+      }),
+      cfg(),
+    );
+    expect(d.kind).toBe("hold");
+    if (d.kind !== "hold") throw new Error("unreachable");
+    expect(d.reason).toMatch(/3 candidate\(s\) refused/);
+    expect(d.reason).toContain("0xSeed");
+    expect(d.reason).toContain("0xTrap");
+    expect(d.reason).toContain("0xFlat");
   });
 });

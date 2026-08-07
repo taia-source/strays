@@ -8,31 +8,35 @@
  * and legs that read as a fringe — had all passed review as ASCII in a source file. They were only
  * ever caught by rendering to a PNG and looking at it.
  *
- * `ART-DIRECTION.md` §5b makes the same demand of this sprite in as many words: "Rendered to PNG at
- * final size and LOOKED AT before it is called done." Reading the grid in a terminal does not
- * count, because a terminal cell is not square and the eye reads a tall glyph grid differently from
- * a square pixel grid — which is itself a way to ship a stretched sprite.
+ * openhood's own record says the same of its mascot: v1 "read as a white blob" and was caught only
+ * by looking. And the entire reason this package was rebuilt at 24x24 is that its 16x16 predecessor
+ * passed 35 tests and was still called "shit pixel-art mascots" on sight.
  *
- * ══ WHAT THE SHEET SHOWS, AND WHY THESE SIZES ══
+ * `ART-DIRECTION.md` §5b makes the demand in as many words: "Rendered to PNG at final size and
+ * LOOKED AT before it is called done." Reading the grid in a terminal does not count, because a
+ * terminal cell is not square and the eye reads a tall glyph grid differently from a square pixel
+ * grid — which is itself a way to ship a stretched sprite.
  *
- * Twelve ids across four states, drawn at BOTH sizes the product actually uses:
+ * ══ WHAT THE SHEETS SHOW ══
  *
- *   - 32px — the COLONY MAP size. This is the size the sprite has to survive; §9 names "30 cats
- *     read as 30 identical smudges" as the second-likeliest way this whole product fails. If the
- *     ears and tail do not separate the cats HERE, the hash budget is wrong.
- *   - 96px — the DETAIL PORTRAIT size, where the shading, the neck break and the inner-ear wedge
- *     are actually visible and can be judged.
+ *   preview.png        — twelve ids x four states, at 32px (the COLONY MAP size) and 96px (the
+ *                        DETAIL PORTRAIT size). The main judgement sheet.
+ *   preview-poses.png  — every POSTURE and every IDLE FRAME, so the axes that only exist across
+ *                        multiple renders can be judged at all. A frame axis is invisible on a
+ *                        single-frame sheet by construction.
  *
- * Both are integer multiples of 16 (2x and 6x), so every grid pixel is a whole number of screen
- * pixels. A non-integer multiple resamples the sprite and every judgement made from the render
- * would be about the resampler rather than about the geometry.
+ * 32px and 96px are both integer multiples of 24 (with 64px as 8/3 — see below), so every grid cell
+ * is a whole number of screen pixels. A non-integer multiple resamples the sprite and every
+ * judgement made from the render would be about the resampler rather than about the geometry. 64px
+ * is requested in the brief and is NOT an integer multiple of 24, so it is drawn at scale 3 (72px)
+ * — the nearest integer scale — and labelled honestly rather than resampled.
  *
  * ══ WHY IT HANDS OFF TO PYTHON ══
  *
- * There is no `canvas` package in this workspace and adding a native dependency to look at a
- * sprite would be a poor trade. The grid is emitted as JSON and Pillow paints it — nearest
- * neighbour, no smoothing, which is what §8's anti-aliasing ban requires of the world anyway. The
- * NUMBERS come from `catGrid`; Python only fills rectangles.
+ * There is no `canvas` package in this workspace and adding a native dependency to look at a sprite
+ * would be a poor trade. The grid is emitted as JSON and Pillow paints it — nearest neighbour, no
+ * smoothing, which is what §8's anti-aliasing ban requires of the world anyway. The NUMBERS come
+ * from `catGrid`; Python only fills rectangles.
  */
 
 import { execFileSync } from "node:child_process";
@@ -41,17 +45,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { catGrid, GRID_H, GRID_W } from "../dist/grid.js";
-import { PHOSPHOR_RAMP, STATE_ACCENT } from "../dist/render.js";
+import { CAT_FRAMES, catGrid, geometryFor, GRID_H, GRID_W } from "../dist/grid.js";
+import { catRamp, STATE_ACCENT } from "../dist/render.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const out = join(here, "..", "preview.png");
 
 /**
- * Twelve ids. Deliberately NOT `cat-1`..`cat-12`: sequential ids differing in one trailing
- * character are the WORST case for a hash budget, because a poor mix leaves neighbouring ids
- * looking alike. Half the set is sequential precisely to expose that, and half is unrelated words
- * so the sheet also shows the typical case.
+ * Twelve ids. Deliberately NOT `cat-1`..`cat-12`: sequential ids differing in one trailing character
+ * are the WORST case for a hash budget, because a poor mix leaves neighbouring ids looking alike.
+ * Half the set is sequential precisely to expose that, and half is unrelated words so the sheet also
+ * shows the typical case.
  */
 const IDS = [
   "stray-1",
@@ -70,14 +73,13 @@ const IDS = [
 
 const STATES = ["fed", "hunting", "starving", "dead"];
 
-/** oklch() is not something Pillow parses, so the ramp is converted to sRGB bytes here. */
+/** oklch() is not something Pillow parses, so any oklch in the palette is converted to sRGB here. */
 function oklchToRgb(css) {
   const m = /oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)\)/.exec(css);
   if (!m) throw new Error(`unparsed colour: ${css}`);
   const L = Number(m[1]);
   const C = Number(m[2]);
-  const hDeg = Number(m[3]);
-  const h = (hDeg * Math.PI) / 180;
+  const h = (Number(m[3]) * Math.PI) / 180;
   const a = C * Math.cos(h);
   const b = C * Math.sin(h);
   // OKLab -> LMS' -> LMS -> linear sRGB. The standard matrices, written out.
@@ -97,33 +99,86 @@ function oklchToRgb(css) {
   return [enc(lr), enc(lg), enc(lb)];
 }
 
-const payload = {
-  gridW: GRID_W,
-  gridH: GRID_H,
-  ramp: PHOSPHOR_RAMP.map(oklchToRgb),
-  // The page ground, §3 `--soot`. The sheet is drawn on the real page colour because a sprite
-  // judged against white is judged against a contrast it will never have.
-  soot: oklchToRgb("oklch(0.14 0.014 145)"),
-  states: STATES,
-  ids: IDS,
-  cells: [],
-};
-
-for (const state of STATES) {
-  for (const id of IDS) {
-    const accent = STATE_ACCENT[state];
-    payload.cells.push({
-      id,
-      state,
-      accent: accent === undefined ? null : oklchToRgb(accent),
-      px: catGrid(id, { state }).map((p) => [p.x, p.y, p.step, p.accent === true ? 1 : 0]),
-    });
+/** `catRamp` emits `#rrggbb` for pigmented cats; the fallback ramp may emit oklch. */
+function toRgb(css) {
+  if (css.startsWith("#")) {
+    const n = Number.parseInt(css.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
+  return oklchToRgb(css);
 }
 
-const dir = mkdtempSync(join(tmpdir(), "cat-preview-"));
-const jsonPath = join(dir, "grid.json");
-writeFileSync(jsonPath, JSON.stringify(payload));
+// The page ground, §3 `--soot`. The sheets are drawn on the real page colour because a sprite judged
+// against white is judged against a contrast it will never have.
+const SOOT = oklchToRgb("oklch(0.14 0.014 145)");
+
+function cellFor(id, state, frame) {
+  const accent = STATE_ACCENT[state];
+  const ramp = catRamp(id, state).map(toRgb);
+  return {
+    id,
+    state,
+    frame,
+    posture: geometryFor(id).posture,
+    ramp,
+    accent: accent === undefined ? null : oklchToRgb(accent),
+    px: catGrid(id, { state, frame }).map((p) => [p.x, p.y, p.step, p.accent === true ? 1 : 0]),
+  };
+}
+
+/** SHEET 1 — the main judgement sheet: every id x every state, at map size and portrait size. */
+const main = {
+  gridW: GRID_W,
+  gridH: GRID_H,
+  soot: SOOT,
+  rows: STATES,
+  cols: IDS,
+  scales: [
+    [2, "48px (2x) — colony map"],
+    [3, "72px (3x) — mid"],
+    [4, "96px (4x) — detail portrait"],
+  ],
+  cells: [],
+};
+for (const state of STATES) {
+  for (const id of IDS) main.cells.push(cellFor(id, state, 0));
+}
+
+/**
+ * SHEET 2 — the axes that only exist ACROSS renders.
+ *
+ * A posture axis and a frame axis are both invisible on a single-frame sheet by construction: you
+ * cannot see that a tail flicked by looking at one picture of a tail. The ids here are chosen — one
+ * per posture — rather than taken from the head of `IDS`, because the whole point is coverage of the
+ * axis, and a hash-ordered sample of twelve ids happened to contain no `stretch` at all.
+ */
+const POSTURE_IDS = (() => {
+  const want = ["sit", "stand", "crouch", "stretch"];
+  const found = new Map();
+  // A deterministic scan over a wide id space, so the sheet covers every posture without any id
+  // being hand-picked to flatter the render.
+  for (let i = 0; i < 4000 && found.size < want.length; i++) {
+    const id = `stray-${i}`;
+    const p = geometryFor(id).posture;
+    if (want.includes(p) && !found.has(p)) found.set(p, id);
+  }
+  return want.map((p) => found.get(p) ?? "stray-1");
+})();
+
+const poses = {
+  gridW: GRID_W,
+  gridH: GRID_H,
+  soot: SOOT,
+  rows: Array.from({ length: CAT_FRAMES }, (_, f) => `frame ${f}`),
+  cols: POSTURE_IDS.map((id) => `${geometryFor(id).posture}`),
+  scales: [[5, "120px (5x) — postures across idle frames"]],
+  cells: [],
+};
+for (let frame = 0; frame < CAT_FRAMES; frame++) {
+  // `fed` rather than `hunting`: the hunting state FORCES every cat to crouch (see `stateGeometry`),
+  // so a posture sheet drawn in `hunting` shows four crouches and proves nothing about the axis.
+  for (const id of POSTURE_IDS) poses.cells.push(cellFor(id, "fed", frame));
+}
 
 const PY = `
 import json, sys
@@ -131,47 +186,35 @@ from PIL import Image, ImageDraw
 
 data = json.load(open(sys.argv[1]))
 GW, GH = data["gridW"], data["gridH"]
-ramp = [tuple(c) for c in data["ramp"]]
 soot = tuple(data["soot"])
-ids, states = data["ids"], data["states"]
+rows, cols = data["rows"], data["cols"]
+PAD, LABEL_H, GUTTER = 8, 16, 34
 
-# Two blocks: the 32px map size on top, the 96px portrait size below.
-SCALES = [2, 6]
-PAD = 8
-LABEL_H = 14
-COLS = len(ids)
+def block_h(s):
+    return (GH * s + PAD) * len(rows) + LABEL_H
 
-def block_size(s):
-    cw, ch = GW * s + PAD, GH * s + PAD
-    return cw * COLS, ch * len(states) + LABEL_H
-
-widths = [block_size(s)[0] for s in SCALES]
-heights = [block_size(s)[1] for s in SCALES]
-W = max(widths) + 2 * PAD
-H = sum(heights) + 3 * PAD
+W = max((GW * s + PAD) * len(cols) for s, _ in data["scales"]) + 2 * PAD + GUTTER
+H = sum(block_h(s) for s, _ in data["scales"]) + PAD * (len(data["scales"]) + 1)
 
 img = Image.new("RGB", (W, H), soot)
 d = ImageDraw.Draw(img)
+LABEL = (110, 130, 108)
 
-# The noise floor colour for labels — --phos-ghost. Type on this sheet is a tool, not the design.
-LABEL = (100, 120, 100)
-
-by_key = {(c["id"], c["state"]): c for c in data["cells"]}
-
+cells = data["cells"]
 y0 = PAD
-for s in SCALES:
+for s, title in data["scales"]:
     cw, ch = GW * s + PAD, GH * s + PAD
-    d.text((PAD, y0), f"{GW*s}px  (scale {s}x)", fill=LABEL)
+    d.text((PAD, y0), title, fill=LABEL)
     y = y0 + LABEL_H
-    for state in states:
-        d.text((PAD, y + 1), state[:4], fill=LABEL)
-        for ci, cid in enumerate(ids):
-            cell = by_key[(cid, state)]
-            ox = PAD + 30 + ci * cw
+    for ri, rname in enumerate(rows):
+        d.text((PAD, y + 2), str(rname)[:6], fill=LABEL)
+        for ci in range(len(cols)):
+            cell = cells[ri * len(cols) + ci]
+            ramp = [tuple(c) for c in cell["ramp"]]
+            ox = PAD + GUTTER + ci * cw
             for (px, py, step, acc) in cell["px"]:
                 col = tuple(cell["accent"]) if (acc and cell["accent"]) else ramp[step]
-                x1 = ox + px * s
-                y1 = y + py * s
+                x1, y1 = ox + px * s, y + py * s
                 d.rectangle([x1, y1, x1 + s - 1, y1 + s - 1], fill=col)
         y += ch
     y0 = y + PAD
@@ -180,7 +223,17 @@ img.save(sys.argv[2])
 print(f"{W}x{H}")
 `;
 
+const dir = mkdtempSync(join(tmpdir(), "cat-preview-"));
 const pyPath = join(dir, "draw.py");
 writeFileSync(pyPath, PY);
-const size = execFileSync("python3", [pyPath, jsonPath, out], { encoding: "utf8" }).trim();
-console.log(`preview -> ${out}  (${size})`);
+
+for (const [payload, name] of [
+  [main, "preview.png"],
+  [poses, "preview-poses.png"],
+]) {
+  const jsonPath = join(dir, `${name}.json`);
+  writeFileSync(jsonPath, JSON.stringify(payload));
+  const out = join(here, "..", name);
+  const size = execFileSync("python3", [pyPath, jsonPath, out], { encoding: "utf8" }).trim();
+  console.log(`preview -> ${out}  (${size})`);
+}

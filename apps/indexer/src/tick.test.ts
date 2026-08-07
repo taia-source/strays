@@ -17,6 +17,7 @@ const STRAY: StrayState = {
   holding: null,
   holdingUnits: 0n,
   costBasisWei: 0n,
+  holdingTaxPct: null,
   entryBlock: 0n,
 };
 

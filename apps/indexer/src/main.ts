@@ -29,6 +29,7 @@
 import {
   DEFAULT_ELIGIBILITY,
   DEFAULT_RISK,
+  DEFAULT_SCREEN,
   type SpendLedger,
   assertDurableLedger,
   createMemorySpendLedger,
@@ -37,8 +38,14 @@ import {
 import { createStore, type Store } from "./ledger.js";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { fetchCandidates } from "./discovery.js";
-import { historyFor, quoteBuy, recordPrice } from "./quote.js";
+import {
+  SEED_MARKET_CAP_ETH,
+  type Candidate as PadCandidate,
+  fetchBuyRatioBps,
+  fetchCandidates,
+  fetchHolders,
+} from "./discovery.js";
+import { historyFor, quoteBuy, recordPrice, simulateSell } from "./quote.js";
 import { TICK_MS, runTick, type DecisionRecord, type StrayState, type TickDeps } from "./tick.js";
 
 const RPC_URL = process.env.STRAYS_RPC_URL ?? "";
@@ -46,6 +53,12 @@ const VAULT = (process.env.STRAYS_VAULT_ADDRESS ?? "") as `0x${string}`;
 const CHAIN_ID = Number(process.env.STRAYS_CHAIN_ID ?? 4663);
 const KEEPER_KEY = process.env.STRAYS_KEEPER_PRIVATE_KEY ?? "";
 const LIVE = process.env.STRAYS_LIVE_TRADING === "true";
+
+/**
+ * The block `StrayVault` was deployed in, measured from its deploy receipt — never guessed.
+ * Log scans start here. See the note on `fromBlock` below for what a rolling window did instead.
+ */
+const VAULT_DEPLOY_BLOCK = BigInt(process.env.STRAYS_VAULT_DEPLOY_BLOCK ?? "30275947");
 
 const VAULT_ABI = parseAbi([
   "function strays(bytes32) view returns (address owner, uint128 stake, uint128 principal, address holding, int24 tickSpacing, uint128 costBasis)",
@@ -64,6 +77,31 @@ const chain = {
 /** True only when all three switches are on. Anything less is observe mode. */
 export function canSpend(): boolean {
   return LIVE && KEEPER_KEY.length > 0 && RPC_URL.length > 0;
+}
+
+/**
+ * The pad's tax tier for one token, cached.
+ *
+ * Defaults to the WORST tier (10%) when unreadable rather than the best. An unknown cost must
+ * never be assumed cheap — that is the direction that loses money.
+ */
+const taxCache = new Map<string, number>();
+async function padTaxPct(token: string): Promise<number | null> {
+  const key = token.toLowerCase();
+  const hit = taxCache.get(key);
+  if (hit !== undefined) return hit;
+  try {
+    const r = await fetch(`https://api.letscash.fun/api/tokens/${token}`, {
+      headers: { accept: "application/json", "user-agent": "strays-indexer/0.1" },
+    });
+    if (!r.ok) return null;
+    const d = (await r.json()) as { taxPct?: unknown };
+    if (typeof d.taxPct !== "number") return null;
+    taxCache.set(key, d.taxPct);
+    return d.taxPct;
+  } catch {
+    return null;
+  }
 }
 
 async function main(): Promise<void> {
@@ -131,7 +169,19 @@ async function main(): Promise<void> {
       const logs = await pub.getLogs({
         address: VAULT,
         event: VAULT_ABI[3],
-        fromBlock: block > 100_000n ? block - 100_000n : 0n,
+        /*
+         * ══ THE DEPLOY BLOCK, NOT A ROLLING WINDOW ══
+         *
+         * This was `block - 100_000n`. MEASURED: the vault was deployed at 30,275,947 and the
+         * chain reached 30,396,369 within hours — 120k blocks later — so the window had already
+         * slid PAST the deployment and `getLogs` returned zero. The keeper saw no strays, made no
+         * decisions, and looked hung. A rolling window on an append-only registry is a bug with a
+         * timer on it: it works until the chain outruns it, then silently forgets everyone.
+         *
+         * Adoptions are permanent, so the correct lower bound is the block the vault came into
+         * existence and never anything later.
+         */
+        fromBlock: VAULT_DEPLOY_BLOCK,
         toBlock: block,
       });
       const ids = [...new Set(logs.map((l) => l.args.strayId as `0x${string}`))];
@@ -143,10 +193,21 @@ async function main(): Promise<void> {
             functionName: "strays",
             args: [id],
           });
+          const held = holding === "0x0000000000000000000000000000000000000000" ? null : holding;
+          /*
+           * The tax tier of the token this stray is HOLDING, read fresh.
+           *
+           * The strategy rebuild found a live bug this closes: exits were costed against the
+           * CONFIG's tax rather than the position's own tier, so a 10%-tax position could be sold
+           * into a "profit" that did not cover the 1900bps it actually costs to round-trip. It was
+           * invisible while only 1%-tax tokens were tradeable and total once they were not.
+           */
+          const holdingTaxPct = held === null ? 0 : ((await padTaxPct(held)) ?? 10);
           return {
             id,
             stakeWei: stake,
-            holding: holding === "0x0000000000000000000000000000000000000000" ? null : holding,
+            holding: held,
+            holdingTaxPct,
             holdingUnits: 0n,
             costBasisWei: costBasis,
             entryBlock: 0n,
@@ -269,9 +330,18 @@ async function main(): Promise<void> {
        */
       const sizeProbeWei = 1_200_000_000_000_000n; // ~$2.3, the size we would actually trade
       const huntCandidates = [];
-      for (const c of candidates) {
-        // priceEth is a float from the API and is used ONLY to record history, never to size a
-        // trade — the trade size comes from the quoter below, in bigint.
+      /** Named in the decision log, so a user can see WHY the colony is quiet. */
+      const unsellable: string[] = [];
+
+      /**
+       * Gather everything one candidate needs. Returns the candidate, its SYMBOL when the sell
+       * simulation refuses it, or null when it cannot be quoted or read at all.
+       *
+       * The sell simulation is the check that matters most: measured on 40 live tokens, 40/40 buy
+       * quotes succeeded and only 7 sells did, so checking the buy side alone would enter a
+       * position it cannot exit 82% of the time.
+       */
+      const buildCandidate = async (c: PadCandidate) => {
         const ethPerTokenWei = BigInt(Math.round(c.priceEth * 1e18));
         if (ethPerTokenWei > 0n) {
           recordPrice(c.address, ethPerTokenWei, nowSeconds);
@@ -284,9 +354,32 @@ async function main(): Promise<void> {
           tickSpacing: c.tickSpacing,
           amountInWei: sizeProbeWei,
         });
-        if (quotedOut === null) continue; // unquotable is untradeable. Never estimated.
+        if (quotedOut === null) return null; // unquotable is untradeable. Never estimated.
 
-        huntCandidates.push({
+        // CAN WE GET OUT? Simulate the exit BEFORE committing to the entry.
+        const sell = await simulateSell({
+          client: pub,
+          token: c.address,
+          tickSpacing: c.tickSpacing,
+          amountInTokens: quotedOut,
+        });
+        if (!sell.ok) return c.symbol || c.address;
+
+        const [holders, buyRatioBps, history] = await Promise.all([
+          fetchHolders(c.address),
+          fetchBuyRatioBps(c.address),
+          store !== null
+            ? store.historyFor(c.address, 4 * 60 * 60, nowSeconds)
+            : Promise.resolve(historyFor(c.address)),
+        ]);
+        // A distribution we cannot read is not a distribution of zero — refuse rather than assume.
+        if (holders === null) return null;
+
+        return {
+          sell,
+          holders,
+          // No trades to measure means no momentum, not balanced momentum.
+          buyRatioBps: buyRatioBps ?? 0n,
           token: {
             address: c.address,
             taxPct: c.taxPct,
@@ -296,14 +389,39 @@ async function main(): Promise<void> {
             ageSeconds: Math.max(0, nowSeconds - Math.floor(c.launchedAt / 1000)),
             tickSpacing: c.tickSpacing,
           },
-          // Durable history when Postgres is up, in-memory otherwise. A restart no longer blanks
-          // every stray's window.
-          history:
-            store !== null
-              ? await store.historyFor(c.address, 4 * 60 * 60, nowSeconds)
-              : historyFor(c.address),
+          history,
           quotedOut,
-        });
+        };
+      };
+      /*
+       * ══ WHY THIS IS PREFILTERED AND PARALLEL ══
+       *
+       * The serial version ran six network round-trips per candidate over ~48 candidates — ~288
+       * sequential requests. MEASURED: the tick did not finish in 90 seconds, so the keeper
+       * emitted no decisions at all. A cat that cannot finish thinking before the next tick never
+       * acts, and the colony looks dead.
+       *
+       * 1. **A free prefilter first.** Measured on 40 live tokens: every token still at the
+       *    ~1.356 ETH seed market cap failed the sell simulation, and 5 of 5 above it passed.
+       *    Market cap is already in the list response, so this removes ~85% of candidates before
+       *    we pay for a single quote.
+       * 2. **Bounded parallelism** over the rest. A CAP rather than an unbounded `Promise.all`:
+       *    the pad allows 240 req/60s and a full fan-out would burn that budget in one tick.
+       */
+      const worth = candidates.filter((c) => c.marketCapEth > SEED_MARKET_CAP_ETH);
+      const skippedAtSeed = candidates.length - worth.length;
+
+      const CONCURRENCY = 6;
+      for (let i = 0; i < worth.length; i += CONCURRENCY) {
+        const batch = await Promise.all(worth.slice(i, i + CONCURRENCY).map(buildCandidate));
+        for (const b of batch) {
+          if (b === null) continue;
+          if (typeof b === "string") {
+            unsellable.push(b);
+            continue;
+          }
+          huntCandidates.push(b);
+        }
       }
 
       const d = await strategyDecide(
@@ -322,6 +440,9 @@ async function main(): Promise<void> {
                   // Full precision, never a number — a real 18-decimal balance needs ~22
                   // significant digits and float64 holds ~15-17 (RESEARCH §7d).
                   tokenBalance: stray.holdingUnits,
+                  // Defaults to the WORST tier when unknown. An unknown cost must never be
+                  // assumed cheap — that is the direction that loses money.
+                  taxPct: stray.holdingTaxPct ?? 10,
                   openedAtSeconds: 0,
                 },
         },
@@ -336,6 +457,7 @@ async function main(): Promise<void> {
         {
           eligibility: DEFAULT_ELIGIBILITY,
           risk: DEFAULT_RISK,
+          screen: DEFAULT_SCREEN,
           ledger,
           slippageBps: 500n,
           idempotencyKey: `${stray.id}:${block.toString()}`,
@@ -378,9 +500,10 @@ async function main(): Promise<void> {
   };
 
   const cycle = async (): Promise<void> => {
+    const t0 = Date.now();
     try {
       const written = await runTick(deps);
-      if (written.length > 0) console.log(`tick: ${written.length} decisions`);
+      console.log(`tick: ${written.length} decisions in ${Date.now() - t0}ms`);
     } catch (err) {
       // A tick that throws must never kill the process — the next one may succeed.
       console.error(`tick failed: ${String(err)}`);

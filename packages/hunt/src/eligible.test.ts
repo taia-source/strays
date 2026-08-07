@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertHuntableTax,
+  assertTaxCeiling,
   DEFAULT_ELIGIBILITY,
   type EligibilityConfig,
-  HUNTABLE_TAX_PCT,
+  MAX_PAD_TAX_PCT,
   isEligible,
   type TokenSnapshot,
 } from "./eligible.js";
@@ -23,48 +23,49 @@ function huntable(overrides: Partial<TokenSnapshot> = {}): TokenSnapshot {
   };
 }
 
-describe("RULE 1 — a stray may hunt taxPct === 1 and nothing else", () => {
-  it("admits a 1%-tax token", () => {
-    expect(isEligible(huntable(), DEFAULT_ELIGIBILITY).ok).toBe(true);
-  });
-
+describe("TAX IS A COST TERM, NOT AN EXCLUSION", () => {
   /*
-   * ══ THE TEST THE BRIEF NAMES: A 10% TAX TOKEN IS REFUSED ══
+   * ══ WHAT THIS BLOCK REPLACED, AND WHY ══
    *
-   * At 10% a position must gain 19.4% just to break even, against a measured mean absolute 24h
-   * move of 7.7%. RESEARCH §0 calls this filter "the difference between a product and a money
-   * incinerator".
+   * This file used to assert "a stray may hunt taxPct === 1 and nothing else". That rule is gone.
+   * A 5%-tax token that moves 30% is far more profitable than a 1%-tax token that moves 2%, so
+   * tax is now priced in `score.ts` and each tier is required to clear its OWN bar:
+   *
+   *    1% -> 231bps round trip -> bar +4.63%      5% -> 1008bps -> bar +20.2%
+   *    3% -> 624bps            -> bar +12.5%     10% -> 1938bps -> bar +38.8%
+   *
+   * A 10%-tax token is refused by the ARITHMETIC when it cannot clear +38.8%, not by a rule that
+   * never let it be seen. `score.test.ts` proves the arithmetic actually binds.
    */
-  it("REFUSES a 10%-tax token", () => {
-    const verdict = isEligible(huntable({ taxPct: 10 }), DEFAULT_ELIGIBILITY);
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toMatch(/taxPct 10%/);
-  });
-
-  it("the 10% refusal reason carries the ARITHMETIC, so /logs shows why", () => {
-    const verdict = isEligible(huntable({ taxPct: 10 }), DEFAULT_ELIGIBILITY);
-    if (verdict.ok) throw new Error("expected a refusal");
-    // The break-even move, the 1% comparison, and the measured typical move must all appear —
-    // a bare "not eligible" is an assertion, not a finding (DESIGN §8).
-    expect(verdict.reason).toMatch(/231bps/);
-    expect(verdict.reason).toMatch(/20\.32%/);
-    expect(verdict.reason).toMatch(/7\.7%/);
-  });
-
-  it("REFUSES every non-1% tier the pad actually issues (3, 5, 10)", () => {
-    // RESEARCH §3e measured the live distribution: 1% 33%, 3% 13%, 5% 23%, 10% 31%.
-    for (const taxPct of [3, 5, 10]) {
+  it("ADMITS every tier the pad issues — 1, 3, 5 and 10", () => {
+    // Measured across the newest 100 launches: 1% = 29, 3% = 10, 5% = 18, 10% = 43. All are
+    // evaluable; the cost bar decides, not this filter.
+    for (const taxPct of [1, 3, 5, 10]) {
       const verdict = isEligible(huntable({ taxPct }), DEFAULT_ELIGIBILITY);
-      expect(verdict.ok, `taxPct ${String(taxPct)} must be refused`).toBe(false);
+      expect(verdict.ok, `taxPct ${String(taxPct)} must be evaluable`).toBe(true);
     }
   });
 
+  it("REFUSES a taxPct above the ceiling — a failed read, not an expensive token", () => {
+    const verdict = isEligible(huntable({ taxPct: 900 }), DEFAULT_ELIGIBILITY);
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(/exceeds the 10% ceiling/);
+    // The reason must say that an EXPENSIVE token would be priced rather than filtered, so the
+    // log distinguishes "malformed" from "too costly". Those are different findings.
+    expect(verdict.reason).toMatch(/priced by score\.ts/);
+  });
+
   it("REFUSES taxPct 0 — a failed API read, not a free lunch", () => {
-    // Every pool routes through the hook that charges the tax, so 0 cannot be real. A `<= 1`
-    // comparison would admit it and treat a broken read as the most attractive token on the venue.
+    // Every pool routes through the hook that charges the tax, so 0 cannot be real.
     const verdict = isEligible(huntable({ taxPct: 0 }), DEFAULT_ELIGIBILITY);
     expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toMatch(/coerced to a number/);
+  });
+
+  it("REFUSES a negative taxPct", () => {
+    expect(isEligible(huntable({ taxPct: -1 }), DEFAULT_ELIGIBILITY).ok).toBe(false);
   });
 
   it("REFUSES a fractional taxPct — the pad reports integers", () => {
@@ -75,50 +76,31 @@ describe("RULE 1 — a stray may hunt taxPct === 1 and nothing else", () => {
   });
 
   it("REFUSES a NaN taxPct", () => {
-    const verdict = isEligible(huntable({ taxPct: Number.NaN }), DEFAULT_ELIGIBILITY);
-    expect(verdict.ok).toBe(false);
+    expect(isEligible(huntable({ taxPct: Number.NaN }), DEFAULT_ELIGIBILITY).ok).toBe(false);
   });
 
-  /*
-   * ══ THE SABOTAGE THE BRIEF DEMANDS, RUN INSIDE THE SUITE ══
-   *
-   * "removing the tax filter makes a test fail". Rather than only asserting that here in prose,
-   * this test reimplements `isEligible` WITHOUT the tax check and proves the difference is
-   * observable — so the suite itself demonstrates that the filter, not something downstream, is
-   * what refuses a 10% token.
-   */
-  it("SABOTAGE: a filter with the tax check removed admits the 10% token the real one refuses", () => {
-    const tenPct = huntable({ taxPct: 10 });
+  it("a config whose ceiling is outside what the pad issues is REFUSED", () => {
+    // RESEARCH §7g: a setting whose value contradicts what the system may do. A ceiling above 10
+    // would let a malformed taxPct reach the cost model and produce a plausible cost for a tier
+    // that does not exist.
+    const tooHigh: EligibilityConfig = { ...DEFAULT_ELIGIBILITY, maxTaxPct: 50 };
+    expect(() => isEligible(huntable(), tooHigh)).toThrow(/sanity bound, not a trading rule/);
+    expect(() => assertTaxCeiling(tooHigh)).toThrow(/1\.\.10/);
 
-    // The real filter refuses it.
-    expect(isEligible(tenPct, DEFAULT_ELIGIBILITY).ok).toBe(false);
-
-    // A copy of the filter with ONLY the tax check deleted. Every other floor is unchanged.
-    const withoutTaxFilter = (t: TokenSnapshot, cfg: EligibilityConfig): boolean =>
-      t.marketCapWei >= cfg.minMarketCapWei &&
-      t.holders >= cfg.minHolders &&
-      t.volumeAllTimeWei >= cfg.minVolumeAllTimeWei &&
-      t.ageSeconds >= cfg.minAgeSeconds &&
-      t.ageSeconds <= cfg.maxAgeSeconds &&
-      t.tickSpacing > 0;
-
-    // It admits the token. So the tax check IS the thing doing the refusing — no other floor
-    // happens to catch a 10% token by accident, which is what makes the real check load-bearing
-    // rather than redundant with the rest.
-    expect(withoutTaxFilter(tenPct, DEFAULT_ELIGIBILITY)).toBe(true);
+    const tooLow: EligibilityConfig = { ...DEFAULT_ELIGIBILITY, maxTaxPct: 0 };
+    expect(() => assertTaxCeiling(tooLow)).toThrow();
   });
 
-  it("a config that tries to permit another tier is REFUSED, not honoured", () => {
-    // RESEARCH §7g: a setting whose value contradicts what the system may do. Configurable for
-    // testability, but arithmetic is not a matter of configuration.
-    const permissive: EligibilityConfig = { ...DEFAULT_ELIGIBILITY, requiredTaxPct: 10 };
-    expect(() => isEligible(huntable({ taxPct: 10 }), permissive)).toThrow(/Only 1% is huntable/);
-    expect(() => assertHuntableTax(permissive)).toThrow(/arithmetic, not configuration/);
+  it("MAX_PAD_TAX_PCT is 10 and the shipped config agrees with it", () => {
+    expect(MAX_PAD_TAX_PCT).toBe(10);
+    expect(DEFAULT_ELIGIBILITY.maxTaxPct).toBe(MAX_PAD_TAX_PCT);
   });
 
-  it("HUNTABLE_TAX_PCT is 1 and the shipped config agrees with it", () => {
-    expect(HUNTABLE_TAX_PCT).toBe(1);
-    expect(DEFAULT_ELIGIBILITY.requiredTaxPct).toBe(HUNTABLE_TAX_PCT);
+  it("the tax ceiling is enforced on EVERY call, not only when a caller remembers", () => {
+    // `assertTaxCeiling` is called from inside `isEligible`, so there is no path that skips it.
+    // Without this the guard would be advisory, which RESEARCH §7g is exactly about.
+    const bad: EligibilityConfig = { ...DEFAULT_ELIGIBILITY, maxTaxPct: 11 };
+    expect(() => isEligible(huntable({ taxPct: 1 }), bad)).toThrow();
   });
 });
 
@@ -130,7 +112,10 @@ describe("the liquidity, holder, volume and age floors", () => {
     );
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toMatch(/price-impact term/);
+    // The reason must name the MEASURED seed, not the old price-impact rationale — the floor now
+    // exists because 1.356 ETH is the untraded default and 84/100 tokens sit on it.
+    expect(verdict.reason).toMatch(/SEED market cap is 1\.356 ETH/);
+    expect(verdict.reason).toMatch(/15\/15/);
   });
 
   it("admits a market cap exactly AT the floor — the boundary is inclusive", () => {
@@ -151,7 +136,10 @@ describe("the liquidity, holder, volume and age floors", () => {
     );
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toMatch(/one address's mark/);
+    // The holders floor is now explicitly a LIVENESS proxy, and the reason must say so — the
+    // rug-protection job moved to screen.ts and the log must not imply otherwise.
+    expect(verdict.reason).toMatch(/counts the POOL CONTRACT/);
+    expect(verdict.reason).toMatch(/LIVENESS proxy only/);
   });
 
   it("admits exactly the minimum holder count", () => {
@@ -227,7 +215,9 @@ describe("the liquidity, holder, volume and age floors", () => {
 describe("the reason string — it goes in the logs, so it has to be usable", () => {
   it("every refusal names the token address", () => {
     const broken: ReadonlyArray<Partial<TokenSnapshot>> = [
-      { taxPct: 10 },
+      // NOT `{ taxPct: 10 }` — 10% is a valid tier now and is refused by the cost bar, not here.
+      { taxPct: 900 },
+      { taxPct: 0 },
       { taxPct: 1.5 },
       { marketCapWei: 0n },
       { holders: 1 },

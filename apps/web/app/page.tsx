@@ -136,7 +136,8 @@ export default function Landing() {
       </section>
 
       <nav className="ways-in">
-        <Link href="/colony" className="cta">
+        {/* `/app` is the world. `/colony` 308s here, so old links still land. */}
+        <Link href="/app" className="cta">
           Enter the colony
         </Link>
         <div className="secondary">

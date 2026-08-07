@@ -60,6 +60,15 @@ export type StrayState = {
   readonly holding: `0x${string}` | null;
   readonly holdingUnits: bigint;
   readonly costBasisWei: bigint;
+  /**
+   * The tax tier of the token actually held, as an integer percent. `null` when flat.
+   *
+   * Carried on the state because a stray may now hold ANY tier — tax is a cost term, not a filter.
+   * Costing an exit against a config default rather than the real tier understates a 10%-tax exit
+   * by ~1700bps and sets the take-profit far too low, i.e. sells into a "gain" that does not cover
+   * the tax. `@strays/hunt`'s OpenPosition requires it for exactly this reason.
+   */
+  readonly holdingTaxPct: number | null;
   readonly entryBlock: bigint;
 };
 

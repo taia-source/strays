@@ -410,3 +410,900 @@ code { background: var(--band); padding: 0 var(--s0); font-size: 0.92em; }
 
 /* The stake figure was wrapping mid-value ("0.00000 / ETH"). A money figure must not break. */
 .colony-grid .fig { white-space: nowrap; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+ * THE SHELL — the persistent nav, and the rule that decides which routes scroll.
+ *
+ * Ibrahim: "for frontend i said no scroll, i visit the frontend there is scroll ... i dont see
+ * any routes or header". Two separate defects with one root: nothing owned the page shell, so
+ * every route invented its own and none of them agreed.
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /*
+   * THE NAV'S HEIGHT IS A DECLARED CONSTANT, NOT A MEASUREMENT.
+   *
+   * The world computes its own height as `100svh - var(--nav-h)`. If the nav sized itself from
+   * its content, a longer label or a different font metric would silently change the world's
+   * height — and the failure mode of that is a 1px scrollbar on one route at one width, which is
+   * exactly the bug being fixed here. So the nav is PINNED to this height and its contents are
+   * laid out inside it.
+   */
+  --nav-h: 48px;
+}
+
+@media (min-width: 900px) {
+  :root { --nav-h: 56px; }
+}
+
+/*
+ * ══ THE NO-SCROLL LOCK ══
+ *
+ * `100svh`, NOT `100vh`. On mobile Safari `100vh` is the LARGE viewport height — the height the
+ * page would have if the URL bar were hidden — so a `100vh` element is TALLER than the visible
+ * area while the bar is showing, and the page scrolls by exactly the height of the URL bar. That
+ * is a guaranteed scrollbar on a page designed to have none, on the most common phone browser,
+ * and it is invisible in a desktop devtools emulator. `svh` is the SMALL viewport height and is
+ * the only correct unit for a fixed-viewport layout.
+ *
+ * `overscroll-behavior: none` on the locked routes stops the rubber-band/pull-to-refresh gesture
+ * from dragging the whole fixed page, which reads as a scroll even though nothing scrolled.
+ */
+html[data-route="fixed"],
+body[data-route="fixed"] {
+  height: 100svh;
+  max-height: 100svh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Belt and braces: a fixed-viewport page must never scroll SIDEWAYS either, at any width. */
+  overflow-x: hidden;
+}
+
+/* Scrolling routes: prose. They keep normal document flow and only get the nav's clearance. */
+body[data-route="scroll"] {
+  overflow-x: hidden;
+}
+
+/* ── The nav ─────────────────────────────────────────────────────────────────────────── */
+
+.site-nav {
+  /*
+   * FIXED, not sticky. On the locked routes there is no scroll for `sticky` to stick against, and
+   * on the scrolling routes `fixed` is what keeps the header present through the whole document.
+   * One positioning mode across every route is one behaviour to reason about.
+   */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  height: calc(var(--nav-h) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in oklab, var(--soot) 88%, transparent);
+  /* The blur is what stops the world's grid from making the nav's text unreadable as cats and
+     tokens pass under it. It is not decoration; it is the legibility guarantee for a fixed
+     header over a moving canvas. */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: var(--px) solid var(--rail);
+}
+
+.site-nav-row {
+  height: var(--nav-h);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 0 var(--s3);
+  max-width: 1400px;
+  margin-inline: auto;
+}
+
+.site-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  text-decoration: none;
+  color: var(--phos);
+  /* Never shrinks. The wordmark is the one element that must survive every width — at 320px the
+     nav links are already in the sheet, so if this shrank there would be nothing identifying the
+     page at all. */
+  flex: 0 0 auto;
+}
+
+.site-mark-word {
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-size: var(--t-body);
+}
+
+/* The sensor is live. One dot, one meaning. */
+.site-mark-dot {
+  width: var(--s1);
+  height: var(--s1);
+  background: var(--fed);
+  animation: sensor-blink 2.7s steps(2) infinite;
+}
+
+@keyframes sensor-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0.25; }
+}
+
+/*
+ * The desktop link row. `display: none` on a phone — and it must be `none` rather than
+ * `visibility: hidden`, because a hidden-but-present flex item still consumes its `margin-left:
+ * auto` and pushed the hamburger to the middle of the bar instead of the right edge. Measured at
+ * 390px: the burger sat about a third in from the left, which read as a misaligned header.
+ */
+.site-links {
+  display: none;
+  align-items: center;
+  gap: var(--s4);
+  margin-left: auto;
+}
+
+.site-link {
+  color: var(--phos-dim);
+  text-decoration: none;
+  font-size: var(--t-micro);
+  letter-spacing: 0.14em;
+  padding: var(--s2) 0;
+  border-bottom: calc(2 * var(--px)) solid transparent;
+  white-space: nowrap;
+}
+
+.site-link:hover { color: var(--phos); }
+
+/*
+ * THE CURRENT ROUTE IS MARKED BY `aria-current`, NOT BY A CLASS.
+ *
+ * One source of truth for "where am I" that is read by both the stylesheet and the screen reader.
+ * A `.active` class plus an `aria-current` attribute is two things that can disagree, and the one
+ * that silently rots is always the one nobody can see.
+ */
+.site-link[aria-current="page"] {
+  color: var(--phos);
+  border-bottom-color: var(--fed);
+}
+
+/*
+ * The end cap: the ADOPT CTA on desktop, the hamburger on a phone. `margin-left: auto` pins it to
+ * the right edge in BOTH cases — on desktop it follows the link row, on a phone (where the link
+ * row is `display: none` and therefore not laid out at all) it is the only thing after the
+ * wordmark, so the auto margin does the whole job.
+ */
+.site-nav-end {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+/*
+ * ══ THIS RULE USED TO BREAK THE PHONE HEADER ══
+ *
+ * It was `margin-left: var(--s4)`, which is MORE SPECIFIC than `.site-nav-end`'s own
+ * `margin-left: auto` and therefore replaced it — on every viewport, because the adjacent-sibling
+ * selector matches whenever `.site-links` is in the DOM, and `display: none` does not stop an
+ * element from being a sibling. Measured at 390px: the hamburger sat at x=131 of a 390px bar,
+ * about a third in from the left, which reads as a broken header rather than as a CSS specificity
+ * accident.
+ *
+ * `auto` is restated so the pin to the right edge survives, and the extra breathing room is
+ * expressed as PADDING, which does not fight the auto margin.
+ */
+.site-links + .site-nav-end {
+  margin-left: auto;
+  padding-left: var(--s4);
+}
+
+.site-cta {
+  display: none; /* Desktop only; on a phone it is the first thing in the sheet. */
+  padding: var(--s1) var(--s3);
+  background: var(--fed);
+  color: var(--soot);
+  text-decoration: none;
+  font-size: var(--t-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 2;
+}
+
+.site-cta:hover { filter: brightness(1.12); }
+
+/*
+ * ONE 44px BUTTON. The pointer-agnostic minimum — a thumb target, not a mouse target.
+ * Square, because ART-DIRECTION §8 bans rounded corners: a camera trap's OSD has none.
+ */
+.site-burger {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--phos);
+  border: var(--px) solid var(--rail);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (min-width: 768px) {
+  .site-links { display: flex; }
+  .site-cta { display: inline-block; }
+  .site-burger { display: none; }
+}
+
+/*
+ * ══ THE SHEET OPENS FROM THE BOTTOM ══
+ *
+ * silvertongue's reasoning, verbatim: "the trigger sits in the top bar but the thumb does not: on
+ * a 844px-tall phone the top-right corner is the hardest place to reach one-handed, so the CONTENT
+ * opens from the bottom where the thumb already is."
+ *
+ * `position: fixed` against the viewport rather than inside the nav — a child of a 48px-tall
+ * `overflow`-constrained header cannot escape it, and a sheet clipped to the header is the bug
+ * that makes people write `overflow: visible` on the header and break the blur.
+ */
+.site-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: color-mix(in oklab, var(--soot) 70%, transparent);
+  border: 0;
+  cursor: pointer;
+  /* A button with no text needs no other styling; it exists to be clicked and to be reachable
+     by keyboard, which a div with an onClick is not. */
+}
+
+.site-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 46;
+  background: var(--soot-hi);
+  border-top: calc(2 * var(--px)) solid var(--rail);
+  padding: var(--s3) var(--s3) calc(var(--s4) + env(safe-area-inset-bottom));
+  display: grid;
+  gap: var(--s3);
+  /* The sheet may itself grow past the viewport if a future section is added. Internal scroll,
+     contained, so scrolling the sheet never chains to the locked page behind it. */
+  max-height: 80svh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: sheet-up 180ms steps(3) both;
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+.site-sheet-grip {
+  width: 40px;
+  height: var(--s1);
+  background: var(--rail);
+  margin: 0 auto var(--s1);
+}
+
+.site-sheet-links { display: grid; gap: var(--s1); }
+
+.site-sheet-link {
+  display: block;
+  min-height: 44px;
+  line-height: 44px;
+  padding: 0 var(--s3);
+  color: var(--phos-dim);
+  text-decoration: none;
+  letter-spacing: 0.14em;
+  font-size: var(--t-body);
+  border-left: calc(2 * var(--px)) solid transparent;
+  background: var(--wash);
+}
+
+.site-sheet-link[aria-current="page"] {
+  color: var(--phos);
+  border-left-color: var(--fed);
+}
+
+.site-sheet-cta {
+  display: block;
+  min-height: 44px;
+  line-height: 44px;
+  text-align: center;
+  background: var(--fed);
+  color: var(--soot);
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.site-sheet-note { margin: 0; text-align: center; }
+
+/*
+ * NAV CLEARANCE.
+ *
+ * Every route's content starts below the fixed nav. Applied to the page containers rather than to
+ * `body`, because the world is `position: fixed; inset: 0` and a body padding would not move it —
+ * the world sets its own `top` instead (see `.world-root`).
+ */
+.landing, .doc, .colony, .board, .logs {
+  padding-top: calc(var(--nav-h) + env(safe-area-inset-top) + var(--s4));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+ * THE WORLD — /app. A fixed frame that things enter and leave.
+ *
+ * ART-DIRECTION referent rule 3: THE CAMERA DOES NOT FOLLOW. There is no pan, no zoom and no
+ * "centre on my cat" — you find yours in the frame. That is what makes it a colony rather than
+ * a dashboard, and it is why this file has no camera transform anywhere in it.
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+.world-root {
+  position: fixed;
+  /* Below the nav, not under it. The nav is `fixed` too, so this is the only way they compose. */
+  top: calc(var(--nav-h) + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: var(--soot);
+  /* Establishes the containing block for every absolutely-positioned HUD child below. */
+  isolation: isolate;
+}
+
+.world-field {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.world-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* §8: pixel art must never be smoothed. Belt-and-braces with the context flag. */
+  image-rendering: pixelated;
+}
+
+/*
+ * ══ THE HUD FLOATS OVER THE CANVAS AND DOES NOT EAT ITS EVENTS ══
+ *
+ * silvertongue's rule: the HUD is `pointer-events: none` and only its interactive CHILDREN get
+ * `pointer-events: auto`. Without it, a full-bleed overlay swallows every pointer event the canvas
+ * needs for its hover test — and the symptom is "hovering a cat does nothing", which reads as a
+ * broken canvas rather than as a transparent div sitting on top of it.
+ */
+/*
+ * ══ THE HUD IS ONE GRID THAT OWNS EVERY ZONE ══
+ *
+ * The first version of this file positioned four surfaces independently — the stat block, the
+ * controls, the roster and the adopt panel each absolutely anchored to a corner. Screenshotting it
+ * at 390px produced exactly the failure silvertongue records: *"successive screenshots kept
+ * surfacing new collisions because four components each absolutely positioned themselves into the
+ * same corner; putting them in one flow is what actually fixed it."* Measured here: the banner, the
+ * adopt summary and the roster all overprinted each other across the bottom two-thirds of a 390px
+ * viewport, and the adopt panel's text was drawn on top of the banner's.
+ *
+ * Tuning the offsets cannot fix that class of bug — only removing the second coordinate system can.
+ * So the HUD is a GRID with named areas and every surface is a child of it. Collisions become
+ * unrepresentable rather than merely tuned away.
+ *
+ * `pointer-events: none` on the grid, `auto` on the children: without it a full-bleed overlay
+ * swallows every pointer event the canvas needs for its hover test, and the symptom reads as a
+ * broken canvas rather than as a transparent div on top of it.
+ */
+.world-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: var(--s3);
+  display: grid;
+  gap: var(--s3);
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "stats  controls"
+    "banner roster"
+    "adopt  roster";
+  align-items: start;
+}
+
+.world-hud-tl { grid-area: stats; }
+.world-hud-tr { grid-area: controls; justify-self: end; }
+
+.world-hud-tl, .world-hud-tr {
+  pointer-events: auto;
+  background: color-mix(in oklab, var(--soot) 82%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: var(--px) solid var(--rail);
+  padding: var(--s2) var(--s3);
+  /* A grid item defaults to `min-width: auto`, which is what silently forces overflow when the
+     content is a long unbreakable string like a block number. */
+  min-width: 0;
+}
+
+.world-hud-tl { max-width: min(46ch, 100%); }
+
+.world-line { margin: 0; font-size: var(--t-micro); line-height: 1.7; }
+.world-key { color: var(--phos-dim); letter-spacing: 0.14em; }
+.world-sub { color: var(--phos-ghost); }
+.world-stamp { margin: var(--s0) 0 0; }
+.world-line .fig { font-size: var(--t-body); }
+
+.world-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 var(--s3);
+  background: transparent;
+  color: var(--phos);
+  border: var(--px) solid var(--rail);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.world-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.world-btn:hover:not(:disabled) { border-color: var(--fed); color: var(--fed); }
+
+/*
+ * ══ THE BANNER — the honest-state surface ══
+ *
+ * The sentence it carries ("the field is empty because the colony is empty" / "the colony could
+ * not be read") is the difference between a page you can trust and a page you cannot. It is NOT a
+ * toast and does not dismiss on a timer: the condition it reports is still true after eight
+ * seconds.
+ *
+ * It sits in the grid's `banner` area rather than being centred on the viewport with a transform.
+ * The centred version looked better on an empty 1440px field and was the direct cause of the 390px
+ * pile-up — it was the one surface not participating in the layout, so nothing could lay out
+ * around it.
+ */
+.world-banner {
+  grid-area: banner;
+  align-self: center;
+  justify-self: start;
+  z-index: 4;
+  width: min(44ch, 100%);
+  background: color-mix(in oklab, var(--soot) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: var(--px) solid var(--rail);
+  border-left: calc(3 * var(--px)) solid var(--fed);
+  padding: var(--s3);
+  display: grid;
+  gap: var(--s2);
+  pointer-events: auto;
+}
+
+/* A FAILED read is not the same event as an empty colony, so it does not get the same hue.
+   Amber means "the cat ate"; ember means a loss or a fault. One hue, one meaning. */
+.world-banner.starve-banner { border-left-color: var(--starve); }
+
+.world-banner p { margin: 0; font-size: var(--t-micro); line-height: 1.6; }
+.world-banner strong { color: var(--phos); font-size: var(--t-body); }
+
+.world-banner-cta {
+  justify-self: start;
+  min-height: 44px;
+  line-height: 44px;
+  padding: 0 var(--s4);
+  background: var(--fed);
+  color: var(--soot);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: var(--t-micro);
+  letter-spacing: 0.14em;
+}
+
+/*
+ * ══ THE ROSTER — the canvas's accessible twin, and an internally-scrolling panel ══
+ *
+ * The brief: "fixed-viewport with INTERNAL scroll on panels only (overflow-y:auto;
+ * overscroll-behavior:contain)". `overscroll-behavior: contain` is the load-bearing half — without
+ * it, scrolling past the end of this list CHAINS to the document behind it, and on a locked page
+ * that manifests as the whole world juddering.
+ *
+ * It spans both body rows so it can use the full height of the field beside the banner, and it is
+ * `align-self: end` so it grows UPWARD from the bottom edge — a panel anchored to the top that
+ * grows down would push into the stat block as the colony fills up.
+ */
+.world-roster {
+  grid-area: roster;
+  align-self: end;
+  z-index: 3;
+  width: min(30ch, 100%);
+  /*
+   * CAPPED at 62% of the field.
+   *
+   * The renderer derives the world's playable insets from this panel's real rectangle, so a roster
+   * that grows to the full height takes a full-height bite out of the right edge — measured on the
+   * 1440px field, that left the whole left third empty while every token crowded right of centre.
+   * A cap keeps a corridor of field open above it, which is where cats prowl into view. The list
+   * itself scrolls internally, so nothing is lost by not being tall.
+   */
+  max-height: min(62%, 560px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: color-mix(in oklab, var(--soot) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: var(--px) solid var(--rail);
+  pointer-events: auto;
+  min-height: 0;
+}
+
+.world-roster-head {
+  padding: var(--s2) var(--s3);
+  border-bottom: var(--px) solid var(--soot-line);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.world-roster-head h2 {
+  margin: 0;
+  font-size: var(--t-micro);
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  color: var(--phos-dim);
+}
+
+.world-roster-head .stamp { margin: 0; }
+
+.world-roster-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s2) var(--s3);
+  min-height: 0;
+  /* A scrollbar in the phosphor palette rather than the OS default, which is a bright grey slab
+     on a near-black panel and the single most obvious "unstyled" tell on a dark UI. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+}
+
+.world-roster-sub {
+  margin: var(--s3) 0 var(--s1);
+  font-size: var(--t-micro);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--phos-dim);
+  border-top: var(--px) solid var(--soot-line);
+  padding-top: var(--s2);
+}
+
+.world-roster-body > .world-list:first-child + .world-roster-sub { margin-top: var(--s2); }
+
+.world-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s0); }
+
+.world-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--s2);
+  align-items: baseline;
+  font-size: var(--t-micro);
+  padding: var(--s1) 0;
+  border-bottom: var(--px) solid var(--soot-line);
+}
+
+.world-list li:last-child { border-bottom: 0; }
+
+/* Hovering a cat on the canvas highlights its row. The link between the picture and the data. */
+.world-list li[data-hovered] { background: var(--wash); }
+
+.world-list-id {
+  color: var(--phos);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-list-id:hover { color: var(--fed); }
+.world-list .fig { font-size: var(--t-micro); white-space: nowrap; }
+.world-list-state { color: var(--phos-ghost); letter-spacing: 0.06em; }
+.world-quarry-list li[data-huntable] .world-list-id { color: var(--fed); }
+
+.world-roster-foot {
+  padding: var(--s2) var(--s3);
+  border-top: var(--px) solid var(--soot-line);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/*
+ * ══ THE ADOPT PANEL ══
+ *
+ * DESIGN §7 steps 3 and 4 are the only interactions in the product, and this is them. A `<details>`
+ * rather than an always-open form because the world is the page and a permanent form panel would
+ * eat a third of a 320px viewport.
+ *
+ * It is a grid child like everything else. The earlier `position: fixed` version was the second
+ * coordinate system that caused the pile-up.
+ */
+.world-adopt {
+  grid-area: adopt;
+  align-self: end;
+  justify-self: start;
+  z-index: 5;
+  width: min(40ch, 100%);
+  pointer-events: auto;
+  background: color-mix(in oklab, var(--soot) 94%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: var(--px) solid var(--rail);
+  border-left: calc(3 * var(--px)) solid var(--fed);
+  /* Open, the wallet list can outgrow a short viewport. The whole panel is capped and its body
+     scrolls internally — a form clipped with no scroll is a form whose submit button is
+     unreachable, which is worse than a form that is merely tall. */
+  max-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.world-adopt > summary {
+  cursor: pointer;
+  padding: var(--s2) var(--s3);
+  min-height: 44px;
+  display: grid;
+  align-content: center;
+  gap: var(--s0);
+  list-style: none;
+}
+
+.world-adopt > summary::-webkit-details-marker { display: none; }
+.world-adopt > summary::marker { content: ""; }
+.world-adopt > summary .stamp { margin: 0; }
+.world-adopt > summary:hover .world-adopt-title { filter: brightness(1.2); }
+
+.world-adopt-title {
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  font-size: var(--t-micro);
+  color: var(--fed);
+}
+
+.world-adopt-body {
+  padding: 0 var(--s3) var(--s3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+}
+
+/*
+ * `#adopt` from the nav opens the panel WITHOUT JavaScript. `:target` is the only mechanism that
+ * does this — an onClick handler would leave the nav's CTA dead for anyone who has not hydrated
+ * yet, which on a slow phone is the first few seconds of every visit.
+ */
+.world-adopt:target { border-left-width: calc(5 * var(--px)); }
+
+/*
+ * ══ MOBILE: ONE COLUMN, AND THE ROSTER YIELDS ══
+ *
+ * At 390px a 34ch roster and a 40ch adopt panel are each nearly the full width, so side-by-side is
+ * not available and the two-column grid collapses to one. The order is deliberate: the STATS and
+ * the BANNER (what is happening, and whether to trust it) come first, the field breathes in the
+ * middle, and the two interactive panels sit at the bottom where the thumb is — the same reasoning
+ * that puts the nav sheet at the bottom.
+ *
+ * The roster is capped at 30% so the world is still the majority of the screen. It is the CANVAS
+ * that has to win a phone viewport; the roster is the readable twin, not the main event.
+ */
+@media (max-width: 767px) {
+  .world-hud {
+    padding: var(--s2);
+    gap: var(--s2);
+    /*
+     * STATS and CONTROLS share ONE row on a phone.
+     *
+     * They were stacked, which put a nearly-full-width PAUSE button above the stat block and cost
+     * ~80px of a 844px viewport for one control. Measured at 390px: the two rows together pushed
+     * the field's usable top edge down past a fifth of the screen. Side by side, the stat block
+     * takes the width it needs and the button takes 44px — the same split the desktop HUD already
+     * makes, just tighter.
+     */
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "stats  controls"
+      "banner banner"
+      "adopt  adopt"
+      "roster roster";
+  }
+  /* The control collapses to a square icon button: at 390px the word "PAUSE" is not worth 60px of
+     a row that the stat block needs. The accessible name is still on the button. */
+  .world-hud-tr {
+    justify-self: end;
+    align-self: start;
+    padding: 0;
+    border: 0;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .world-hud-tr .world-btn {
+    padding: 0;
+    width: 44px;
+    background: color-mix(in oklab, var(--soot) 82%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    /* The label is replaced by the glyph the button already leads with. `font-size: 0` on the
+       button with the glyph restored via ::before would lose the aria label; instead the text is
+       clipped and the glyph drawn, so the accessible name survives. */
+    overflow: hidden;
+    text-indent: -100vw;
+    position: relative;
+  }
+  .world-hud-tr .world-btn::after {
+    content: "❚❚";
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    text-indent: 0;
+  }
+  .world-hud-tr .world-btn[aria-pressed="true"]::after { content: "▶"; }
+  .world-hud-tr .world-btn:disabled::after { content: "◼"; }
+  .world-hud-tl, .world-banner, .world-adopt, .world-roster {
+    max-width: 100%;
+    width: 100%;
+    justify-self: stretch;
+  }
+  .world-banner { align-self: start; }
+  .world-roster { max-height: 30svh; }
+  /* Closed, the adopt panel is just its 44px summary. Only cap it once it is actually open, so a
+     closed panel never reserves height the world could be using. */
+  .world-adopt[open] { max-height: 44svh; }
+}
+
+/*
+ * ══ REDUCED MOTION ══
+ *
+ * The global rule at the top of this file already kills every animation and transition. This is
+ * the CANVAS half of the same promise: the renderer is told (`reduced` prop) and never calls
+ * `step`, so the world renders in its settled state rather than merely animating slower. Stated
+ * here as a comment because there is no CSS that can enforce it — but a reader looking for "what
+ * happens under reduced motion" looks here first.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+ * THE PANEL ROUTES — /leaderboard and /logs, as part of the world rather than as documents.
+ *
+ * Brief: "wire /logs and /leaderboard into the nav and make them feel like part of the world
+ * (dark, mono, live-updating), not bare documents." They are fixed-viewport: a header that does
+ * not move, and ONE panel that scrolls internally.
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+.panel-route {
+  position: fixed;
+  top: calc(var(--nav-h) + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-width: 1400px;
+  margin-inline: auto;
+  padding: var(--s3);
+  gap: var(--s3);
+  /* The route container itself NEVER scrolls. Only `.panel-body` does. That separation is what
+     makes the header a fixed reference the eye can return to while reading a long log. */
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: var(--px) solid var(--rail);
+}
+
+.panel-head h1 {
+  margin: 0;
+  font-size: var(--t-figure-lg);
+  letter-spacing: 0.1em;
+}
+
+.panel-head .stamp { margin: 0; }
+
+.panel-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail) transparent;
+  /* A sliver of padding at the bottom so the last row is not flush against the viewport edge,
+     which reads as "the list is cut off" even when it is complete. */
+  padding-bottom: var(--s4);
+}
+
+/* The live pulse on a panel route: the same sensor dot the nav carries, so "this updates" is
+   said in one visual language across the whole product rather than invented per page. */
+.panel-live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--phos-ghost);
+  font-size: var(--t-micro);
+}
+
+.panel-live::before {
+  content: "";
+  width: var(--s1);
+  height: var(--s1);
+  background: var(--fed);
+  animation: sensor-blink 2.7s steps(2) infinite;
+}
+
+/*
+ * ══ THE LOG LIST AT 320px ══
+ *
+ * The four-column grid (`auto auto 1fr auto`) is correct on a desktop and unreadable on a phone —
+ * the rationale column gets ~8 characters. Below 560px it becomes two rows: the metadata line and
+ * the sentence. Measured at 320px: the rationale needs the full width or it wraps every word.
+ */
+@media (max-width: 559px) {
+  .log-list li {
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      "blk act link"
+      "why why why";
+  }
+  .log-list li > .stamp:first-child { grid-area: blk; }
+  .log-list .act { grid-area: act; }
+  .log-list .why { grid-area: why; }
+  .log-list li > :last-child { grid-area: link; justify-self: end; }
+}
+
+/*
+ * The rank table needs the same treatment for a different reason: a `<table>` cannot reflow, so
+ * below its natural minimum it must SCROLL SIDEWAYS INSIDE ITS OWN BOX rather than push the page
+ * wide. The page must never scroll horizontally at any width — that assertion is in the shoot
+ * script and it fails loudly.
+ */
+.rank-wrap {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.rank { min-width: 22rem; }
+
+/* The right-hand column of a panel header: the block stamp above the live pulse. Right-aligned
+   so the two stamps form one edge rather than two ragged ones. */
+.panel-head-meta {
+  display: grid;
+  justify-items: end;
+  gap: var(--s0);
+  text-align: right;
+}
+
+.panel-head-meta p { margin: 0; }
+
+/* A ranked row's cat and its id, on one baseline. `align-items: center` because a 28px sprite
+   beside 11px type has no shared baseline worth aligning to. */
+.rank-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  text-decoration: none;
+}
+
+.rank-cat .stamp { white-space: nowrap; }
+
+/* A dead or starving row is legible AS such at a glance, before any number is read. DESIGN §9:
+   a losing cat must never look fine. */
+.rank tr[data-state="starving"] td,
+.rank tr[data-state="dead"] td { border-bottom-color: var(--starve); }
+.rank tr[data-state="dead"] { opacity: 0.62; }

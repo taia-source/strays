@@ -255,9 +255,23 @@ export type RiskConfig = {
    * Distinct from the value cap for the reason `@taia/authority` gives: Zodiac Roles v2 models
    * `WithinAllowance` (value) and `CallWithinAllowance` (count) separately because *"a retry storm
    * can stay under every value cap while making hundreds of calls, and only a count catches it."*
-   * It is also DESIGN §6 Rule 6's brake: meridian's 20-second rotation loop lost 2.8% in two hours
-   * and the strategy was retired. At a 60-minute signal horizon, 6 entries a day is already more
-   * turnover than the horizon justifies.
+   *
+   * ══ RETUNED FOR A TRADE RATE THE PAD CAN ACTUALLY SUPPORT ══
+   *
+   * The shipped pairing was 6 entries per 86400s — 6/day. Combined with an eligibility filter that
+   * admitted 1 token in 100, the observed rate was ~0.4/day. The stated aim is **a few trades per
+   * hour when signals are genuinely good**.
+   *
+   * The window is now ONE HOUR and the cap is 3, so the ceiling is 3/hour rather than 6/day. It is
+   * a CEILING, not a target: a trade still has to pass the sell simulation, clear its own tax bar
+   * and win the ranking, so the realised rate is bounded by opportunity. The measured supply says
+   * that is the binding constraint — only 16 of the newest 100 tokens are sellable at all.
+   *
+   * The ceiling exists because DESIGN §6 Rule 6 records a measured failure: meridian's 20-second
+   * rotation loop lost 2.8% on a single round trip in two hours and the strategy was retired —
+   * *"15-minute signals decay faster than the fees they incur."* At a 60-minute signal horizon,
+   * 3 entries an hour is already turning over faster than the signal resolves, so this is the
+   * outer bound of defensible rather than a rate to aim at.
    */
   readonly maxEntriesPerWindow: number;
 };
@@ -268,9 +282,10 @@ export const DEFAULT_RISK: RiskConfig = {
   minPositionWei: 1_000_000_000_000_000n, // 0.001 ETH ~= $1.93 — below this gas dominates
   stopLossBps: STOP_LOSS_BPS, // −235bps, derived in signal.ts
   maxDrawdownBps: 2000n, // −20%
-  spendWindowSeconds: 86_400,
+  // ONE HOUR. The cap below is therefore a per-hour ceiling, not a per-day one — see the field doc.
+  spendWindowSeconds: 3600,
   maxSpendPerWindowWei: 10_000_000_000_000_000n, // 0.01 ETH ~= $19.27
-  maxEntriesPerWindow: 6,
+  maxEntriesPerWindow: 3,
 };
 
 /** A stray's durable state. Supplied by the caller; this module holds nothing. */
@@ -295,6 +310,14 @@ export type OpenPosition = {
   /** Full-precision token balance. NEVER a number — RESEARCH §7d. */
   readonly tokenBalance: bigint;
   readonly openedAtSeconds: number;
+  /**
+   * The tax tier of the token actually held, as an integer percent.
+   *
+   * Carried ON THE POSITION rather than read from config, because a stray may now hold any tier.
+   * Costing a 10%-tax exit against a config that says 1% understates the round trip by ~1700bps
+   * and sets the take-profit far too low — the position must know what it costs to leave.
+   */
+  readonly taxPct: number;
 };
 
 /**

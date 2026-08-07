@@ -18,14 +18,35 @@ export {
   type Market,
 } from "./decide.js";
 export {
-  assertHuntableTax,
+  assertTaxCeiling,
   DEFAULT_ELIGIBILITY,
   type Eligibility,
   type EligibilityConfig,
-  HUNTABLE_TAX_PCT,
   isEligible,
+  MAX_PAD_TAX_PCT,
   type TokenSnapshot,
 } from "./eligible.js";
+export {
+  DEFAULT_SCREEN,
+  explainSellRevert,
+  type HolderDistribution,
+  type ScreenConfig,
+  type ScreenVerdict,
+  screenToken,
+  SELL_REVERT_HOOK_REFUSAL,
+  SELL_REVERT_NOT_ENOUGH_LIQUIDITY,
+  type SellSimulation,
+  simulatedRoundTripBps,
+} from "./screen.js";
+export {
+  depthQualityBps,
+  momentumQualityBps,
+  rankCandidates,
+  type Score,
+  scoreCandidate,
+  type ScoreInput,
+  SEED_MARKET_CAP_WEI,
+} from "./score.js";
 export {
   assertDurableLedger,
   createMemorySpendLedger,

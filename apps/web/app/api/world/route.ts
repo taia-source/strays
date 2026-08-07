@@ -52,6 +52,8 @@ export type WorldPayload = {
           readonly name: string;
           readonly marketCapEth: number;
           readonly change24hPct: number | null;
+          /** Carried so the roster can say WHY a token is not huntable, not merely that it isn't. */
+          readonly taxPct: number;
           readonly huntable: boolean;
         }[];
         readonly scanned: number;
@@ -89,29 +91,35 @@ export async function GET(): Promise<NextResponse<WorldPayload>> {
               : String(colonyResult.reason),
         };
 
-  const quarry: WorldPayload["quarry"] =
-    quarryResult.status === "fulfilled" && quarryResult.value.ok
-      ? {
-          ok: true,
-          tokens: quarryResult.value.tokens.map((t) => ({
-            address: t.address,
-            symbol: t.symbol,
-            name: t.name,
-            marketCapEth: t.marketCapEth,
-            change24hPct: t.change24hPct,
-            huntable: t.huntable,
-          })),
-          scanned: quarryResult.value.scanned,
-        }
-      : {
-          ok: false,
-          reason:
-            quarryResult.status === "rejected"
-              ? quarryResult.reason instanceof Error
-                ? quarryResult.reason.message
-                : String(quarryResult.reason)
-              : quarryResult.value.reason,
-        };
+  /*
+   * Written as explicit branches rather than a nested ternary.
+   *
+   * `quarryResult.status === "fulfilled" && quarryResult.value.ok` in a ternary CONDITION does not
+   * narrow `quarryResult.value` in the ELSE arm — TypeScript cannot tell which half of the `&&`
+   * was false there, so `.reason` is not accessible on a union it still believes could be the ok
+   * branch. This form narrows at each step and needs no assertion to do it.
+   */
+  const quarry: WorldPayload["quarry"] = ((): WorldPayload["quarry"] => {
+    if (quarryResult.status === "rejected") {
+      const err = quarryResult.reason;
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    const read = quarryResult.value;
+    if (!read.ok) return { ok: false, reason: read.reason };
+    return {
+      ok: true,
+      tokens: read.tokens.map((t) => ({
+        address: t.address,
+        symbol: t.symbol,
+        name: t.name,
+        marketCapEth: t.marketCapEth,
+        change24hPct: t.change24hPct,
+        taxPct: t.taxPct,
+        huntable: t.huntable,
+      })),
+      scanned: read.scanned,
+    };
+  })();
 
   return NextResponse.json(
     { colony, quarry, at: Date.now() } satisfies WorldPayload,

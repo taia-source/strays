@@ -17,8 +17,17 @@ restores the file. Machine-readable output lands in `sabotage-results.json`.
 
 ## Result
 
-**37 / 37 caught** after two fixes. Two sabotages escaped on the first run; both are recorded in
-full below, with what was wrong and what changed.
+**53 / 53 caught** after three fixes. Three sabotages escaped on a first run; all three are recorded
+in full below, with what was wrong and what changed.
+
+S1–S37 are the original suite (two escapes, S5 and S12). **S38–S53 were added by the REBUILD** —
+the sell simulation, the concentration screen, the scoring model, and the two real bugs the rebuild
+uncovered. One of those escaped (S47) and the check it exposed as decoration was fixed.
+
+Note that S1, S2 and S27 were **rewritten**, not merely re-run: they targeted the `taxPct === 1`
+hard filter, which no longer exists. Tax is now a cost term (`score.ts`), so those sabotages now
+target the checks that replaced it. A sabotage whose pattern no longer matches reports
+`PATTERN NOT FOUND` rather than passing silently — which is how the staleness was caught.
 
 | # | File | Sabotage | First run | Now |
 |---|---|---|---|---|
@@ -59,6 +68,27 @@ full below, with what was wrong and what changed.
 | S35 | `signal.ts` | Delete only the `< 2 points` guard | added after S12 | CAUGHT (2) |
 | S36 | `risk.ts` | Delete only the compartment-affordability clamp | added after S12 | CAUGHT (1) |
 | S37 | `cost.ts` | Delete only the positive-position guard | added after S12 | CAUGHT (2) |
+
+### The rebuild — S38–S53
+
+| # | File | Sabotage | First run | Now |
+|---|---|---|---|---|
+| S38 | `screen.ts` | **DELETE THE SELL SIMULATION.** 84/100 live tokens become buyable | CAUGHT (6) | CAUGHT (6) |
+| S39 | `screen.ts` | Accept a sell that quotes but returns ZERO wei | CAUGHT (2) | CAUGHT (2) |
+| S40 | `screen.ts` | Remove the sniper/bundle ceiling | CAUGHT (4) | CAUGHT (4) |
+| S41 | `screen.ts` | Remove the top-10 concentration ceiling | CAUGHT (2) | CAUGHT (2) |
+| S42 | `screen.ts` | Remove the creator-holdings ceiling | CAUGHT (2) | CAUGHT (2) |
+| S43 | `screen.ts` | Read a NaN sniper figure as 0% concentration | CAUGHT (1) | CAUGHT (1) |
+| S44 | `screen.ts` | Check top-10 BEFORE snipers (bundling hides behind top-10) | CAUGHT (4) | CAUGHT (4) |
+| S45 | `decide.ts` | **Skip the screen inside `decide`** — module correct, never called | CAUGHT (5) | CAUGHT (5) |
+| S46 | `score.ts` | **STOP SUBTRACTING TAX.** Rank on the gross move | CAUGHT (12) | CAUGHT (12) |
+| S47 | `score.ts` | Scale a NEGATIVE edge by quality | **ESCAPED** | **CAUGHT (1)** |
+| S48 | `score.ts` | Remove the quality clamp, letting a term exceed 1.0 | CAUGHT (4) | CAUGHT (4) |
+| S49 | `score.ts` | Drop the deterministic tiebreak (arrival order decides) | CAUGHT (2) | CAUGHT (2) |
+| S50 | `decide.ts` | Enter the FIRST survivor, not the best-ranked | CAUGHT (2) | CAUGHT (2) |
+| S51 | `decide.ts` | Buy the least-bad token when none has a positive edge | CAUGHT (5) | CAUGHT (5) |
+| S52 | `decide.ts` | **REGRESSION:** cost the exit against config, not the position's tier | CAUGHT (1) | CAUGHT (1) |
+| S53 | `signal.ts` | **REGRESSION:** re-truncate the take-profit cost floor downward | CAUGHT (2) | CAUGHT (2) |
 
 `(n)` is the number of tests that went red.
 
@@ -178,6 +208,83 @@ The guard was never wrong; what it *said* was, and only a test that read the mes
 
 ---
 
+## S47 — ESCAPED. The check was decoration. **The check was fixed.**
+
+### What was sabotaged
+
+`scoreCandidate` passes a NEGATIVE net edge through untouched. The sabotage scaled it by the depth
+quality instead:
+
+```ts
+   const totalBps =
+     netEdgeBps > 0n
+       ? (netEdgeBps * depthBps * momentumBps) / (BPS * BPS)
+-      : netEdgeBps;
++      : (netEdgeBps * depthBps) / BPS;
+```
+
+### Why the suite did not notice
+
+The test that existed — *"cost is subtracted BEFORE the quality multipliers"* — built its candidate
+with **perfect quality on both axes** (`depthBps = 10000`, `momentumBps = 10000`). Multiplying by
+10000/10000 is the identity, so the sabotage changed nothing the assertion could see. The test was
+correct about the property it named and blind to the one it was standing in for.
+
+This is the same shape as S12: a guard that appears tested because a *different* path produces the
+same observable value.
+
+### Why it matters — it is not cosmetic
+
+Ranking orders losers as well as winners. A loss scaled toward zero sorts **above** an unscaled
+smaller loss, so the ordering inverts for exactly the candidates we most want to avoid: a deep,
+liquid, actively-bought token that cannot cover its tax would outrank a shallow one that also
+cannot. Combined with S51's removal, that is the precise path to buying the worst available token.
+
+### The fix
+
+Two tests added to `score.test.ts`:
+
+1. **`a negative edge is passed through UNSCALED`** — uses *partial* quality on both axes
+   (`depthBps` and `momentumBps` strictly between 0 and 10000, asserted so the test cannot silently
+   revert to the identity case) and asserts `totalBps === netEdgeBps` exactly.
+2. **`ranks two unprofitable candidates by TRUE loss, not by quality`** — the behavioural
+   consequence, asserting the better-quality bigger loser sorts below the smaller loser.
+
+The first fails on the sabotage. The lesson recorded: **a multiplier test must never use 1.0 as its
+multiplier.**
+
+---
+
+## Two REAL BUGS the rebuild found, now pinned by S52 and S53
+
+Neither was introduced by a sabotage. Both were live defects that the `taxPct === 1` filter had been
+concealing, and both are now regression sabotages so they cannot come back.
+
+**1. The exit was costed against the CONFIG's tax, not the position's own tier** (`decide.ts`).
+`roundTripCost({ taxPct: cfg.eligibility.requiredTaxPct })` was correct only while every position
+was guaranteed to be 1%-tax. The moment any tier became holdable, a 10%-tax exit was costed as a
+1%-tax one — understating the round trip by ~1700bps and setting the take-profit at ~471bps instead
+of ~4068bps. The stray would have **sold into a "profit" that did not cover the tax.** Fixed by
+carrying `taxPct` on `OpenPosition`. Pinned by **S52**.
+
+**2. `levelsFor` truncated the take-profit cost floor DOWNWARD** (`signal.ts`). Integer division
+truncates, so the floor came out up to one bp below the true `cost x multiple`, and the expected
+gain derived from it landed *fractionally under* the bar in `bar.ts` — which then refused the trade.
+Measured on a 10%-tax position: 1016750000000000 wei of gain against 1016806015852000 wei required,
+short by 56015852000 wei.
+
+The function's entire promise is that a take-profit "can always pay its own way", and it was
+emitting one that provably could not. **The bug is tiny in magnitude and total in effect:** it
+silently refused every trade whose take-profit was cost-bound rather than vol-bound — which at 1%
+tax is none of them (the 471bps vol level dominates a 462bps cost floor) and at 10% tax is all of
+them. It was invisible for exactly as long as only 1%-tax tokens were tradeable. Fixed by rounding
+up. Pinned by **S53**.
+
+Both are the same class as RESEARCH §7b's warning: **a plausible-looking number rather than an
+error.** Neither would have thrown, logged, or failed a type check.
+
+---
+
 ## Sabotages deliberately NOT attempted
 
 Honesty about scope:
@@ -188,6 +295,21 @@ Honesty about scope:
 - **Encoder sabotages** (`amountOutMinimum = 0` reaching calldata, `TAKE_ALL` growing a recipient
   argument) belong to the venue/encoder module. This package guarantees `minOut > 0` at its own
   boundary (S12, S31, S32) but does not build calldata, so it cannot prove what is encoded.
+- **The concentration ceilings are not proven to bind on today's data.** S40–S42 prove the checks
+  are wired and load-bearing *in the suite*, using values above the ceilings. But the ceilings
+  (top-10 35%, snipers 15%, creator 10%) sit **outside the measured range of this pad** (measured
+  maxima 23.92%, 8.82%, 3.36%), so on the current distribution they refuse nothing. They are
+  insurance against a distribution shift, and `screen.ts` says so in its header rather than
+  implying they are active filters. Concentration does real work today through *ranking*, not
+  refusal.
+- **That the sell simulation predicts sell-ability at EXECUTION time.** It is an `eth_call` at
+  decision time; the pool can change between the quote and the trade. The 84/100 measurement says
+  the check has enormous discriminating power, not that it is a guarantee. A honeypot with
+  time-delayed activation would pass it — Check Point documented exactly that pattern (the M3 token
+  whose tax was set to 99 *after* scanners reviewed it). On this pad the tax is charged by one
+  shared hook contract identical for every token, so per-token tax mutation is not the reachable
+  attack it is on a general EVM chain — a structural argument, not a proof, and the hook is
+  **unverified on Blockscout** (RESEARCH §1b).
 - **The reflexivity premise.** `signal.ts` uses momentum on the argument that memecoins have no NAV
   anchor while openhood's RWAs did. No sabotage can test that, because it is a claim about the
   world rather than about the code. RESEARCH §3d measured the move *distribution*, not the

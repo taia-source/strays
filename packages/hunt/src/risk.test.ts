@@ -38,6 +38,7 @@ function position(overrides: Partial<OpenPosition> = {}): OpenPosition {
     entryPriceWei: BASE_PRICE,
     tokenBalance: 1_298_451_422_972_480_224_401_102n,
     openedAtSeconds: NOW - 600,
+    taxPct: 1,
     ...overrides,
   };
 }
