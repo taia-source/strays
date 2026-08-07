@@ -1,4 +1,19 @@
 export { DATA_DIR, decodeSwapLog, ethPerTokenFromSqrtX96, readSigned } from "./collect.js";
+export {
+  BANDS,
+  type LiquidityBand,
+  NAMED_COHORT,
+  type RandomControl,
+  type TokenActivity,
+  type TokenResult,
+  activityOf,
+  buyAndHold,
+  byToken,
+  cohort,
+  matchedRandom,
+  resolveCohort,
+  restrictTo,
+} from "./liquidity.js";
 export { forwardBps, mulberry32, randomEntries, welchT } from "./null.js";
 export {
   DEFAULT_PARAMS,

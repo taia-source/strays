@@ -156,6 +156,49 @@ take-profit at `cost × multiple / position` while `evaluateEntry` defines
 `expectedGain = position × takeProfitBps` — the bar compares a number against itself. **0 refusals
 across 72 combinations of tax tier, size and multiple**, now pinned by a test.
 
+### ROUND 3 — the liquid-subset test. Ibrahim was RIGHT that round 2 tested the wrong thing, and the answer is still no.
+
+**Round 2's "volume floors made it worse" result was an artefact and is retracted.** The gate it
+swept, `minBarsBefore`, is a *decision-time cumulative counter* — on CryingCat (38,867 swaps) a
+floor of 5,000 never *selected* the token, it **delayed the first entry to swap 5,000 and discarded
+the early history**. A "trade the token late" filter, not a "trade liquid tokens" filter. A true
+token-level restriction moves the number the OPPOSITE way:
+
+```
+round 2 gate (wrong)          round 3 token-level (right)
+  >=0      -120bps              all           -120bps   (205 tokens, win 44.0%)
+  >=1000   -139bps              >=1000 swaps   -63bps   ( 33 tokens)
+  >=5000   -159bps  <- §8.2     >=2000 swaps   -56bps   ( 20 tokens, win 50.9%)
+```
+
+**It still loses, and the reason is decisive: the gross edge is FLAT across liquidity.** +134, +151,
++117, +114, +130 bps at successive bands, then *falling* to +42 at ≥10,000 swaps — against a ~225bps
+toll at every band. **Liquidity was never the binding constraint, so adding liquidity cannot relieve
+it.** Held out, the diff over random stays ~116–169bps at every band while Welch t collapses 4.52 →
+0.45 purely because n falls 1,049 → 77. The liquid bands do not have a stronger edge; they have the
+same edge measured worse.
+
+**The sharpest line, and I verified both numbers against the raw series myself:**
+
+```
+LEVCAT    buy-and-hold  +2,780,579 bps   strategy  -421 bps/trade
+CASHBIRD  buy-and-hold  +1,141,548 bps   strategy  -553 bps/trade
+INTERN    buy-and-hold  +3,134,087 bps
+```
+
+**On the two biggest winners on the pad, the strategy converted 100×+ moves into losses.** Named
+cohort: 2 of 8 profitable, pooled −78bps.
+
+Two real bugs surfaced on the way, both of which would have corrupted any future work:
+- **Symbols on this pad are NOT unique.** `usdg` has 7 addresses; `CryingCat` has 3 (38,867 / 483 /
+  10 swaps). Symbol-matching was pooling real tokens with copycats. Everything now keys on contract
+  address.
+- **`stopMode:"none"` posts +213bps at an 88.3% win rate and it is pure CENSORING** — trade count
+  drops 342 → 188 because losers never close, and the 16 that do resolve average −6,449bps.
+
+`assessOverfitting` at **133 cumulative trials counted across all three rounds** (not reset per
+round): **`credible: false`**.
+
 ### IBRAHIM'S DECISION: STAY ON LETSCASH. The venue analysis below is recorded, not acted on.
 
 Asked directly whether to move venue, he said: *"we want the cats to trade on letscash tokens, and
