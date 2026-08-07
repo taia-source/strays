@@ -27,6 +27,7 @@ import {
   buyAndHold,
   cohort,
   matchedRandom,
+  resolveCohort,
   restrictTo,
 } from "./liquidity.js";
 import { DEFAULT_PARAMS, type ReplayParams, replay } from "./replay.js";
@@ -123,11 +124,25 @@ async function main(): Promise<void> {
      C. STOP REMOVAL on the liquid universe — a liquid token gaps less, so the stop may behave
         differently here than it did pad-wide.
      ════════════════════════════════════════════════════════════════════════════════════════ */
-  process.stdout.write("\n══ C. STOP MODE on the liquid universe ══\n");
+  process.stdout.write(
+    "\n══ C. STOP MODE on the liquid universe — and the CENSORING that makes it look good ══\n",
+  );
   for (const stopMode of ["level", "none"] as const) {
-    const s = await measure(liquidTrain, { ...DEFAULT_PARAMS, stopMode });
+    const r = await replay(liquidTrain, { ...DEFAULT_PARAMS, stopMode });
+    const s = summarise(r.trades);
     await record(`liquid/stop=${stopMode}`, s);
     process.stdout.write(row(`  stop=${stopMode}`, s));
+    // `stop=none` posts an 88% win rate, which is not an improvement — it is SURVIVAL BIAS INSIDE
+    // THE TRADE LIST. Without a stop, a losing position is never closed; it stays open until the
+    // data runs out and is booked as `end-of-data`. The winners resolve and are counted; many
+    // losers never resolve at all, so the trade COUNT falls from 342 to 188. Printing the exit mix
+    // is what makes that visible rather than letting the headline win rate stand.
+    for (const e of s.byExit) {
+      process.stdout.write(
+        `      exit=${e.reason.padEnd(12)} n=${String(e.n).padStart(4)}  ` +
+          `meanNet ${e.meanNet.toFixed(0).padStart(7)}bps\n`,
+      );
+    }
   }
 
   /* ════════════════════════════════════════════════════════════════════════════════════════
@@ -185,12 +200,18 @@ async function main(): Promise<void> {
      F. THE NAMED COHORT, on TRAIN. Reported per token in `liquid-confirm.ts`; here only to
         confirm the names resolve and to size the sample.
      ════════════════════════════════════════════════════════════════════════════════════════ */
-  process.stdout.write("\n══ F. NAMED COHORT presence on TRAIN ══\n");
-  for (const t of cohort(train)) {
+  process.stdout.write(
+    "\n══ F. NAMED COHORT presence on TRAIN (addresses pinned on the FULL sample) ══\n" +
+      "Symbols on this pad are NOT unique — `CryingCat` alone has 3 addresses (38867, 483 and 10\n" +
+      "swaps). Each name resolves to its highest-activity contract, so a copycat cannot be pooled\n" +
+      "into a recognisable name's result.\n\n",
+  );
+  const addresses = resolveCohort(tokens);
+  for (const t of cohort(train, addresses)) {
     const a = activityOf(t);
     process.stdout.write(
       `  ${a.symbol.padEnd(12)} ${String(a.swaps).padStart(6)} swaps  ` +
-        `${a.swapsPerHour.toFixed(1).padStart(6)}/hr  tax=${String(a.taxPct)}%\n`,
+        `${a.swapsPerHour.toFixed(1).padStart(6)}/hr  tax=${String(a.taxPct)}%  ${a.address}\n`,
     );
   }
 

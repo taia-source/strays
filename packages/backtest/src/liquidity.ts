@@ -115,9 +115,20 @@ export const BANDS: readonly LiquidityBand[] = [
 ];
 
 /**
- * The tokens Ibrahim named, as a cohort. Matched case-insensitively on symbol because the
- * collector preserves the on-chain casing (`CryingCat`, `Seriouscat`) and the names as spoken do
- * not.
+ * The tokens Ibrahim named, as a cohort.
+ *
+ * ══ WHY THIS RESOLVES BY ADDRESS AND NOT BY SYMBOL ══
+ *
+ * SYMBOLS ON THIS PAD ARE NOT UNIQUE, and matching on one silently pools a real token with its
+ * copycats. Measured on this sample: `usdg` has 7 distinct addresses, `cashdog` and `cashcat` 6
+ * each, `seriouscat` 5, and `CryingCat` 3 — one with 38,867 swaps and two with 483 and 10. A
+ * symbol match on "CryingCat" would report the 38,867-swap token averaged together with two
+ * near-dead impostors and call the result "CryingCat".
+ *
+ * The cohort is therefore pinned to the exact contract address of the token Ibrahim means, which
+ * is resolved once as the highest-activity address carrying that symbol across the FULL sample
+ * (not per fold — a fold-local resolution could pick a different contract in train than in test
+ * and quietly compare two different tokens).
  */
 export const NAMED_COHORT: readonly string[] = [
   "CryingCat",
@@ -130,12 +141,35 @@ export const NAMED_COHORT: readonly string[] = [
   "CASHBIRD",
 ];
 
+/**
+ * Resolve each name to the single address with the most realised swaps in `universe`.
+ *
+ * `universe` should be the FULL token list, so the mapping is stable across folds.
+ */
+export function resolveCohort(
+  universe: readonly TokenBars[],
+  names: readonly string[] = NAMED_COHORT,
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    let best: TokenBars | undefined;
+    for (const t of universe) {
+      if (t.symbol.toLowerCase() !== lower) continue;
+      if (best === undefined || t.bars.length > best.bars.length) best = t;
+    }
+    if (best !== undefined) out.set(name, best.address);
+  }
+  return out;
+}
+
+/** The cohort tokens present in `tokens`, selected by the addresses `resolveCohort` pinned. */
 export function cohort(
   tokens: readonly TokenBars[],
-  names: readonly string[] = NAMED_COHORT,
+  addresses: ReadonlyMap<string, string>,
 ): readonly TokenBars[] {
-  const want = new Set(names.map((n) => n.toLowerCase()));
-  return tokens.filter((t) => want.has(t.symbol.toLowerCase()));
+  const want = new Set([...addresses.values()].map((a) => a.toLowerCase()));
+  return tokens.filter((t) => want.has(t.address.toLowerCase()));
 }
 
 /**
@@ -203,6 +237,7 @@ export function matchedRandom(
  */
 export type TokenResult = {
   readonly symbol: string;
+  readonly address: string;
   readonly trades: number;
   readonly meanNet: number;
   readonly medianNet: number;
@@ -210,19 +245,25 @@ export type TokenResult = {
   readonly sumBps: number;
 };
 
+/**
+ * Grouped by ADDRESS, not by symbol — see `resolveCohort` for why. Two tokens sharing a symbol are
+ * two different assets and pooling them would report a blend under one recognisable name.
+ */
 export function byToken(trades: readonly Trade[]): readonly TokenResult[] {
-  const bySymbol = new Map<string, Trade[]>();
+  const byAddress = new Map<string, Trade[]>();
   for (const t of trades) {
-    const list = bySymbol.get(t.symbol) ?? [];
+    const list = byAddress.get(t.token) ?? [];
     list.push(t);
-    bySymbol.set(t.symbol, list);
+    byAddress.set(t.token, list);
   }
   const out: TokenResult[] = [];
-  for (const [symbol, list] of bySymbol) {
+  for (const [address, list] of byAddress) {
+    const symbol = list[0]?.symbol ?? "?";
     const net = list.map((t) => Number(t.netBps));
     const d = describe(net);
     out.push({
       symbol,
+      address,
       trades: list.length,
       meanNet: d.mean,
       medianNet: d.median,

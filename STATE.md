@@ -241,6 +241,17 @@ browser has no wallet extension. **The signing path is therefore UNTESTED end to
 unreachable until this pass, which is the exact shape of the recorded failure where a service built
 to act on a user's token shipped with no input anywhere.
 
+**The quarry now shows real tokens, verified on the deployed page.** `Seriouscat 387Ξ · LEVCAT 317Ξ
+· CASHBIRD 193Ξ · INTERN 172Ξ · WINK · CUSSY`, ranked by 24h volume, "58 live of 107 scanned", and
+no huntable token has under 0.5Ξ of volume. The root cause was deeper than the `sort=newest` bug:
+**"huntable" still meant `taxPct === 1`, a rule `discovery.ts` had already deleted.** The page was
+applying a filter the strategy no longer had.
+
+**The font never shipped.** `public/fonts/JetBrainsMono.woff2` did not exist, so every page fell
+back to a system mono while `ART-DIRECTION.md` §4 claimed a local one — and that same section cites
+float's identical bug as the thing not to repeat. Installed, serving (92,576 B, 200), and `postbuild`
+now asserts it, proven by sabotage.
+
 **Five of six design axes now ship.** `map`, `dense-instrument`, `phosphor` and `idle-world` are
 built and measured; `mono-only` was always true. Only `pointer-agnostic` remains a claim rather
 than a feature — the world is click-and-look, and no keyboard or press-and-hold vocabulary exists.
