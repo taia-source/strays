@@ -333,6 +333,40 @@ describe("minOut — a zero slippage floor is a free MEV sandwich (RESEARCH §7c
     expect(() => minOutFor({ expectedOut: -1n, slippageBps: 100n })).toThrow(/free MEV sandwich/);
   });
 
+  /*
+   * ══ A CHECK THIS SUITE'S OWN SABOTAGE RUN FOUND TO BE DECORATION (S12) ══
+   *
+   * `minOutFor` has TWO independent guards that both reject a non-positive `expectedOut`: the
+   * explicit `expectedOut <= 0n` check, and the later `minOut <= 0n` check that catches a floor
+   * which rounded to zero. The test above asserted only that SOMETHING throws — so deleting the
+   * first guard entirely left the second one catching every input the test tried, and the
+   * sabotage went undetected. Coverage was 100% throughout.
+   *
+   * This is the unitick finding, quoted in PLAN.md §3 and recorded there as having recurred five
+   * times: *"when two mechanisms can independently reject the same input, at least one test must
+   * construct an input that only ONE of them rejects."*
+   *
+   * The two guards reject for DIFFERENT reasons and say so in their messages, so the fix is to
+   * pin which guard fires. `expectedOut = 0` must be refused by the FIRST guard — if the first
+   * is deleted, the second still throws but with the other message, and this test goes red.
+   */
+  it("SABOTAGE S12: the non-positive guard fires FIRST, distinguishably from the rounding guard", () => {
+    // A zero expected output is rejected by the EXPECTED-OUTPUT guard, naming the input.
+    expect(() => minOutFor({ expectedOut: 0n, slippageBps: 100n })).toThrow(
+      /non-positive expected output/,
+    );
+    expect(() => minOutFor({ expectedOut: -1n, slippageBps: 100n })).toThrow(
+      /non-positive expected output/,
+    );
+
+    // A positive expected output whose floor ROUNDS to zero is rejected by the OTHER guard, with
+    // the other message. Two distinct inputs, two distinct guards, each pinned to its own.
+    expect(() => minOutFor({ expectedOut: 1n, slippageBps: 9999n })).toThrow(/rounded to zero/);
+    expect(() => minOutFor({ expectedOut: 1n, slippageBps: 9999n })).not.toThrow(
+      /non-positive expected output/,
+    );
+  });
+
   it("refuses a 100% slippage tolerance, which would collapse the floor to zero", () => {
     expect(() => minOutFor({ expectedOut: 1_000_000n, slippageBps: 10_000n })).toThrow(
       /the sandwich this function exists to prevent/,

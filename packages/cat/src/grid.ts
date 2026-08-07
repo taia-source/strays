@@ -151,6 +151,7 @@ export const ROWS = {
  */
 export const NECK_ROW = ROWS.body[0];
 
+
 /**
  * How many ramp steps darker the neck row is than the head row above it.
  *
@@ -467,22 +468,51 @@ function postureRows(posture: Posture): {
   readonly bodyEnd: number;
   readonly legEnd: number;
 } {
+  /*
+   * ══ `bodyTop` IS THE SAME FOR ALL THREE POSTURES, AND THAT IS NOT AN OVERSIGHT ══
+   *
+   * The first version of this function moved `bodyTop` down a row for `crouch`, on the reasoning
+   * that a crouched cat's body sits lower. It broke 250 of 300 cats: the head still ended at row 8
+   * and the body now started at row 10, so row 9 was EMPTY and the sprite was two disconnected
+   * pieces — a floating head above a body. Silhouette rule 1, violated wholesale, and it was found
+   * by the flood-fill test rather than by eye because at 96px it read as a slightly odd neck.
+   *
+   * The lesson generalises past this bug: the body's TOP is welded to the head and is not a free
+   * parameter. Anything that moves it must move the head too, and at 16px there is no room to move
+   * the head. So posture varies only the body's BOTTOM and the leg rows, which is where the
+   * silhouette has slack — and, conveniently, where a real cat's posture actually varies. A cat
+   * lowers its haunches and folds its legs; its head does not detach from its shoulders.
+   */
+  const bodyTop = ROWS.body[0];
   switch (posture) {
     /*
      * STANDING — the body ends a row early and the legs take two full rows, so there is daylight
      * under the cat. The tallest, lightest silhouette of the three.
      */
     case "stand":
-      return { bodyTop: ROWS.body[0], bodyEnd: ROWS.legs[0] - 1, legEnd: GRID_H };
+      return { bodyTop, bodyEnd: ROWS.legs[0] - 1, legEnd: GRID_H };
     /*
-     * CROUCHED — the body runs a row LOWER and the legs get one row only, folded under. The
-     * lowest, heaviest silhouette: a cat flattened to the ground with no daylight beneath it.
+     * CROUCHED — the body runs a row LOWER over the leg rows and the legs get one row only, folded
+     * under it. The lowest, heaviest silhouette: a cat flattened to the ground with no daylight
+     * beneath it. The extra mass comes off the LEGS, not off the neck.
      */
     case "crouch":
-      return { bodyTop: ROWS.body[0] + 1, bodyEnd: GRID_H - 1, legEnd: GRID_H };
+      return { bodyTop, bodyEnd: GRID_H - 1, legEnd: GRID_H };
     default:
-      return { bodyTop: ROWS.body[0], bodyEnd: ROWS.legs[0], legEnd: GRID_H };
+      return { bodyTop, bodyEnd: ROWS.legs[0], legEnd: GRID_H };
   }
+}
+/**
+ * The neck row for a given posture — the body's own FIRST row, whichever that is.
+ *
+ * `NECK_ROW` is the sitting cat's value and is exported because it is the reference the tests and
+ * the proportion table are written against. Once `posture` began moving the body's top row, a
+ * constant neck row was wrong for two of the three postures: a crouched cat's body starts a row
+ * lower, so the break landed on empty space and the cat had no neck at all. Rule 2 is about the
+ * boundary between head and body, so it has to follow the boundary.
+ */
+function neckRowFor(posture: Posture): number {
+  return postureRows(posture).bodyTop;
 }
 
 /**
@@ -960,18 +990,59 @@ function tailPixels(geom: CatGeometry): Map<number, number> {
  *
  * A leg's normal sweeps across its 2px width and is flat along its length, so it takes light as a
  * rounded post rather than as a flat bar — the one piece of openhood's leg model that survives.
+ *
+ * ══ POSTURE MOVES WHERE THEY START, NOT HOW MANY THERE ARE ══
+ *
+ * A standing cat's body ends a row early, so the legs get two rows and there is daylight beneath
+ * it. A crouched cat's body runs a row lower, so the legs get one row and the cat sits flat on the
+ * ground. The count and the width never change — rule 3 is not a per-posture decision.
  */
 const LEG_X = [4, 10] as const;
 const LEG_W = 2;
 
-function legNormal(px: number, py: number): { nx: number; ny: number } | null {
-  if (py < ROWS.legs[0] || py >= ROWS.legs[1]) return null;
+function legNormal(px: number, py: number, posture: Posture): { nx: number; ny: number } | null {
+  const { bodyEnd, legEnd } = postureRows(posture);
+  if (py < bodyEnd || py >= legEnd) return null;
   for (const lx of LEG_X) {
     if (px >= lx && px < lx + LEG_W) {
       return { nx: (px - lx - 0.5) * 1.3, ny: -0.1 };
     }
   }
   return null;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE COAT PATTERN — a luminance-only marking, and the one axis that reads as "which cat".
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Returns how many ramp steps to subtract from a body pixel, 0 or 2. Never a colour, never a hue —
+ * see the `Coat` type for why this clears §8's ban rather than skirting it.
+ *
+ * TWO steps, not one. One step is inside the Bayer dither's own ±1 range, so a one-step marking is
+ * literally indistinguishable from the noise the shading already produces — that was the correct
+ * half of the original rejection of coat markings. Two steps is outside it and reads cleanly.
+ *
+ *   TABBY   — bands on alternating rows across the whole body. Horizontal because the body's
+ *             shading gradient is vertical, so a horizontal band cuts across it and stays legible
+ *             at every row; vertical stripes ran parallel to the gradient and disappeared into it
+ *             on the rows where the two happened to agree.
+ *   PATCHED — one block on the cat's left flank, from the shoulder to mid-body. Deliberately
+ *             ASYMMETRIC: a symmetric patch reads as shading, and the entire value of this axis is
+ *             that it is obviously a MARKING rather than a light effect.
+ */
+function coatDrop(coat: Coat, px: number, py: number, bodyTop: number): number {
+  switch (coat) {
+    // Every other row, starting one row below the neck so the neck break stays the darkest line on
+    // the body and cannot be confused with a stripe.
+    case "tabby":
+      return (py - bodyTop) % 2 === 1 ? 2 : 0;
+    // The left flank only, and only the upper half of the body.
+    case "patched":
+      return px + 0.5 < CX - 0.5 && py < bodyTop + 3 ? 2 : 0;
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -1034,24 +1105,37 @@ function legNormal(px: number, py: number): { nx: number; ny: number } | null {
  */
 const WHISKER_STEP = 2;
 
-function isWhisker(px: number, py: number, len: number): boolean {
+function isWhisker(px: number, py: number, len: number, headWidth: number): boolean {
   const dx = px + 0.5 - CX;
   // THE STEP. Left whisker on the muzzle row, right whisker one row above it. This asymmetry is
   // structural rather than dimensional, which is why it survives where a length difference did not.
   const row = dx < 0 ? ROWS.head[1] - 1 : ROWS.head[1] - 2;
   if (py !== row) return false;
   const a = Math.abs(dx);
-  // Starts at the head's own widest half-width, so the first whisker pixel is orthogonally
-  // adjacent to a face pixel. Rule 1, satisfied by construction.
-  const start = HEAD_W / 2 - 0.2;
   /*
-   * Capped at 2. `len` still varies (2 or 3) and the cap makes the 3 case draw as 2 — which looks
-   * like a dead axis and is not: the variation now lives in WHICH ROWS the pair occupies via the
-   * step above, and the length is pinned because at 3px the sprite's bounding box grew half again
-   * as wide as the cat and the colony's spacing looked wrong at 32px. The parameter is kept rather
-   * than deleted so the hash budget's shape is visible; see the header table.
+   * Starts at the CAT'S OWN head half-width, so the first whisker pixel is orthogonally adjacent
+   * to a face pixel on every cat. Rule 1, satisfied by construction.
+   *
+   * This was the fixed `HEAD_W / 2 - 0.2` and had to follow `headWidth` once the head began to
+   * vary: on a narrow-headed cat a fixed start left a gap (whisker as dust), and on a broad-headed
+   * one it started inside the skull and the whisker vanished under the face entirely.
    */
-  return a > start && a <= start + Math.min(2, len);
+  const start = headWidth;
+  /*
+   * ══ CAPPED AT 1PX PER SIDE — the fix for a STRIKETHROUGH ══
+   *
+   * At 2px per side the whiskers ran three pixels clear of an eight-pixel head, and a review of
+   * the render at 96px found "a horizontal bar running through the middle of each cat, extending
+   * past the body on both sides — it reads as a line struck through the sprite". That is the
+   * moustache-bar failure returning a fourth time, and at that point the length was plainly the
+   * thing carrying it: any whisker long enough to extend past the BODY is read as a rule drawn
+   * across the sprite, whatever row it sits on.
+   *
+   * One pixel per side is a whisker that reads as a whisker — a suggestion at the cheek, stopping
+   * well inside the body's own width so it can never look like a line through the cat. `len` is
+   * retained but now only distinguishes 1px from 2px on the longer side.
+   */
+  return a > start && a <= start + Math.min(len - 1, 1);
 }
 
 /**
@@ -1078,17 +1162,17 @@ function partAt(
   geom: CatGeometry,
   tail: Map<number, number>,
 ): { part: Part; nx: number; ny: number; step?: number; t?: number } | null {
-  const head = headNormal(px, py);
+  const head = headNormal(px, py, geom.headWidth);
   if (head) {
     const eye = eyeStepAt(px, py, geom.eyeShape);
     if (eye !== null) return { part: "eye", nx: 0, ny: 0, step: eye };
     const muzzle = muzzleNormal(px, py);
     if (muzzle) return { part: "muzzle", ...muzzle };
   }
-  const ear = earNormal(px, py, geom.earAngle, geom.earHeight);
+  const ear = earNormal(px, py, geom.earAngle, geom.earHeight, geom.earWidth, geom.headWidth);
   if (ear) return { part: "ear", ...ear };
   if (head) return { part: "head", ...head };
-  const body = bodyNormal(px, py);
+  const body = bodyNormal(px, py, geom.build, geom.posture);
   if (body) return { part: "body", ...body };
   const t = tail.get(py * GRID_W + px);
   if (t !== undefined) {
@@ -1096,9 +1180,9 @@ function partAt(
     // value from the root and the curve reads as round rather than as a drawn line.
     return { part: "tail", nx: 0.25 + t * 0.5, ny: -0.2, t };
   }
-  const leg = legNormal(px, py);
+  const leg = legNormal(px, py, geom.posture);
   if (leg) return { part: "leg", ...leg };
-  if (isWhisker(px, py, geom.whiskerLen)) {
+  if (isWhisker(px, py, geom.whiskerLen, geom.headWidth)) {
     return { part: "whisker", nx: 0, ny: 0, step: WHISKER_STEP };
   }
   return null;
@@ -1208,9 +1292,50 @@ const STATE_GAIN: Readonly<Record<CatState, number>> = {
   hunting: 0.9,
   /** Starving: two thirds. Visibly sinking toward the noise floor, which is the honest read. */
   starving: 0.66,
-  /** Dead: not quite half. Barely above the ground, and the eyes have gone out separately. */
-  dead: 0.46,
+  /**
+   * Dead: unused. See `DEAD_STEP` — a dead cat is not a dim cat, it is a flat one.
+   *
+   * Kept in the table at 1 rather than removed so the record is exhaustive over `CatState` and a
+   * future state cannot be added without a value being chosen for it.
+   */
+  dead: 1,
 };
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * DEAD IS A FLAT SILHOUETTE, NOT A FADE — and this was a review finding, not a preference.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `dead` was a gain of 0.46, on the same model as the other three states. Rendered and reviewed,
+ * it "read as a rendering failure rather than a state" — the cat was so close to the ground value
+ * that a viewer's first hypothesis was a broken sprite, not a dead animal.
+ *
+ * That is a serious defect and not a cosmetic one, because of what the state MEANS. `DESIGN.md` §2
+ * and `ART-DIRECTION.md` §8 both require losses to be honest and visible: "a starving cat is drawn
+ * starving. The mechanic is honest about losses or it is a lie with whiskers on it." A death that
+ * fades toward invisibility is the softening the ban forbids, arriving through rendering instead
+ * of through copy. It is also openhood's dormant-creature rule restated: a sprite that fades reads
+ * as "still loading", and a fault and a state must never be confusable.
+ *
+ * ══ THE FIX: COLLAPSE THE RANGE, DO NOT LOWER IT ══
+ *
+ * Every coat pixel takes ONE value — `DEAD_STEP` — regardless of what the lighting gave it. That
+ * makes the cat a flat, evenly-lit shape with a full-contrast outline: unmistakably THERE, and
+ * unmistakably not alive, because the one thing every other state has is internal modelling. A
+ * flat fill is the visual language of an absence of light falling on a form, which is exactly what
+ * is being said.
+ *
+ * Step 2 specifically: two full steps above the outline at 0, so the silhouette and its edge both
+ * read; and two below the body's own floor of 3-4, so a dead cat is plainly darker than a living
+ * one at a glance. It sits at `--phos-ghost`, §3's declared noise floor, which is the correct
+ * register — present, and at the bottom of the range the sensor can still resolve.
+ *
+ * REJECTED: drawing the dead cat as an OUTLINE ONLY, hollow. It was tried first, since "outline
+ * only" is the obvious reading of "a flat silhouette". At 16px a hollow shape loses the ears
+ * entirely — a 1px ear outline with a 1px interior is just two adjacent pixels — and the sprite
+ * stopped being identifiable as the user's own cat, which is the one thing it must remain.
+ */
+const DEAD_STEP = 2;
 
 function applyState(step: number, part: Part, state: CatState): number {
   if (part === "outline") return step;
@@ -1221,12 +1346,14 @@ function applyState(step: number, part: Part, state: CatState): number {
    * process. Dimming them with the coat lost the sprite's focal point exactly when the state most
    * needed reading, and rendered at 32px a starving cat became an undifferentiated grey smudge.
    * A DEAD cat's eyes are dropped hard: a corpse's tapetum does not shine, and this is the single
-   * clearest state read on the sprite.
+   * clearest state read on the sprite. They go to 1 — BELOW the flat coat, so they read as two
+   * dark holes in a flat shape, which is the strongest "gone" signal available in one hue.
    */
   if (part === "eye") {
     if (state === "dead") return 1;
     return step;
   }
+  if (state === "dead") return DEAD_STEP;
   const gain = STATE_GAIN[state] ?? 1;
   return Math.max(1, Math.round(step * gain));
 }
@@ -1244,7 +1371,11 @@ export function catGrid(
 ): GridPixel[] {
   const geom = geometryFor(id);
   const state = opts?.state ?? "hunting";
-  const tail = tailPixels(geom.tailCurl, geom.tailLift);
+  const tail = tailPixels(geom);
+  // The body's own first row and the neck break, both derived from the posture so the rules that
+  // reference them follow the body rather than a constant. See `neckRowFor`.
+  const { bodyTop } = postureRows(geom.posture);
+  const neckRow = neckRowFor(geom.posture);
   const out: GridPixel[] = [];
   /** Which cells the cat occupies, so the outline pass can find its edge. */
   const filled = new Set<number>();
@@ -1292,7 +1423,7 @@ export function catGrid(
        * mass. That is unitick's amoeba, verbatim: "head and body were one mass... the silhouette
        * was an amoeba." A cat with no neck does not read as a cat; it reads as a bowling pin.
        */
-      if (hit.part === "body" && y === NECK_ROW) {
+      if (hit.part === "body" && y === neckRow) {
         step = Math.max(1, step - NECK_STEP_DROP);
       }
       /*
@@ -1366,9 +1497,21 @@ export function catGrid(
        * because it is a relative difference INSIDE the body's own floored range, not a push toward
        * the ground.
        */
-      if (hit.part === "body" && y !== NECK_ROW) {
-        const lower = y >= ROWS.body[0] + 2;
+      if (hit.part === "body" && y !== neckRow) {
+        const lower = y >= bodyTop + 2;
         step = Math.max(lower ? 3 : 4, step);
+        /*
+         * ══ THE COAT PATTERN, applied last so it modulates the FLOORED value ══
+         *
+         * Applying it before the floor would let `Math.max` erase the marking wherever the floor
+         * was the binding constraint — which is most of the body, so the pattern would show only
+         * on the few pixels the lighting had already darkened. That is a marking that appears in
+         * the source, passes a unit test on `coatDrop`, and is invisible on screen.
+         *
+         * Floored at 2 rather than 1: a stripe that reaches the outline's neighbourhood reads as a
+         * hole punched in the cat, not as a marking on it.
+         */
+        step = Math.max(2, step - coatDrop(geom.coat, x, y, bodyTop));
       }
       /*
        * The tail brightens toward the TIP. Backwards from every other part, and deliberately: the
