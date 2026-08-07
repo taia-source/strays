@@ -105,17 +105,34 @@ is 0. No dust stranded, no rounding residue.
 
 ---
 
-## Spend to date
+## Spend — FINAL, reconciled against the house balance
 
-| | ETH | ~USD @ $1927 |
+Swept back on completion, per the instruction that everything returns to `HOUSE_ADDRESS`.
+Sweep tx: `0x86e437a4298ef56e6ee8caf203b7e504073050c01da99f5c9e740ec6f9b286d5`.
+
+```
+house at session start   40199933880953577 wei
+house after sweep        36166873534659577 wei
+net spent                 4033060346294000 wei  =  0.004033 ETH  =  $7.77
+```
+
+Of that, still recoverable:
+
+| | wei | USD |
 |---|---|---|
-| Fund deployer | 0.003 | $5.78 |
-| Fund keeper | 0.0008 | $1.54 |
-| Gas + trading loss (net, live fire) | ~0.0005 | ~$0.96 |
-| **Recoverable** | deployer + keeper balances sweep back to house | |
+| keeper gas balance — **kept deliberately, it must be able to run** | 787,961,152,774,000 | $1.52 |
+| deployer dust | 1,266,048,000,000 | $0.0024 |
 
-Against the **$10 policy cap**. The house wallet held $77.48 at session start, so the cap is enforced
-in code and by discipline — **not by the balance**, which would not enforce it.
+**Irrecoverably spent: 3,243,833,145,520,000 wei = $6.25.** That is deploy gas, four live-fire
+transactions, and the ~199bps trading loss on the round trip.
+
+**Against the $10 cap: 63%.** The house wallet held $77.48 at session start, so the cap was enforced
+by discipline and by code — **never by the balance**, which could not have enforced it. `.env` records
+why: `HOUSE_ADDRESS` is shared, and its nonce advanced 980 → 992 during a session in which another
+project sent nothing.
+
+**The vault holds 0.** No user funds are stranded in it, verified on chain after the live-fire
+withdrawal.
 
 ---
 
