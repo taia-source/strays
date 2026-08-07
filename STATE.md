@@ -58,9 +58,21 @@ success. Turning it on needs three switches — see `OPERATIONS.md`.
 `/root/.env`. Two attempts to set it through tooling were blocked by a safety classifier, which is
 the correct outcome for a private key in a tool payload; it was not worked around.
 
-**The keeper has never spent a wei.** `STRAYS_LIVE_TRADING=false`. Everything below it now works —
-durable ledger, sell simulation, rug screening, an 8.3s tick — but no cat has executed a trade of
-its own. That is the single largest remaining gap and it is one environment variable plus a key.
+**A cat has now traded on its own, and made money.** On chain, with no human in the loop:
+
+```
+30448514  Entered  57,092,283,279,985,038,768,190 units for 0.00104 ETH
+30452877  Exited   sold for 0.001046819814464775 ETH   =>  +66 bps NET of a 199bps round-trip tax
+```
+
+The strategy chose the token, sized the position from the stray's own compartment, entered, priced
+its own exit and closed it. **+66 bps on one trade is not evidence the strategy works** — it is
+evidence the machinery works. openhood's own record is the warning: it called one winning trade over
+15 days *"worth nothing"*.
+
+**LIVE trading runs locally only.** Railway still has `STRAYS_LIVE_TRADING=false` and no keeper key —
+two secrets need pasting by hand (the key, and the Alchemy RPC, because the public endpoint returns
+Cloudflare 403s under keeper load). See `OPERATIONS.md`.
 
 **The spend ledger is in memory ONLY when `DATABASE_URL` is unset.** `@strays/hunt` exports `assertDurableLedger`, which *throws* on an
 in-memory ledger, specifically so this cannot go live by accident. meridian's identical shortcut

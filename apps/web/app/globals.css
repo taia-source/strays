@@ -597,6 +597,39 @@ img[data-pixel] {
 }
 
 /*
+ * ══ A SHORT VIEWPORT SPENDS ITS LAST PIXELS ON THE RISKS ══
+ *
+ * On a 320x844 phone the fee row, the hero and the CTA are all at their `min-content` floor and
+ * something still has to give. This says explicitly what: the product EXPLANATION collapses to a
+ * two-line window that scrolls itself, and the height that frees goes to the risk panel.
+ *
+ * That ordering is the whole argument of this page. "What it is" is a pitch and a visitor who
+ * scrolls two lines of it loses nothing they cannot get from the tagline above or `/docs` below.
+ * "What can go wrong" is the disclosure, and a visitor who never sees its fourth item has been
+ * misled. When the two compete for the last 40 pixels, the pitch loses — every time, by rule.
+ */
+@media (max-height: 880px) and (max-width: 560px) {
+  .landing-what { max-height: 4.6em; }
+  /* The floor comes down a little rather than off: still four visible lines of disclosure, and
+     the panel scrolls for the remainder instead of the panel disappearing. */
+  .landing-grid { grid-template-rows: auto auto minmax(0, auto) min-content minmax(11rem, auto) auto auto; }
+}
+
+/*
+ * A visible edge on any panel that is currently scrolling its own content.
+ *
+ * A clipped sentence with no affordance reads as a rendering bug — the 320px screenshot showed
+ * "what it is" cut mid-word and nothing indicating there was more. A dotted rail on the scroll
+ * container says "this box has more in it" without spending a scrollbar's width, which at 320px
+ * is width the text needs.
+ */
+.landing-what,
+.landing-risks {
+  border-right: var(--px) dotted transparent;
+}
+.landing-what { border-right-color: var(--soot-line); padding-right: var(--s1); }
+
+/*
  * ══ NARROW VIEWPORTS — the type itself gets smaller ══
  *
  * Scoped to WIDTH, not height, and kept separate from the block above on purpose: a 1440x900

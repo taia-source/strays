@@ -667,18 +667,13 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
     box.x = cx - box.w / 2;
     box.y = cy + r + 5;
 
-    // Flip above the token when the label below would land under the HUD or off the bottom.
-    const absTop = d.canvasRect.top + box.y;
-    const collides =
-      box.y + box.h > height - 4 ||
-      d.reserved.some(
-        (rc) =>
-          absTop < rc.bottom &&
-          absTop + box.h > rc.top &&
-          d.canvasRect.left + box.x < rc.right &&
-          d.canvasRect.left + box.x + box.w > rc.left,
-      );
-    if (collides) box.y = cy - r - box.h - 5;
+    /*
+     * The "flip above the token if the default is occluded" special case that used to sit here is
+     * GONE. It was a one-step remedy applied before the real search, and every case it could fix is
+     * a case the search below already covers — its second candidate IS the flipped position. Keeping
+     * both meant the occlusion rule was expressed in two places that could disagree, and they did:
+     * the pre-flip consulted the HUD rectangles while the search did not.
+     */
 
     /*
      * ══ DE-COLLIDE BY TRYING CANDIDATE SLOTS, NOT BY PUSHING DOWN ══
@@ -735,10 +730,8 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
         (rc) => ax < rc.right && ax + box.w > rc.left && ay < rc.bottom && ay + box.h > rc.top,
       );
     };
-    // Keep the collision-resolved default as the fallback, so a crowded field still labels
-    // everything rather than silently losing tickers.
-    let bestX = box.x;
-    let bestY = box.y;
+    let bestX = -1;
+    let bestY = -1;
     for (const [ox, oy] of slots) {
       // `ox === 0` means "centred under/over the token"; a non-zero ox is a left/right offset
       // already expressed as the box's own left edge relative to the token centre.
@@ -751,6 +744,25 @@ function draw(ctx: CanvasRenderingContext2D, sim: Sim, d: DrawCtx): void {
       bestY = candY;
       break;
     }
+
+    /*
+     * ══ NO CLEAR SLOT ⇒ NO LABEL, AND THAT IS THE HONEST OUTCOME ══
+     *
+     * The previous rule was the opposite: fall back to the default position, on the reasoning that
+     * *"a token with no ticker defeats the whole layer, so an overlapping label is strictly better
+     * than no label."* That reasoning is wrong once the obstacle is the HUD rather than another
+     * label, and the rendered field is what shows why — the fallback is what drew "CS" with the rest
+     * of CSUMMIT vanishing under the roster panel.
+     *
+     * A half-occluded ticker is not a degraded label, it is a WRONG one: "CS" is a different string
+     * from "CSUMMIT", and a viewer reading it has been told something false about which token this
+     * is. An unlabelled diamond says only "a token is here", which is true, and the roster panel
+     * beside it lists every ticker in text anyway — so nothing is actually lost.
+     *
+     * The diamond itself is always drawn. It is the label, not the token, that is suppressed.
+     */
+    if (bestX < 0) continue;
+
     box.x = bestX;
     box.y = bestY;
     placed.push({ x: box.x, y: box.y, w: box.w, h: box.h });
