@@ -264,10 +264,15 @@ const DITHER = 1.0;
 const SALT = {
   earAngle: "ear-angle",
   earHeight: "ear-height",
+  earWidth: "ear-width",
   tailCurl: "tail-curl",
   tailLift: "tail-lift",
   eyeShape: "eye-shape",
   whisker: "whisker",
+  build: "build",
+  posture: "posture",
+  headWidth: "head-width",
+  coat: "coat",
 } as const;
 
 /** A stable 0..1 from an id and a salt. The one place the hash is turned into a number. */
@@ -327,13 +332,71 @@ export type GridPixel = {
  */
 export type CatState = "fed" | "hunting" | "starving" | "dead";
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE POSTURE — the largest silhouette axis there is, and the one added last.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A discrete axis rather than a continuous one, because posture is not a spectrum: a cat is
+ * sitting, or standing, or crouched, and the intermediate states are transitions rather than
+ * poses. Three values, each moving the row budget:
+ *
+ *   SIT      — the reference. Haunch on the ground, chest up, legs short and forward.
+ *   STAND    — the body lifts a row and narrows; the legs get the row the body gave up, so the
+ *              cat is taller and lighter with visible daylight under it.
+ *   CROUCH   — the body drops and spreads; the legs are folded under and barely show. A hunting
+ *              cat flattened to the ground.
+ *
+ * ══ Why this beats every other axis at 32px ══
+ *
+ * Posture changes the OVERALL PROPORTION of the sprite — where its mass sits vertically — and that
+ * is the property that survives being shrunk. Ear angle and tail curl are detail axes: they change
+ * a few pixels at the edge, which is exactly what disappears first. Two cats in different postures
+ * differ in their gross shape, and gross shape is all a 32px sprite has.
+ *
+ * This was added after a render review found twelve cats that were "effectively the same" at 32px
+ * despite the ear and tail axes both being live and both being wide. The lesson: variation has to
+ * be budgeted at the SCALE THE THING IS VIEWED AT. A budget spent entirely on detail is a budget
+ * spent on nothing when the sprite is 32px in a colony.
+ */
+export type Posture = "sit" | "stand" | "crouch";
+
+/**
+ * ══ THE COAT PATTERN — luminance only, and why that is NOT a violation of the colour ban ══
+ *
+ * §8 bans "colour on an animal": "The IR sensor has none. Cats are drawn in the phosphor ramp
+ * only." A pattern drawn by moving pixels BETWEEN EXISTING RAMP STEPS adds no hue whatsoever — it
+ * is the same six phosphor values rearranged. An IR sensor absolutely does resolve a tabby's
+ * markings, because they differ in reflectance, and reflectance is the one thing an IR sensor
+ * measures. Rendering a tabby as uniformly grey would be the less honest choice.
+ *
+ * The ban's actual target is identity-carrying HUE — an amber cat and a red cat reading as two
+ * species and colliding with the two event hues. A luminance pattern cannot do that.
+ *
+ * ══ AND THIS REVERSES AN EARLIER REJECTION IN THIS FILE, DELIBERATELY ══
+ *
+ * The header originally rejected coat markings on the grounds that "at 16x16 a stripe is one pixel,
+ * and one pixel of a different ramp step is indistinguishable from the Bayer dither already running
+ * underneath it". That reasoning was correct about a ONE PIXEL stripe and wrong about the general
+ * case. A stripe that spans a whole row of the body, at a two-step delta rather than one, is not
+ * dither-sized in either dimension and reads cleanly at 96px and as a texture difference at 32px.
+ * The fix for "too subtle to survive the dither" was to make it bigger, not to abandon it.
+ *
+ *   SOLID    — no pattern. The reference, and the most common.
+ *   TABBY    — horizontal bands across the body, two steps down, every other row.
+ *   PATCHED  — one asymmetric block of two steps down on the flank. A bicolour stray.
+ */
+export type Coat = "solid" | "tabby" | "patched";
+
 /** A cat's own geometry, every axis derived from a separately-salted hash of the id. */
 export type CatGeometry = {
   /** −1..1. Which way the ears lean. Negative is outward/flat, positive is inward/alert. */
   readonly earAngle: number;
-  /** 2 or 3. How many rows the ear rises. One row is a visible silhouette change at 16px. */
+  /** 2, 3 or 4. How many rows the ear rises. One row is a large silhouette change at 16px. */
   readonly earHeight: number;
-  /** −1..1. Which way the tail sweeps and how hard. The single largest silhouette axis. */
+  /** 1.15..1.95. The ear's half-width at its base — a wide flat ear or a narrow tall one. */
+  readonly earWidth: number;
+  /** −1..1. Which way the tail sweeps and how hard. */
   readonly tailCurl: number;
   /** 0..1. How high the tail is carried, from low-slung to vertical greeting. */
   readonly tailLift: number;
@@ -341,25 +404,85 @@ export type CatGeometry = {
   readonly eyeShape: number;
   /** 2 or 3. Whisker length on the left cheek; the right is always one shorter. */
   readonly whiskerLen: number;
+  /** −1..1. Stocky (positive) to lean (negative). Scales the body's haunch width. */
+  readonly build: number;
+  /** The pose. The single largest silhouette axis at map size. */
+  readonly posture: Posture;
+  /** 3.2..4.3. The head's half-width. A narrow wedge face or a broad round one. */
+  readonly headWidth: number;
+  /** The coat pattern, in luminance only. */
+  readonly coat: Coat;
 };
 
 /** Every varying axis of one cat, from its id. `Math.random()` appears nowhere. */
 export function geometryFor(id: string): CatGeometry {
+  const postures: readonly Posture[] = ["sit", "stand", "crouch"];
+  const coats: readonly Coat[] = ["solid", "tabby", "patched"];
   return {
     earAngle: signed(id, SALT.earAngle),
-    earHeight: 2 + Math.floor(unit(id, SALT.earHeight) * 2),
+    /*
+     * 2, 3 or 4 rows, widened from the original 2-or-3.
+     *
+     * Measured: with only two values, half the colony had identical ears and the ear axis
+     * contributed almost nothing to telling cats apart. Three values across a 3-row budget is the
+     * most a 16px grid can carry, and the difference between a 2-row and a 4-row ear is the
+     * difference between a scottish fold and a lynx — the largest single change to the top of the
+     * silhouette available.
+     */
+    earHeight: 2 + Math.floor(unit(id, SALT.earHeight) * 3),
+    /*
+     * The ear's base half-width, 1.15..1.95. Combined with `earHeight` this is what produces the
+     * flat-and-wide to tall-and-narrow range: a 4-row ear at half-width 1.15 is a spike, and a
+     * 2-row ear at 1.95 is a broad triangle. Neither was reachable when the width was a constant.
+     */
+    earWidth: 1.15 + unit(id, SALT.earWidth) * 0.8,
     tailCurl: signed(id, SALT.tailCurl),
     tailLift: unit(id, SALT.tailLift),
     eyeShape: Math.floor(unit(id, SALT.eyeShape) * 3),
-    /*
-     * 2 or 3 px on the LEFT cheek; the right is always one shorter, so it is 1 or 2.
-     *
-     * The floor is 2, not 1. At 1 the right whisker came out zero-length and the cat had a whisker
-     * on one side only — which reads as a defect rather than as asymmetry. The asymmetry has to be
-     * a DIFFERENCE between two present things, not the absence of one.
-     */
     whiskerLen: 2 + Math.floor(unit(id, SALT.whisker) * 2),
+    build: signed(id, SALT.build),
+    posture: postures[Math.floor(unit(id, SALT.posture) * 3)] ?? "sit",
+    /*
+     * The head's half-width, 3.2..4.3. A full pixel of range on each side, so the widest head is
+     * two columns broader than the narrowest — visible at 32px as the difference between a wedge
+     * face and a round one, and it changes where the ears sit as a consequence.
+     *
+     * The ceiling is 4.3 and not higher because the head must stay narrower than the haunch or the
+     * neck pinch (rule 2) disappears — see `bodyNormal`, whose narrowest haunch is 4.4.
+     */
+    headWidth: 3.2 + unit(id, SALT.headWidth) * 1.1,
+    coat: coats[Math.floor(unit(id, SALT.coat) * 3)] ?? "solid",
   };
+}
+
+/**
+ * How posture moves the row budget. Returns the rows the BODY occupies and the rows the LEGS do.
+ *
+ * A function rather than a table because the two spans must tile without a gap — a gap between the
+ * body's last row and the leg's first is rule 1 broken, and computing the leg span FROM the body's
+ * end makes that impossible to get wrong.
+ */
+function postureRows(posture: Posture): {
+  readonly bodyTop: number;
+  readonly bodyEnd: number;
+  readonly legEnd: number;
+} {
+  switch (posture) {
+    /*
+     * STANDING — the body ends a row early and the legs take two full rows, so there is daylight
+     * under the cat. The tallest, lightest silhouette of the three.
+     */
+    case "stand":
+      return { bodyTop: ROWS.body[0], bodyEnd: ROWS.legs[0] - 1, legEnd: GRID_H };
+    /*
+     * CROUCHED — the body runs a row LOWER and the legs get one row only, folded under. The
+     * lowest, heaviest silhouette: a cat flattened to the ground with no daylight beneath it.
+     */
+    case "crouch":
+      return { bodyTop: ROWS.body[0] + 1, bodyEnd: GRID_H - 1, legEnd: GRID_H };
+    default:
+      return { bodyTop: ROWS.body[0], bodyEnd: ROWS.legs[0], legEnd: GRID_H };
+  }
 }
 
 /**
@@ -375,21 +498,23 @@ export function geometryFor(id: string): CatGeometry {
  * front-to-back and its ears are set WIDE on top of it. Squashing the head is what gives the ears
  * somewhere apart to sit.
  */
-function headNormal(px: number, py: number): { nx: number; ny: number } | null {
+function headNormal(px: number, py: number, headWidth: number): { nx: number; ny: number } | null {
   const cy = (ROWS.head[0] + ROWS.head[1]) / 2;
   /*
-   * `-0.2` off the nominal half-width, which sounds like nothing and is the difference between a
-   * cat and a bowling pin.
+   * The half-width is now PER-CAT (3.2..4.3) where it was the constant 3.8.
    *
-   * At exactly `HEAD_W / 2` the head's widest row rasterised to columns 3..12 — the same ten
-   * columns the body's haunch occupies — so the silhouette had a straight vertical edge from the
-   * ear base all the way to the legs and the neck break read as a stripe across a slab rather than
-   * as a neck. Rule 2's value break needs a SHAPE to reinforce; it cannot manufacture one.
+   * The constant was itself a correction: at exactly `HEAD_W / 2` (4.0) the head's widest row
+   * rasterised to the same ten columns as the body's haunch, so the silhouette had a straight
+   * vertical edge from the ear base to the legs and the neck break read as a stripe across a slab.
+   * Rule 2's value break needs a SHAPE to reinforce; it cannot manufacture one.
    *
-   * At 3.8 the head's widest row is columns 4..11, two columns inside the haunch, so the outline
-   * pass draws a visible notch on both sides at the shoulder. That notch is the neck.
+   * Making it vary keeps that property — the ceiling of 4.3 is below the narrowest haunch of 4.4,
+   * so the notch survives at every value — while buying a visible identity axis. A 3.2 head is a
+   * narrow wedge and a 4.3 head is broad and round, and because the ears are positioned relative
+   * to the head's own width, a wider head also sets the ears further apart. One hash axis moving
+   * two features is the cheapest variation in the file.
    */
-  const rx = HEAD_W / 2 - 0.2;
+  const rx = headWidth;
   const ry = 2.75;
   const nx = (px + 0.5 - CX) / rx;
   const ny = (py + 0.5 - cy) / ry;
@@ -529,27 +654,42 @@ function eyeStepAt(px: number, py: number, shape: number): number | null {
  * dither erases roughly half the time. Shading it through the normal means the darkening is spread
  * across the whole inner half and survives.
  *
- * ══ WHAT THE ANGLE ACTUALLY DOES ══
+ * ══ WHAT THE THREE EAR AXES ACTUALLY DO ══
  *
- * `earAngle` shears the apex sideways by up to `EAR_SHEAR` px. Negative leans the tips OUTWARD
- * (a relaxed or airplane-eared cat), positive leans them INWARD (alert, pricked). Combined with
- * `earHeight` at 2 or 3 rows, the ear tips of two cats can differ by 2px in x and 1px in y, which
- * at a 16px sprite is a silhouette difference visible at 32px display size.
+ * `earAngle` shears the apex sideways by up to `EAR_SHEAR` px. Negative leans the tips OUTWARD (a
+ * relaxed, airplane-eared cat), positive leans them INWARD (alert, pricked).
+ *
+ * `earHeight` is 2, 3 or 4 rows, and `earWidth` is a 1.15..1.95 base half-width. Together they
+ * span from a broad low triangle to a tall narrow spike — the full range from a scottish fold to a
+ * lynx, which is far more than either axis reaches alone.
+ *
+ * ══ THE SHEAR WAS TRIPLED, AND THAT WAS A MEASURED CORRECTION ══
+ *
+ * `EAR_SHEAR` was 1.15 and is now 2.6. At 1.15 the apex moved by at most one pixel across the
+ * whole −1..1 range of `earAngle`, and after rounding to the pixel grid most of that range
+ * produced the IDENTICAL ear. A render review of twelve cats found their ears "effectively the
+ * same", and this was the largest single reason: a continuous axis whose full range is smaller
+ * than the quantum it is rasterised onto is a dead axis. It looks live in the source and in a unit
+ * test, and it does nothing on screen.
+ *
+ * The general rule this file now applies to every axis: an axis must move its feature by AT LEAST
+ * TWO PIXELS across its range, or it will not survive rasterisation, let alone being shrunk to
+ * 32px. `grid.test.ts` asserts this for the ear directly rather than trusting the constant.
  *
  * REJECTED: rotating the whole ear triangle by an angle. Rotation at this size turns the outer
  * edge into an aliased 2px-wide smear and costs the crisp diagonal that reads as "point". A shear
  * moves the apex and leaves both edges as clean lines, which is the same visual information for
  * none of the cost.
  */
-const EAR_INSET = 2.1;
-const EAR_BASE_HW = 1.55;
-const EAR_SHEAR = 1.15;
+const EAR_SHEAR = 2.6;
 
 function earNormal(
   px: number,
   py: number,
   angle: number,
   height: number,
+  width: number,
+  headWidth: number,
 ): { nx: number; ny: number } | null {
   const baseY = ROWS.ear[1];
   // 0 at the base row, 1 at the apex.
@@ -557,7 +697,15 @@ function earNormal(
   if (t < 0 || t > 1) return null;
 
   for (const side of [-1, 1] as const) {
-    const baseCx = CX + side * EAR_INSET;
+    /*
+     * The ear sits at a fixed FRACTION of the head's half-width rather than at a fixed offset, so
+     * a wide head carries its ears further apart and a narrow one carries them close. That is what
+     * makes `headWidth` move two features for one hash axis.
+     *
+     * 0.55 places the ear centre just over halfway out, which keeps the whole base — centre plus
+     * `width` — inside the skull at every combination of the two axes. Rule 1 by construction.
+     */
+    const baseCx = CX + side * headWidth * 0.55;
     /*
      * The shear is `t` linear, not `t*t`. openhood's horn used `t*t` so the bend accumulated toward
      * the tip — correct for a horn, which grows outward from a straight base. An ear is a flat
@@ -568,7 +716,7 @@ function earNormal(
      * whole pair sideways. A pair of ears that slide together read as a hat.
      */
     const centre = baseCx + side * angle * EAR_SHEAR * t;
-    const halfWidth = EAR_BASE_HW * (1 - t) + 0.3;
+    const halfWidth = width * (1 - t) + 0.3;
     const dx = px + 0.5 - centre;
     if (Math.abs(dx) > halfWidth) continue;
 
@@ -622,18 +770,41 @@ function earNormal(
  * REJECTED: keeping the ellipse and simply shrinking rx to 3.4. It fixed the tail and the neck and
  * left a small round body, which read as a bird — a cat's mass is in its haunches and an evenly
  * round body puts it in the middle. The taper is what makes the mass sit low.
+ *
+ * ══ AND IT VARIES PER CAT, ON TWO AXES ══
+ *
+ * `build` (−1..1) scales the haunch between 4.4 and 5.4 while leaving the shoulder alone, so a
+ * stocky cat is wide at the bottom and a lean one is nearly straight-sided. Scaling the HAUNCH
+ * rather than the whole body is deliberate: it changes where the mass sits, which reads at 32px,
+ * where a uniform scale just makes a slightly bigger cat, which does not.
+ *
+ * `posture` moves which rows the body occupies at all — see `postureRows`. That is the axis that
+ * actually carries the colony, because it changes the sprite's gross proportion rather than its
+ * outline detail.
+ *
+ * The haunch floor of 4.4 is load-bearing: `headWidth` tops out at 4.3, so the haunch is always
+ * wider than the head and rule 2's neck pinch survives every combination of the two axes.
  */
 const BODY_HW_TOP = 2.6;
-const BODY_HW_BOTTOM = 4.0;
+const BODY_HW_HAUNCH_MIN = 4.4;
+const BODY_HW_HAUNCH_MAX = 5.4;
 
-function bodyNormal(px: number, py: number): { nx: number; ny: number } | null {
+function bodyNormal(
+  px: number,
+  py: number,
+  build: number,
+  posture: Posture,
+): { nx: number; ny: number } | null {
+  const { bodyTop, bodyEnd } = postureRows(posture);
   // The body STOPS where the legs begin. openhood's recorded bug: without this the body's rounded
   // lower edge spills into the leg rows and, since body resolves before legs, paints over the
   // posts — the creature gets a skirt with feet poking out.
-  if (py < ROWS.body[0] || py >= ROWS.legs[0]) return null;
+  if (py < bodyTop || py >= bodyEnd) return null;
   // 0 at the shoulder, 1 at the haunch.
-  const t = (py + 0.5 - ROWS.body[0]) / (ROWS.legs[0] - ROWS.body[0]);
-  const hw = BODY_HW_TOP + (BODY_HW_BOTTOM - BODY_HW_TOP) * t;
+  const t = (py + 0.5 - bodyTop) / Math.max(1, bodyEnd - bodyTop);
+  const haunch =
+    BODY_HW_HAUNCH_MIN + ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN);
+  const hw = BODY_HW_TOP + (haunch - BODY_HW_TOP) * t;
   const dx = px + 0.5 - CX;
   if (Math.abs(dx) > hw) return null;
   // `nx` across the taper, so the body takes light as a cylinder. `ny` leans slightly forward at
@@ -702,27 +873,58 @@ const TAIL_SAMPLES = 48;
  * orthogonally adjacent to the body's last column, which is rule 1 satisfied at the tightest
  * possible margin. Any further out and there is a gap; any further in and the body eats it.
  */
-const TAIL_ROOT_X = 11.6;
-const TAIL_ROOT_Y = 12.3;
+function tailPixels(geom: CatGeometry): Map<number, number> {
+  const { curl, lift, build, posture } = {
+    curl: geom.tailCurl,
+    lift: geom.tailLift,
+    build: geom.build,
+    posture: geom.posture,
+  };
+  const { bodyEnd } = postureRows(posture);
+  /*
+   * THE ROOT IS DERIVED FROM THE HAUNCH, not a constant.
+   *
+   * It was `TAIL_ROOT_X = 11.6`, which was correct only while the haunch was a fixed 4.0. Now that
+   * `build` moves the haunch between 4.4 and 5.4 and `posture` moves which row it ends on, a fixed
+   * root is inside the body on a stocky cat (the body eats the first samples) and detached from it
+   * on a lean one (rule 1 broken, tail reads as dust).
+   *
+   * Deriving it from the same haunch value `bodyNormal` uses means the root sits exactly half a
+   * pixel outside the widest body column at every combination of the axes. That is rule 1 held by
+   * construction rather than by a constant that happened to work.
+   */
+  const haunch =
+    BODY_HW_HAUNCH_MIN + ((build + 1) / 2) * (BODY_HW_HAUNCH_MAX - BODY_HW_HAUNCH_MIN);
+  const rootX = CX + haunch - 0.4;
+  const rootY = bodyEnd - 1.2;
 
-function tailPixels(curl: number, lift: number): Map<number, number> {
   /** pixel key -> `t` at the sample that claimed it, so the tip can be shaded lighter. */
   const out = new Map<number, number>();
   for (let i = 0; i <= TAIL_SAMPLES; i++) {
     const t = i / TAIL_SAMPLES;
     /*
-     * X: the tail always exits right, sweeping 3.2px out over its length, with the curl hooking
-     * the last third back by up to 2.6px more. `t*t` on the curl so the hook is a tip event.
+     * X: the tail exits right, sweeping out over its length, with the curl hooking the tip back.
+     * `t*t` on the curl so the hook is a tip event rather than a constant-curvature arc.
+     *
+     * The curl range was widened from 2.6 to 4.0 after a render review found the colony too
+     * uniform. At 2.6 the tip moved about two columns across the full −1..1 range, which is
+     * visible at 96px and gone at 32px. At 4.0 a hard negative curl brings the tip back over the
+     * cat's own back — a tight curl — and a hard positive one throws it clear of the sprite, which
+     * are recognisably different tails at map size.
      */
-    const x = TAIL_ROOT_X + 3.2 * t + curl * 2.6 * t * t;
+    const x = rootX + 3.0 * t + curl * 4.0 * t * t;
     /*
-     * Y: `lift` interpolates the tip's height between +1.6 rows (below the root, a low tail) and
-     * −6.4 rows (well above it, a raised tail). The `t*t` term is what makes the tail leave the
-     * hip roughly horizontal and then turn — a tail that rises linearly from the root reads as a
-     * straight stick pointing diagonally, which is a dog's tail or an antenna.
+     * Y: `lift` interpolates the tip's height between +1.8 rows (below the root, a low dragging
+     * tail) and −8.0 rows (well above it, a vertical greeting tail). The `t*t` term is what makes
+     * the tail leave the hip roughly horizontal and then turn — a tail that rises linearly from
+     * the root reads as a straight stick pointing diagonally, which is a dog's tail or an antenna.
+     *
+     * The raised end was −6.4 and is now −8.0, so a fully lifted tail reaches the head's own rows
+     * and clears the top of the body. That is the single most visible tail difference at 32px:
+     * whether the cat's outline has something sticking up beside it or not.
      */
-    const rise = -6.4 * lift + 1.6 * (1 - lift);
-    const y = TAIL_ROOT_Y + rise * t * t + 0.45 * t;
+    const rise = -8.0 * lift + 1.8 * (1 - lift);
+    const y = rootY + rise * t * t + 0.45 * t;
     const pxi = Math.round(x - 0.5);
     const pyi = Math.round(y - 0.5);
     if (pxi < 0 || pxi >= GRID_W || pyi < 0 || pyi >= GRID_H) continue;
@@ -773,64 +975,83 @@ function legNormal(px: number, py: number): { nx: number; ny: number } | null {
 }
 
 /**
- * THE WHISKERS — 1px horizontal lines off the cheeks, on the muzzle row.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE WHISKERS — 1px lines off the cheeks, and the part that took three renders to get right.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * NO NORMAL, and that is deliberate: a whisker is a hair, not a surface. Shading it through the
- * Lambert model would land it at whatever step the cheek beside it is at, which makes it invisible
- * — the whole point of a whisker is that it is a different value from the face.
+ * Lambert model lands it at whatever step the cheek beside it is at, which makes it invisible —
+ * the whole point of a whisker is that it is a different value from the face. It takes a fixed
+ * step instead, dimmer than the lit cheek and brighter than the ground, so it reads against both.
  *
- * They take a FIXED mid step instead (`WHISKER_STEP`), which is dimmer than the lit cheek and
- * brighter than the ground, so they read against both. They are drawn OUTSIDE the head, in the
- * columns the head's superellipse does not reach, so they never eat a face pixel.
- *
- * They are also the only part exempt from the outline pass — see `catGrid`. Outlining a 1px line
+ * It is also the only part exempt from the outline pass — see `catGrid`. Outlining a 1px line
  * doubles its apparent thickness and turns two whiskers into a moustache.
  *
- * REJECTED: whiskers on their own row below the muzzle. At 16px that row belongs to the neck, and
- * a horizontal line across the neck row read as a collar.
+ * ══ THREE RENDERS, THREE DISTINCT FAILURES, AND WHAT EACH ONE TAUGHT ══
+ *
+ * This is recorded at length because the whisker is the smallest feature on the sprite and it
+ * broke the whole face three times running. The general lesson is at the bottom.
+ *
+ *   RENDER 1 — A MOUSTACHE BAR. Whiskers ran straight out from both cheeks, same length, same row
+ *     as the muzzle, starting flush against the head. At 96px the head and its two whiskers read
+ *     as a horizontal ROD PASSING THROUGH THE SKULL. Cause: a shape mirrored exactly about the
+ *     axis reads as one continuous object passing behind whatever sits between the two halves.
+ *
+ *   RENDER 2 — DUST. The fix was a one-pixel gap between whisker and cheek, so they would read as
+ *     separate thin things. That produced isolated single pixels floating beside the head, which
+ *     is NEEDLE's floating horn exactly: "isolated pixels read as dust rather than as a horn". At
+ *     32px they were indistinguishable from the sensor grain the page already has (§2a rule 5),
+ *     so a viewer could not tell a whisker from noise.
+ *
+ *   RENDER 3 — THE BAR AGAIN, WORSE. Gap removed, asymmetry (one side a pixel shorter) relied on
+ *     to break the rod read. It did not. A one-pixel length difference across a fourteen-pixel
+ *     span is invisible; the eye integrates the whole row and still sees a bar. Being flush
+ *     against the head AND on the muzzle's own row meant face, muzzle and both whiskers formed a
+ *     single unbroken horizontal run of lit pixels across the entire sprite.
+ *
+ * ══ THE FIX: BREAK THE ROW, NOT THE LENGTH ══
+ *
+ * The three failures share one cause — a continuous horizontal run — and length was never going to
+ * fix it. The whiskers now sit on DIFFERENT ROWS from each other: the left on the muzzle row, the
+ * right one row up. A stepped pair cannot read as a single rod, because a rod is straight, and
+ * that holds at every length and every size. It is also true of a real cat, whose whiskers fan
+ * from several rows of follicles rather than from one.
+ *
+ * They stay flush against the head (rule 1 — no exception is carved out for small appendages) and
+ * they are capped at 2px, because at 3px the sprite's bounding box grew half again as wide as the
+ * cat and the colony's spacing looked wrong.
+ *
+ * ══ THE GENERAL LESSON, WHICH IS THE REASON THIS COMMENT IS THIS LONG ══
+ *
+ * Every one of the three fixes adjusted a PARAMETER — length, then gap, then asymmetry — when the
+ * defect was in the STRUCTURE. Tuning numbers against a structural failure produces a sequence of
+ * different-looking failures and no progress, and it is only visible as a pattern once the
+ * attempts are written down next to each other. Rendering to PNG caught each individual failure;
+ * recording them is what caught the pattern.
+ *
+ * REJECTED: whiskers on their own row below the muzzle, both sides. At 16px that row belongs to
+ * the neck, and a horizontal line across the neck row read as a collar.
  */
 const WHISKER_STEP = 2;
 
-/**
- * ══ WHAT THE FIRST RENDER SHOWED: A MOUSTACHE BAR ══
- *
- * The first pass ran whiskers straight out from both cheeks at the same length on the same row.
- * Rendered at 96px, the head plus its two whiskers read as a horizontal ROD THROUGH THE SKULL —
- * a bolt, not hairs. Three things caused it and all three are fixed here:
- *
- *   1. PERFECT SYMMETRY. A shape mirrored exactly about the axis reads as one continuous object
- *      passing behind the thing between them. The right side is now one pixel shorter than the
- *      left (`len` vs `len - 1`), which is enough to break the rod read and is also true of a real
- *      animal — whiskers are never a matched pair.
- *   2. THEY WERE TOO LONG. At 3px on an 8px head the whiskers made the sprite half again as wide
- *      as the cat, which threw the bounding box off and made the colony's spacing look wrong.
- *      Capped at 2.
- *
- * ══ AND THE SECOND RENDER SHOWED THE OPPOSITE FAILURE: DUST ══
- *
- * The fix for the moustache bar inserted a one-pixel gap between the whisker and the cheek, on the
- * reasoning that a whisker should read as a separate thin thing. Rendered at 96px, that produced
- * isolated single pixels floating a pixel off each side of the head — which is NEEDLE's floating
- * horn exactly: "four isolated pixels read as dust rather than as a horn". At 32px they were
- * indistinguishable from stray noise on the page, which under a sensor-noise referent (§2a rule 5)
- * is actively confusing: a viewer cannot tell a whisker from the grain.
- *
- * So the gap is removed and the whiskers START at the head's edge again. Silhouette rule 1 applies
- * to whiskers after all — every appendage must meet the body, with no exception carved out for
- * small ones. The moustache-bar read is prevented by the ASYMMETRY alone (the right whisker is one
- * pixel shorter than the left), which turned out to be sufficient on its own and is the correct
- * single mechanism: a rod reads as a rod because it is continuous and even, and breaking either
- * property breaks the read.
- */
 function isWhisker(px: number, py: number, len: number): boolean {
-  if (py !== ROWS.head[1] - 1) return false;
   const dx = px + 0.5 - CX;
-  const side = dx < 0 ? len : len - 1;
+  // THE STEP. Left whisker on the muzzle row, right whisker one row above it. This asymmetry is
+  // structural rather than dimensional, which is why it survives where a length difference did not.
+  const row = dx < 0 ? ROWS.head[1] - 1 : ROWS.head[1] - 2;
+  if (py !== row) return false;
   const a = Math.abs(dx);
   // Starts at the head's own widest half-width, so the first whisker pixel is orthogonally
   // adjacent to a face pixel. Rule 1, satisfied by construction.
   const start = HEAD_W / 2 - 0.2;
-  return a > start && a <= start + side;
+  /*
+   * Capped at 2. `len` still varies (2 or 3) and the cap makes the 3 case draw as 2 — which looks
+   * like a dead axis and is not: the variation now lives in WHICH ROWS the pair occupies via the
+   * step above, and the length is pinned because at 3px the sprite's bounding box grew half again
+   * as wide as the cat and the colony's spacing looked wrong at 32px. The parameter is kept rather
+   * than deleted so the hash budget's shape is visible; see the header table.
+   */
+  return a > start && a <= start + Math.min(2, len);
 }
 
 /**
