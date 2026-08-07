@@ -138,6 +138,25 @@ contract StrayVault {
     /// The letscash fee hook. Part of every PoolKey on this pad; immutable so a pool cannot be faked.
     address public immutable hook;
 
+    /**
+     * The Uniswap v4 singleton PoolManager.
+     *
+     * ══ WHY THIS FIELD EXISTS, AND WHY MOCKS COULD NOT HAVE FOUND IT ══
+     *
+     * It is here for exactly one reason: **the PoolManager, not the router, is what sends ETH back
+     * on a sell.** v4's `take(currency, recipient, amount)` is executed by the PoolManager, so the
+     * native transfer arrives from `0x8366a39C...` and never from the router.
+     *
+     * The first version of `receive()` accepted the router only. Every unit test passed, because a
+     * mock router sends its own ETH. Against the REAL venue on a fork the entire sell executed
+     * correctly — swap, tax, settle, take — and then reverted on the last line with
+     * `NativeTransferFailed()`, having done all the work.
+     *
+     * This is precisely the class of defect a mock cannot reach, and the reason the fork test
+     * exists. Recorded rather than quietly fixed.
+     */
+    address public immutable poolManager;
+
     // ── Economics, all constant with no setter of any kind ───────────────────────────────────
 
     /**
@@ -284,16 +303,24 @@ contract StrayVault {
         _;
     }
 
-    constructor(address house_, address keeper_, address router_, address permit2_, address hook_) {
+    constructor(
+        address house_,
+        address keeper_,
+        address router_,
+        address permit2_,
+        address hook_,
+        address poolManager_
+    ) {
         if (
             house_ == address(0) || keeper_ == address(0) || router_ == address(0)
-                || permit2_ == address(0) || hook_ == address(0)
+                || permit2_ == address(0) || hook_ == address(0) || poolManager_ == address(0)
         ) revert ZeroAddress();
         house = house_;
         keeper = keeper_;
         router = IUniversalRouter(router_);
         permit2 = IPermit2(permit2_);
         hook = hook_;
+        poolManager = poolManager_;
     }
 
     // ── Adoption ─────────────────────────────────────────────────────────────────────────────
@@ -575,6 +602,6 @@ contract StrayVault {
      * `address(this).balance` reconcilable against `sum(stakeOf)`.
      */
     receive() external payable {
-        if (msg.sender != address(router)) revert TransferFailed();
+        if (msg.sender != address(router) && msg.sender != poolManager) revert TransferFailed();
     }
 }

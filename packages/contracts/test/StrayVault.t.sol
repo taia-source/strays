@@ -130,7 +130,7 @@ contract ReentrantOwner {
 
 /// Exposes the internal encoder.
 contract EncoderHarness is StrayVault {
-    constructor(address h, address k, address r, address p, address hk) StrayVault(h, k, r, p, hk) {}
+    constructor(address h, address k, address r, address p, address hk, address pm) StrayVault(h, k, r, p, hk, r) {}
 
     function encode(address token, int24 ts, bool zfo, uint256 amtIn, uint256 minOut)
         external
@@ -163,7 +163,7 @@ contract StrayVaultTest is Test {
         router = new MockRouter();
         permit2 = new MockPermit2();
         router.setToken(address(token));
-        vault = new StrayVault(house, keeper, address(router), address(permit2), hook);
+        vault = new StrayVault(house, keeper, address(router), address(permit2), hook, address(router));
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
         vm.deal(address(router), 100 ether);
@@ -277,7 +277,7 @@ contract StrayVaultTest is Test {
      */
     function test_SABOTAGE_encodingHasNoRecipientField() public {
         EncoderHarness h =
-            new EncoderHarness(house, keeper, address(router), address(permit2), hook);
+            new EncoderHarness(house, keeper, address(router), address(permit2), hook, address(router));
 
         bytes memory enc = h.encode(address(token), 200, true, 0.0026 ether, 1);
         (, bytes[] memory params) = abi.decode(enc, (bytes, bytes[]));
@@ -612,7 +612,7 @@ contract StrayVaultSurvivorTest is Test {
         router = new MockRouter();
         permit2 = new MockPermit2();
         router.setToken(address(token));
-        vault = new StrayVault(house, keeper, address(router), address(permit2), hook);
+        vault = new StrayVault(house, keeper, address(router), address(permit2), hook, address(router));
         vm.deal(alice, 100 ether);
         vm.deal(address(router), 100 ether);
     }

@@ -157,9 +157,16 @@ export function roundTripCost(args: RoundTripCostArgs): RoundTripCost {
    * measurement because it was one — just of the wrong chain. The only defence that survives a
    * careless call site is refusing to produce an answer at all.
    */
-  if (!Number.isFinite(Number(args.gasPriceWei)) || args.gasPriceWei <= 0n) {
+  /*
+   * `String(x)` rather than `x.toString()`: an ABSENT gasPriceWei arriving from an untyped
+   * boundary is `undefined`, and `undefined.toString()` throws a TypeError whose message says
+   * nothing about gas. That would turn the most important refusal in this codebase into
+   * "Cannot read properties of undefined" — a real defect this suite caught. The guard was
+   * always correct; the message it produced was not.
+   */
+  if (args.gasPriceWei === undefined || args.gasPriceWei === null || args.gasPriceWei <= 0n) {
     throw new Error(
-      `refusing to cost a trade at a gas price of ${args.gasPriceWei.toString()} wei. ` +
+      `refusing to cost a trade at a gas price of ${String(args.gasPriceWei)} wei. ` +
         "gasPriceWei is REQUIRED and must be read from the chain at decision time — it has no " +
         "default and zero is not a valid reading. openhood hardcoded a fork-measured gas price " +
         "(anvil ~1.019 gwei vs chain 4663 ~0.0295 gwei, ~35x) and concluded a round trip cost " +

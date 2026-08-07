@@ -7,7 +7,7 @@ import {StrayVault} from "../src/StrayVault.sol";
 /// Exposes the internal encoder so its bytes can be compared against the encoding that viem
 /// produces and that a real landed mainnet swap used.
 contract EncoderHarness is StrayVault {
-    constructor(address h, address k, address r, address p, address hk) StrayVault(h, k, r, p, hk) {}
+    constructor(address h, address k, address r, address p, address hk, address pm) StrayVault(h, k, r, p, hk, r) {}
 
     function encode(address token, int24 ts, bool zfo, uint256 amtIn, uint256 minOut)
         external
@@ -24,9 +24,10 @@ contract EncodingTest is Test {
     address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant HOOK = 0x75A54357D9C78a2Db19004a5FDc76c50F9242AEC;
     address constant TOKEN = 0x8Cbab44d14554bc86b272220DBe7Dd95F91D4ccc;
+    address constant POOL_MANAGER = 0x8366a39CC670B4001A1121B8F6A443A643e40951;
 
     function setUp() public {
-        h = new EncoderHarness(address(0xBEEF), address(0xCAFE), ROUTER, PERMIT2, HOOK);
+        h = new EncoderHarness(address(0xBEEF), address(0xCAFE), ROUTER, PERMIT2, HOOK, POOL_MANAGER);
     }
 
     /// Dump the encoding so it can be diffed against viem's output offline.

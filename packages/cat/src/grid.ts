@@ -339,7 +339,7 @@ export type CatGeometry = {
   readonly tailLift: number;
   /** 0, 1 or 2. Round, narrow, or half-closed. Interior detail — no silhouette effect. */
   readonly eyeShape: number;
-  /** 1 or 2. Whisker length on the left cheek; the right is one shorter. */
+  /** 2 or 3. Whisker length on the left cheek; the right is always one shorter. */
   readonly whiskerLen: number;
 };
 
@@ -351,9 +351,14 @@ export function geometryFor(id: string): CatGeometry {
     tailCurl: signed(id, SALT.tailCurl),
     tailLift: unit(id, SALT.tailLift),
     eyeShape: Math.floor(unit(id, SALT.eyeShape) * 3),
-    // 1 or 2 px on the LEFT cheek; the right is always one shorter. See `isWhisker` for why 3 was
-    // measured as too long and why the two sides are deliberately unequal.
-    whiskerLen: 1 + Math.floor(unit(id, SALT.whisker) * 2),
+    /*
+     * 2 or 3 px on the LEFT cheek; the right is always one shorter, so it is 1 or 2.
+     *
+     * The floor is 2, not 1. At 1 the right whisker came out zero-length and the cat had a whisker
+     * on one side only — which reads as a defect rather than as asymmetry. The asymmetry has to be
+     * a DIFFERENCE between two present things, not the absence of one.
+     */
+    whiskerLen: 2 + Math.floor(unit(id, SALT.whisker) * 2),
   };
 }
 
@@ -372,7 +377,19 @@ export function geometryFor(id: string): CatGeometry {
  */
 function headNormal(px: number, py: number): { nx: number; ny: number } | null {
   const cy = (ROWS.head[0] + ROWS.head[1]) / 2;
-  const rx = HEAD_W / 2;
+  /*
+   * `-0.2` off the nominal half-width, which sounds like nothing and is the difference between a
+   * cat and a bowling pin.
+   *
+   * At exactly `HEAD_W / 2` the head's widest row rasterised to columns 3..12 — the same ten
+   * columns the body's haunch occupies — so the silhouette had a straight vertical edge from the
+   * ear base all the way to the legs and the neck break read as a stripe across a slab rather than
+   * as a neck. Rule 2's value break needs a SHAPE to reinforce; it cannot manufacture one.
+   *
+   * At 3.8 the head's widest row is columns 4..11, two columns inside the haunch, so the outline
+   * pass draws a visible notch on both sides at the shoulder. That notch is the neck.
+   */
+  const rx = HEAD_W / 2 - 0.2;
   const ry = 2.75;
   const nx = (px + 0.5 - CX) / rx;
   const ny = (py + 0.5 - cy) / ry;
@@ -439,10 +456,26 @@ function eyeStepAt(px: number, py: number, shape: number): number | null {
      * `#` is full eyeshine (the top ramp step), `-` is dimmed eyeshine, `.` is face.
      * Index is `dx`; the left eye is mirrored so the pair is symmetric about the nose bridge.
      */
+    /*
+     * ══ ALL THREE SHAPES KEEP BOTH PIXELS. This was measured and it is the correction. ══
+     *
+     * The first pass had shape 1 as `#.` — the outer pixel only, meant to read as a narrowed slit.
+     * Rendered at 96px it did not read as a squint; it read as a cat with ONE EYE, or as a sprite
+     * with a dropped pixel. At 16px a missing pixel is indistinguishable from a dither dropout,
+     * and the face is the one place the viewer will read a dropout as damage rather than as
+     * detail. Two cats in the preview sheet looked injured.
+     *
+     * So the shapes now vary in VALUE, not in presence. Every eye is two pixels wide in every
+     * shape; what changes is whether both are at full eyeshine, or one is dimmed. That is still a
+     * legible difference at 96px — a dimmed pixel is two ramp steps down — and at 32px, where it
+     * stops being legible, both eyes are simply present and lit, which is the correct fallback.
+     * A variation axis that degrades into "no variation" is fine; one that degrades into "broken"
+     * is not.
+     */
     const MASKS: Readonly<Record<number, string>> = {
-      0: "##", // ROUND — both pixels. Wide awake, and the default read.
-      1: "#.", // NARROW — outer pixel only. A slit; the cat is looking past you.
-      2: "-#", // HALF — inner pixel dimmed. A slow blink.
+      0: "##", // ROUND — both pixels at full eyeshine. Wide awake, and the default read.
+      1: "-#", // NARROW — outer pixel dimmed, so the eye reads as turned slightly away.
+      2: "#-", // HALF — inner pixel dimmed. A slow blink, and the mirror of NARROW.
     };
     const mask = MASKS[shape] ?? MASKS[0] ?? "##";
     // The LEFT eye reads its mask mirrored, so "narrow" points both eyes outward rather than
@@ -769,25 +802,34 @@ const WHISKER_STEP = 2;
  *      passing behind the thing between them. The right side is now one pixel shorter than the
  *      left (`len` vs `len - 1`), which is enough to break the rod read and is also true of a real
  *      animal — whiskers are never a matched pair.
- *   2. THEY TOUCHED THE HEAD. Starting immediately at the head's edge welded the line to the
- *      skull. There is now a ONE PIXEL GAP (`+ 1`), which is what makes them read as separate
- *      thin things beside the face rather than as an extension of it.
- *
- *      This is a deliberate and recorded EXEMPTION from silhouette rule 1. That rule says an
- *      appendage must meet the body or it reads as dust — and a whisker is SUPPOSED to read as
- *      almost nothing. It is not an appendage; it is a texture cue that only has to survive at
- *      96px and is allowed to disappear at 32px. The rule governs ears and tail, which are
- *      silhouette, and the test asserts it of exactly those.
- *   3. THEY WERE TOO LONG. At 3px on an 8px head the whiskers made the sprite half again as wide
+ *   2. THEY WERE TOO LONG. At 3px on an 8px head the whiskers made the sprite half again as wide
  *      as the cat, which threw the bounding box off and made the colony's spacing look wrong.
  *      Capped at 2.
+ *
+ * ══ AND THE SECOND RENDER SHOWED THE OPPOSITE FAILURE: DUST ══
+ *
+ * The fix for the moustache bar inserted a one-pixel gap between the whisker and the cheek, on the
+ * reasoning that a whisker should read as a separate thin thing. Rendered at 96px, that produced
+ * isolated single pixels floating a pixel off each side of the head — which is NEEDLE's floating
+ * horn exactly: "four isolated pixels read as dust rather than as a horn". At 32px they were
+ * indistinguishable from stray noise on the page, which under a sensor-noise referent (§2a rule 5)
+ * is actively confusing: a viewer cannot tell a whisker from the grain.
+ *
+ * So the gap is removed and the whiskers START at the head's edge again. Silhouette rule 1 applies
+ * to whiskers after all — every appendage must meet the body, with no exception carved out for
+ * small ones. The moustache-bar read is prevented by the ASYMMETRY alone (the right whisker is one
+ * pixel shorter than the left), which turned out to be sufficient on its own and is the correct
+ * single mechanism: a rod reads as a rod because it is continuous and even, and breaking either
+ * property breaks the read.
  */
 function isWhisker(px: number, py: number, len: number): boolean {
   if (py !== ROWS.head[1] - 1) return false;
   const dx = px + 0.5 - CX;
   const side = dx < 0 ? len : len - 1;
   const a = Math.abs(dx);
-  const start = HEAD_W / 2 + 1;
+  // Starts at the head's own widest half-width, so the first whisker pixel is orthogonally
+  // adjacent to a face pixel. Rule 1, satisfied by construction.
+  const start = HEAD_W / 2 - 0.2;
   return a > start && a <= start + side;
 }
 
@@ -915,15 +957,38 @@ function shadeStep(nx: number, ny: number, px: number, py: number): number | nul
  * reads as "still loading", and "dead" and "loading" must never be confusable — one is a state the
  * world produced and the other is a fault.
  */
-const STATE_DIM: Readonly<Record<CatState, number>> = {
-  /** Fed: full range. A cat that has eaten is the reference exposure. */
-  fed: 0,
-  /** Hunting: one step down. Alert and lean, but plainly alive. */
-  hunting: 1,
-  /** Starving: two steps. The cat is sinking toward the noise floor, which is the honest read. */
-  starving: 2,
-  /** Dead: three. Barely above the ground, and the eyes are handled separately. */
-  dead: 3,
+/**
+ * ══ THE DIM IS A GAIN, NOT A SUBTRACTION — and this was a measured bug ══
+ *
+ * The first pass subtracted a flat number of steps per state: hunting −1, starving −2, dead −3.
+ * Rendered to PNG and looked at, EVERY cat in every state but `fed` was a muddy undifferentiated
+ * mass. The dump of the raw step grid showed why immediately: with only six steps, subtracting two
+ * and then clamping at 1 crushes steps 1, 2 and 3 all onto 1. A body already sitting at step 2-3
+ * and legs at 2 all landed on the same value, so the legs, the haunch and the neck break all
+ * disappeared at once. The state dim was destroying the SILHOUETTE, which is the one thing §9 says
+ * this sprite cannot afford to lose.
+ *
+ * That is a scale error, not a tuning error: a flat subtraction on a 6-step ramp removes a fixed
+ * amount of the total range, and by `starving` there is no range left to carry shape.
+ *
+ * A GAIN scales toward the noise floor instead, so the RATIOS between parts survive. A starving
+ * cat is dimmer than a fed one at every point, and its legs are still darker than its haunch,
+ * which is what keeps it a cat rather than a smear. This is also the physically honest model for
+ * the referent: an IR illuminator falling off does not subtract a constant from a scene, it
+ * multiplies it.
+ *
+ * The floor at 1 stays: step 0 is the outline, and a coat pixel that reaches the outline value has
+ * merged with it.
+ */
+const STATE_GAIN: Readonly<Record<CatState, number>> = {
+  /** Fed: full range, the reference exposure. A cat that has eaten is fully lit. */
+  fed: 1,
+  /** Hunting: a touch under. Alert and lean, and plainly at full health. */
+  hunting: 0.9,
+  /** Starving: two thirds. Visibly sinking toward the noise floor, which is the honest read. */
+  starving: 0.66,
+  /** Dead: not quite half. Barely above the ground, and the eyes have gone out separately. */
+  dead: 0.46,
 };
 
 function applyState(step: number, part: Part, state: CatState): number {
@@ -941,7 +1006,8 @@ function applyState(step: number, part: Part, state: CatState): number {
     if (state === "dead") return 1;
     return step;
   }
-  return Math.max(1, step - (STATE_DIM[state] ?? 0));
+  const gain = STATE_GAIN[state] ?? 1;
+  return Math.max(1, Math.round(step * gain));
 }
 
 /**
@@ -1023,6 +1089,27 @@ export function catGrid(
        */
       if (hit.part === "head" || hit.part === "muzzle") step = Math.max(3, step);
       /*
+       * ══ THE NOSE BRIDGE IS FORCED DARK — the fix for a VISOR ══
+       *
+       * Measured at 96px: with the head floored at 3 and the eyes at 5, the two 2px eyes and the
+       * 2px bridge between them rendered as ONE horizontal bar. In the tinted states this was
+       * worst of all — a single amber rectangle across the face, which reads as a visor or a
+       * mask, not as a pair of eyes. It is the identical failure the whiskers had as a symmetric
+       * pair ("a rod through the skull"), arriving through value instead of through geometry.
+       *
+       * Two eyes only read as two if something separates them. The bridge is pushed two steps
+       * below the head's floor, so a dark notch runs between the eyes. This is the one place the
+       * face floor is deliberately violated, and the violation is what makes the face legible —
+       * which is the same trade the floor itself was making.
+       *
+       * It is scoped to the EYE ROW only. Carrying it down the whole face drew a dark stripe from
+       * the brow to the chin, which read as a split muzzle.
+       */
+      if (hit.part === "head" && y === EYE_Y) {
+        const dx = Math.abs(x + 0.5 - CX);
+        if (dx < (EYE_R_X - EYE_L_X - EYE_W) / 2 + 0.5) step = Math.max(1, step - 2);
+      }
+      /*
        * ══ THE EARS ARE FLOORED HIGHER THAN THE FACE, for the horn's old reason ══
        *
        * The ear is the identifying feature and at 16px it is three rows of a taper narrowing to
@@ -1040,19 +1127,56 @@ export function catGrid(
       if (hit.part === "ear") {
         step = hit.nx > -0.15 ? Math.max(4, step) : Math.max(2, step - 1);
       }
-      // The body reads one step below the head so the head stays the subject and the neck break
-      // has somewhere to break TO.
-      if (hit.part === "body" && y !== NECK_ROW) step = Math.max(2, step - 1);
+      /*
+       * ══ THE BODY IS FLOORED AT 3, NOT DROPPED TO 2 — measured, and the fix for a dark blob ══
+       *
+       * The first pass took the body a step BELOW whatever the lighting gave it, on openhood's
+       * logic that the head should stay the subject. Dumped as raw steps, the whole body was
+       * landing on 1 and 2 — against an outline at 0 and a ground at soot, that is invisible. The
+       * cat rendered as a bright head floating over a dark smudge, which is the "lollipop" failure
+       * this file already rejected once in `bodyNormal` and had reintroduced through the shading.
+       *
+       * The head is kept as the subject by the NECK break and by the ear floor being higher, not
+       * by making the body dark. That is the better mechanism anyway: hierarchy by CONTRAST at the
+       * boundary rather than hierarchy by drowning the larger part.
+       *
+       * The `-1` on the lower half is what remains of the original intent: the haunch is slightly
+       * darker than the chest, which reads as the body turning away underneath. That survives
+       * because it is a relative difference INSIDE the body's own floored range, not a push toward
+       * the ground.
+       */
+      if (hit.part === "body" && y !== NECK_ROW) {
+        const lower = y >= ROWS.body[0] + 2;
+        step = Math.max(lower ? 3 : 4, step);
+      }
       /*
        * The tail brightens toward the TIP. Backwards from every other part, and deliberately: the
        * tip is the part carrying the identity (the curl), it is 1px wide, and it is the furthest
        * thing from the body's mass — so it is the pixel most at risk of vanishing. A tip that
        * fades out is `maneNormal`'s scallop problem and NEEDLE's floating horn at once.
+       *
+       * The range is 3..5 rather than the first pass's 2..4. At 2 the tail root was the same value
+       * as the body it emerges from and the tail appeared to start two pixels out — a gap by
+       * value rather than by geometry, which breaks rule 1 just as effectively.
        */
-      if (hit.part === "tail") step = Math.max(2, Math.min(RAMP_STEPS - 2, 2 + Math.round((hit.t ?? 0) * 2)));
-      // Legs are in shadow under the body. Kept above the ground so they do not vanish, and one
-      // step below the body so the cat does not look like it is standing on two bright pillars.
-      if (hit.part === "leg") step = Math.max(2, step - 2);
+      if (hit.part === "tail") {
+        step = Math.max(3, Math.min(RAMP_STEPS - 1, 3 + Math.round((hit.t ?? 0) * 2)));
+      }
+      /*
+       * ══ THE LEGS ARE THE DARKEST LIT PART, AND THAT IS WHAT MAKES THEM READ ══
+       *
+       * Floored at 2 and capped at 2. A fixed value, not a shaded one — which is a departure from
+       * every other part and is deliberate.
+       *
+       * Rule 3 needs the two posts and the gap between them to be unmistakable. A SHADED leg
+       * varies across its own 2px width, so at 16px one of its two columns routinely dithers up
+       * into the body's range and the other down into the outline's, and the post stops reading as
+       * a post. Pinning both columns to one value below the body's floor makes the pair read as
+       * two solid dark posts against a lighter haunch — which is exactly the contrast the rule is
+       * asking for. The `legNormal` cylinder sweep is still computed and still shapes nothing;
+       * it is retained because the leg must return a normal for `partAt`'s uniform contract.
+       */
+      if (hit.part === "leg") step = 2;
 
       out.push({ x, y, step: applyState(step, hit.part, state), part: hit.part });
       filled.add(key);

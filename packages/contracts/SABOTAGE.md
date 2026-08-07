@@ -105,3 +105,59 @@ Ran 3 test suites: 29 tests passed, 0 failed, 0 skipped (29 total tests)
 ```
 
 **Zero skips.** A skipped test is not a pass.
+
+---
+
+## The SECOND real bug, found only by the fork test
+
+Recorded because it is the exact class of defect a mock cannot reach, and because every unit test
+passed while it was present.
+
+**`receive()` accepted the router only. The PoolManager is what sends the ETH.**
+
+v4's `take(currency, recipient, amount)` is executed by the **PoolManager singleton**, so on a sell
+the native transfer arrives from `0x8366a39C…` and never from the router. Against the real venue the
+entire sell executed correctly — swap, hook, tax, settle, take — and then reverted on the final line:
+
+```
+├─ PoolManager::take(0x0…0, StrayVault, 2548260000000000)
+│   ├─ StrayVault::receive{value: 2548260000000000}()
+│   │   └─ ← [Revert] TransferFailed()
+└─ ← WrappedError(…, NativeTransferFailed())
+```
+
+25 unit tests passed throughout, because a mock router sends its own ETH. **A mock is a statement
+about what you already believe.** The fix adds `poolManager` as a second immutable and allows it in
+`receive()`.
+
+---
+
+## Fork results — the contract against LIVE letscash pools
+
+`forge test --match-contract ForkSwap --fork-url https://rpc.mainnet.chain.robinhood.com`
+
+```
+[PASS] test_fork_buyThenSellRoundTrips
+  bought (raw units): 1218005701254668367313437
+  stake before: 16000000000000000
+  stake after : 15948260000000000
+  measured round-trip cost, bps of position: 199
+
+[PASS] test_fork_measureCostAcrossTaxTiers
+  tax  1% -> round-trip  199 bps
+  tax  3% -> round-trip  591 bps
+  tax  5% -> round-trip  975 bps
+  tax 10% -> round-trip 1900 bps
+
+[PASS] test_fork_proceedsLandInTheVault
+[PASS] test_fork_withdrawAfterARealRoundTrip
+
+4 passed; 0 failed; 0 skipped
+```
+
+**The contract's on-chain measurements reproduce RESEARCH §3b's independent off-chain probe to the
+basis point** (199 / 591 / 975 / 1900 vs 199.0 / 591.0 / 975.0 / 1900.0). Two different methods —
+a standalone viem script and the deployed contract itself — agreeing exactly is the strongest
+evidence available that the cost model is right and the strategy's `taxPct == 1` filter is justified.
+
+**Total: 33 tests, 0 failed, 0 skipped.**
